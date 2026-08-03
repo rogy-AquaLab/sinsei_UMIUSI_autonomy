@@ -29,8 +29,11 @@ Two thin rclpy nodes that run the **same** ROS-free perception + autonomy code a
   node that drop-in replaces `sinsei_umiusi_core`'s placeholder `auto_target_generator` (same node
   name + lifecycle contract), so core's behaviour tree activates it on entering AUTO. It runs the
   FSM and publishes `Target` on `/cmd/target` while active — power/mode/thruster-enable stay in
-  core. Point core's `launch/main.yaml` at `pkg: umiusi_autonomy` for its `auto_target_generator`
-  node. Needs the same control-side reconcile as `navigator_node`'s `target` mode; validate first.
+  core. Bring it up **without modifying core** via `launch/core_autonomy.launch.py`, which starts the
+  core strategy stack (health check, manual generator, robot_strategy, rosbridge) with this generator
+  in place of core's placeholder + `perception_node` (do NOT also run core's `main.yaml` — a second
+  generator would race on `/cmd/target`). Needs the same control-side reconcile as `navigator_node`'s
+  `target` mode; validate on sim/hardware first.
 
 All detection/decision/allocation logic lives in the installable `umiusi_perception` package (detector +
 FSM + the numpy-only `umiusi_perception.control` allocation); these nodes only do topic plumbing + message
