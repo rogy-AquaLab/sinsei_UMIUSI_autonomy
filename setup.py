@@ -30,6 +30,7 @@ setup(
         "console_scripts": [
             "perception_node = umiusi_autonomy.perception_node:main",
             "navigator_node = umiusi_autonomy.navigator_node:main",
+            "auto_target_generator = umiusi_autonomy.auto_target_generator:main",
         ],
     },
 )
