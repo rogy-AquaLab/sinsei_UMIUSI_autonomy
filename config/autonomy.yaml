@@ -1,0 +1,28 @@
+# Parameters for the UMIUSI deploy autonomy nodes. Loaded by launch/autonomy.launch.py.
+# Override at launch: `ros2 launch umiusi_autonomy autonomy.launch.py model_path:=/abs/model.pt`
+
+perception_node:
+  ros__parameters:
+    # REQUIRED: learned detector checkpoint (.pt). Override at launch (see model_path launch arg).
+    model_path: ""
+    image_topic: "/front_cam/image_raw"
+    detections_topic: "/perception_node/detections"
+    conf_thresh: -1.0        # <0 -> use the checkpoint's stored confidence floor
+    input_size: 0            # 0  -> use the checkpoint's stored input size
+    fovy_deg: 60.0           # MUST match the physical camera vertical FOV
+    max_rate_hz: 10.0        # cap detector rate (realistic Pi-4 timing); 0 = every frame
+    sanitise_near: true      # near red/blue colour re-confirmation before the FSM commits
+
+navigator_node:
+  ros__parameters:
+    detections_topic: "/perception_node/detections"
+    imu_topic: "/state/imu_state"
+    control_hz: 50.0
+    frame_h: 240
+    frame_w: 320
+    fovy_deg: 60.0
+    servo_range_deg: 90.0    # ThrusterOutput.angle [rad] = servo_action * radians(servo_range_deg)
+    # DEPLOY CALIBRATION — verify against the mounted IMU (ImuState.angular_velocity is DEG/S):
+    yaw_rate_axis: "y"       # IMU axis carrying the vehicle yaw rate (x/y/z); sim uses y (up)
+    yaw_rate_sign: 1.0
+    publish: true            # false -> compute the FSM but do NOT command the thrusters (dry test)
