@@ -12,6 +12,22 @@ sinsei_umiusi_control stack UNCHANGED (sim <-> real = the hardware behind those 
 The FSM holds the last detections between perception ticks and re-drives on them every control step,
 exactly as the in-sim run does (``fresh=True`` only on the step after a new detection message).
 
+COMMAND MODES (``command_mode`` parameter):
+  * ``"direct"`` (DEFAULT — unchanged behaviour): allocate here and publish per-thruster
+    ``ThrusterOutput`` on ``/cmd/direct/...`` (self-enabling, bypasses core).
+  * ``"target"`` (EXPERIMENTAL — "ride on core"): publish a ``sinsei_umiusi_msgs/Target``
+    (velocity + orientation) on ``/cmd/target`` and let ``sinsei_umiusi_control`` allocate, so
+    autonomy plugs into the existing core power/mode pipeline instead of overriding thrusters.
+    The FSM's {surge, heave, yaw} maps to Target exactly as it feeds ``feedforward_allocation``
+    (velocity.x=-surge, velocity.z=heave, orientation.z=yaw). NOT yet behaviour-equivalent to
+    ``"direct"`` — validate on sim/hardware first. Known control-side gaps to reconcile:
+      1. core must be POWERED-ON and in AUTO (a Target alone does not enable thrust — the
+         ``/cmd/thruster_runnable_all`` flag from core's AUTO node does), and the stock
+         ``auto_target_generator`` placeholder must be replaced/stopped or it races on /cmd/target.
+      2. sinsei_umiusi_control's C++ feed-forward emits servo in DEGREES and clamps/slews ESC duty
+         (max 0.5), and its ESC thrust-sign differs from the Python port in the third force quadrant
+         — so magnitudes/signs can diverge from the direct path until those are reconciled.
+
 DEPLOY CALIBRATION (verify on hardware, cannot be inferred from the sim):
   * ImuState.angular_velocity is in DEG/S; the sim FSM expects the body yaw rate in RAD/S about the
     vehicle's vertical axis. ``yaw_rate_axis`` / ``yaw_rate_sign`` select and orient that component
@@ -28,7 +44,7 @@ import math
 
 import rclpy
 from rclpy.node import Node
-from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable
+from sinsei_umiusi_msgs.msg import Target, ThrusterOutput, ThrusterRunnable
 
 from umiusi_autonomy_msgs.msg import BalloonDetectionArray
 
@@ -53,6 +69,11 @@ class NavigatorNode(Node):
         self.declare_parameter("yaw_rate_axis", "y")      # IMU axis carrying the vehicle yaw rate
         self.declare_parameter("yaw_rate_sign", 1.0)
         self.declare_parameter("publish", True)            # False = compute only, do not command
+        # "direct" (default, unchanged): feed-forward allocate here -> /cmd/direct ThrusterOutput.
+        # "target": ride on sinsei_umiusi_control -> publish a Target on /cmd/target and let the
+        # control stack allocate. EXPERIMENTAL, needs hardware/sim validation (see module docstring).
+        self.declare_parameter("command_mode", "direct")
+        self.declare_parameter("target_topic", "/cmd/target")
 
         self._control_hz = float(self.get_parameter("control_hz").value)
         self._dt = 1.0 / self._control_hz
@@ -60,6 +81,7 @@ class NavigatorNode(Node):
         self._yaw_axis = _AXIS.get(str(self.get_parameter("yaw_rate_axis").value).lower(), 1)
         self._yaw_sign = float(self.get_parameter("yaw_rate_sign").value)
         self._publish = bool(self.get_parameter("publish").value)
+        self._mode = str(self.get_parameter("command_mode").value).lower()
 
         self._behavior = None          # lazily built (defer umiusi_perception import off the build path)
         self._alloc = None
@@ -76,13 +98,20 @@ class NavigatorNode(Node):
         from sinsei_umiusi_msgs.msg import ImuState
         self._sub_imu = self.create_subscription(ImuState, imu_topic, self._on_imu, 10)
 
-        self._pubs = {p: self.create_publisher(ThrusterOutput, CMD_PREFIX + p, 10)
-                      for p in POSITIONS}
+        if self._mode == "target":
+            target_topic = self.get_parameter("target_topic").value
+            self._pub_target = self.create_publisher(Target, target_topic, 10)
+            self._pubs = {}
+            sink = f"{target_topic} (Target)"
+        else:
+            self._pub_target = None
+            self._pubs = {p: self.create_publisher(ThrusterOutput, CMD_PREFIX + p, 10)
+                          for p in POSITIONS}
+            sink = f"{CMD_PREFIX}{{{','.join(POSITIONS)}}}"
         self._timer = self.create_timer(self._dt, self._control_tick)
         self.get_logger().info(
-            f"navigator_node: detections='{det_topic}', imu='{imu_topic}' -> "
-            f"{CMD_PREFIX}{{{','.join(POSITIONS)}}} @ {self._control_hz:.0f} Hz "
-            f"(publish={self._publish})")
+            f"navigator_node[{self._mode}]: detections='{det_topic}', imu='{imu_topic}' -> "
+            f"{sink} @ {self._control_hz:.0f} Hz (publish={self._publish})")
 
     def _ensure_behavior(self) -> bool:
         if self._behavior is not None:
@@ -138,11 +167,26 @@ class NavigatorNode(Node):
         self._new_dets = False
         cmd, _info = self._behavior.step(self._dets, self._yaw_rate, heading=0.0,
                                          dt=self._dt, fresh=fresh)
-        # {surge, heave, yaw} -> 8-D action. Matches tools/autonomy_run: forward surge = NEGATIVE Vx,
-        # heave = +Vz, yaw command on the orientation channel.
-        action = self._alloc([0.0, 0.0, cmd["yaw"]], [-cmd["surge"], 0.0, cmd["heave"]])
-        if self._publish:
+        if not self._publish:
+            return
+        if self._mode == "target":
+            self._publish_target(cmd)
+        else:
+            # {surge, heave, yaw} -> 8-D action. Matches tools/autonomy_run: forward surge = NEGATIVE Vx,
+            # heave = +Vz, yaw command on the orientation channel.
+            action = self._alloc([0.0, 0.0, cmd["yaw"]], [-cmd["surge"], 0.0, cmd["heave"]])
             self._command_thrusters(action)
+
+    def _publish_target(self, cmd):
+        # Ride on core: publish the FSM's {surge, heave, yaw} as a Target setpoint on /cmd/target and
+        # let sinsei_umiusi_control's feed-forward allocation drive the thrusters. Same six numbers the
+        # direct path feeds feedforward_allocation: forward surge = -velocity.x, heave = +velocity.z,
+        # yaw = orientation.z (orientation.x/y and velocity.y stay 0).
+        msg = Target()
+        msg.orientation.z = float(cmd["yaw"])
+        msg.velocity.x = float(-cmd["surge"])
+        msg.velocity.z = float(cmd["heave"])
+        self._pub_target.publish(msg)
 
     def _command_thrusters(self, action):
         for k, p in enumerate(POSITIONS):
@@ -153,7 +197,11 @@ class NavigatorNode(Node):
             self._pubs[p].publish(out)
 
     def stop(self):
-        """Command all thrusters to zero (so the vehicle does not keep driving after we exit)."""
+        """Command zero (so the vehicle does not keep driving after we exit)."""
+        if self._mode == "target":
+            if self._pub_target is not None:
+                self._pub_target.publish(Target())   # zero setpoint
+            return
         for p in POSITIONS:
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=True, servo=True)

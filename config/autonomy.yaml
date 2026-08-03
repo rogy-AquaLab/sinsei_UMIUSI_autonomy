@@ -26,3 +26,7 @@ navigator_node:
     yaw_rate_axis: "y"       # IMU axis carrying the vehicle yaw rate (x/y/z); sim uses y (up)
     yaw_rate_sign: 1.0
     publish: true            # false -> compute the FSM but do NOT command the thrusters (dry test)
+    command_mode: "direct"   # "direct" -> /cmd/direct ThrusterOutput (default, self-enabling).
+                             # "target" -> ride on core: publish Target on /cmd/target (EXPERIMENTAL;
+                             #             needs power-on + AUTO mode; see navigator_node docstring).
+    target_topic: "/cmd/target"   # only used when command_mode == "target"

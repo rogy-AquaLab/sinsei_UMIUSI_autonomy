@@ -15,10 +15,16 @@ Two thin rclpy nodes that run the **same** ROS-free perception + autonomy code a
   (`umiusi_perception.learned_detector`) + the near red/blue colour re-confirmation
   (`umiusi_perception.sanitise_near_colours`), and publishes `umiusi_autonomy_msgs/BalloonDetectionArray`.
 * **`navigator_node`** subscribes the detections + IMU, runs the shared FSM
-  (`umiusi_perception.autonomy.BalloonBehavior`), and maps its `{surge, heave, yaw}` command through
-  `umiusi_perception.control.feedforward_allocation` to the four **direct-override** `ThrusterOutput` topics
-  — the identical drive path `tools/ros_policy.py` uses, so it drives the existing
-  sinsei_umiusi_control stack **unchanged**.
+  (`umiusi_perception.autonomy.BalloonBehavior`), and (default `command_mode: direct`) maps its
+  `{surge, heave, yaw}` command through `umiusi_perception.control.feedforward_allocation` to the four
+  **direct-override** `ThrusterOutput` topics — the identical drive path `tools/ros_policy.py` uses, so
+  it drives the existing sinsei_umiusi_control stack **unchanged**.
+  * `command_mode: target` (EXPERIMENTAL) instead publishes a `sinsei_umiusi_msgs/Target` on
+    `/cmd/target` and lets the control stack allocate — i.e. autonomy **rides on core** (power/mode
+    pipeline) rather than overriding thrusters. Not yet behaviour-equivalent to `direct`: it needs
+    core powered-on + in AUTO, the stock `auto_target_generator` replaced, and the control-side
+    servo-unit / ESC clamp / thrust-sign reconcile. Validate on sim/hardware before use — see the
+    `navigator_node` module docstring.
 
 All detection/decision/allocation logic lives in the installable `umiusi_perception` package (detector +
 FSM + the numpy-only `umiusi_perception.control` allocation); these nodes only do topic plumbing + message
