@@ -53,7 +53,7 @@ conversion. That is why the perception and behaviour are bit-identical between s
 | package | build type | contents |
 |---|---|---|
 | `umiusi_autonomy_msgs` | ament_cmake (rosidl) | `BalloonDetection`, `BalloonDetectionArray` |
-| `umiusi_autonomy` | ament_python | `perception_node`, `navigator_node`, launch, config |
+| `umiusi_autonomy` | ament_python | `perception_node`, `navigator_node`, `auto_target_generator`, `rl_attitude_node`, `teleop_keyboard`, launch, config, bundled policy |
 
 ## Prerequisite: the `umiusi_perception` wheel
 The nodes import **only** `umiusi_perception` — the detector/tracker/FSM (needs **torch**) *and* the
