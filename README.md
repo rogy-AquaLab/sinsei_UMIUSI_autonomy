@@ -39,8 +39,10 @@ Two thin rclpy nodes that run the **same** ROS-free perception + autonomy code a
   `umiusi_sim/tools/ros_policy.py` that needs **no umiusi_sim / umiusi_rl / mujoco** — only
   stable-baselines3 + torch + gymnasium. Subscribes `/state/imu_state` + `/state/thruster_state_all`,
   rebuilds the 25-D `attitude_velocity`/`imu` observation (verified bit-identical to
-  `UmiusiPoseEnv._get_obs`), and publishes the four `/cmd/direct/...` `ThrusterOutput`. Launch it
-  standalone with `launch/rl_attitude.launch.py`. See its module docstring for the deg/rad unit
+  `UmiusiPoseEnv._get_obs`), and publishes the four `/cmd/direct/...` `ThrusterOutput`. The target
+  attitude + velocity are set in **real time** via topics (`geometry_msgs/Quaternion` +
+  `Vector3`; default = upright + cruise), so a teleop/joystick controller just publishes them. Launch
+  it standalone with `launch/rl_attitude.launch.py`. See its module docstring for the deg/rad unit
   caveats (inherited from `ros_policy`).
 
 All detection/decision/allocation logic lives in the installable `umiusi_perception` package (detector +
@@ -91,9 +93,18 @@ ros2 launch umiusi_autonomy rl_attitude.launch.py                 # bundled crui
 ros2 launch umiusi_autonomy rl_attitude.launch.py vel_cmd:=0.3    # slower cruise
 ros2 launch umiusi_autonomy rl_attitude.launch.py publish:=false  # predict only (no thrusters)
 ```
-Needs `stable-baselines3`, `torch`, `gymnasium` in the ROS runtime env (not rosdep keys — install
-with pip, like the `umiusi_perception` wheel). Requires the controllers/bridge providing
-`/state/imu_state` + `/state/thruster_state_all`.
+**Real-time setpoints** (last message wins; defaults = upright + `vel_cmd`): publish the target
+attitude and/or velocity — a teleop / joystick controller just publishes these:
+```bash
+# target attitude (geometry_msgs/Quaternion, x y z w) — here: identity = upright
+ros2 topic pub /rl_attitude_node/target_attitude geometry_msgs/msg/Quaternion "{x: 0, y: 0, z: 0, w: 1}"
+# target velocity in the target-body frame (geometry_msgs/Vector3) — cruise +X at 0.3 m/s
+ros2 topic pub /rl_attitude_node/velocity_cmd geometry_msgs/msg/Vector3 "{x: 0.3, y: 0, z: 0}"
+```
+Topic names are the `attitude_topic` / `velocity_topic` params (default `~/target_attitude`,
+`~/velocity_cmd`). Needs `stable-baselines3`, `torch`, `gymnasium` in the ROS runtime env (not rosdep
+keys — install with pip, like the `umiusi_perception` wheel). Requires the controllers/bridge
+providing `/state/imu_state` + `/state/thruster_state_all`.
 
 ## Deploy calibration (verify on hardware — cannot be inferred from the sim)
 * **`fovy_deg`** (both nodes) must match the physical camera vertical FOV — it sets every

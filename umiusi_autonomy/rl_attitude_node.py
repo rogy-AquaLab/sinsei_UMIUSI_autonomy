@@ -12,7 +12,10 @@ to run it. Loop:
   * PUBLISH the four direct-override /cmd/direct/thruster_controller/output_{lf,lb,rb,rf}
     (ThrusterOutput, runnable=true), action [servo x4, esc x4] -> {angle, duty_cycle}.
 
-Fixed command: hold UPRIGHT (target = identity) + CRUISE forward (body +X at ``vel_cmd`` m/s).
+Command: defaults to hold UPRIGHT (target = identity) + CRUISE forward (body +X at ``vel_cmd`` m/s),
+and can be overridden in REAL TIME by publishing the target attitude on ``attitude_topic``
+(geometry_msgs/Quaternion) and/or the target velocity (target-body frame) on ``velocity_topic``
+(geometry_msgs/Vector3). Last message wins; a teleop / joystick controller just publishes these.
 
 UNIT CAVEATS (inherited from ros_policy; confirm on the live bridge — the spec's open
 "FF-frame reconcile" item):
@@ -30,6 +33,7 @@ from pathlib import Path
 import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
+from geometry_msgs.msg import Quaternion, Vector3
 from rclpy.node import Node
 from sinsei_umiusi_msgs.msg import ImuState, ThrusterOutput, ThrusterRunnable, ThrusterStateAll
 
@@ -76,6 +80,9 @@ class RlAttitudeNode(Node):
         self.declare_parameter("servo_range_deg", 90.0)
         self.declare_parameter("gyro_deg_per_sec", False)  # convert IMU gyro deg/s -> rad/s (see caveats)
         self.declare_parameter("publish", True)            # False = predict only, do not command
+        # Real-time setpoint topics (hold last; until a message arrives, use the launch defaults below).
+        self.declare_parameter("attitude_topic", "~/target_attitude")  # geometry_msgs/Quaternion
+        self.declare_parameter("velocity_topic", "~/velocity_cmd")     # geometry_msgs/Vector3 (target-body)
 
         self._hz = float(self.get_parameter("control_hz").value)
         self._dt = 1.0 / self._hz
@@ -97,17 +104,34 @@ class RlAttitudeNode(Node):
             ImuState, self.get_parameter("imu_topic").value, self._on_imu, 1)
         self._sub_thr = self.create_subscription(
             ThrusterStateAll, self.get_parameter("thruster_state_topic").value, self._on_thr, 1)
+        # Real-time command inputs (optional): last message wins; absence keeps the defaults above.
+        att_topic = self.get_parameter("attitude_topic").value
+        vel_topic = self.get_parameter("velocity_topic").value
+        self._sub_att = self.create_subscription(Quaternion, att_topic, self._on_attitude, 1)
+        self._sub_vel = self.create_subscription(Vector3, vel_topic, self._on_velocity, 1)
         self._pubs = {p: self.create_publisher(ThrusterOutput, CMD_PREFIX + p, 10) for p in POSITIONS}
         self._timer = self.create_timer(self._dt, self._tick)
         self.get_logger().info(
-            f"rl_attitude_node: target=upright v_cmd=[{self._vel:.3f},0,0] m/s @ {self._hz:.0f} Hz "
-            f"(publish={self._publish}); loading policy on first state...")
+            f"rl_attitude_node: default target=upright v_cmd=[{self._vel:.3f},0,0] m/s @ {self._hz:.0f} Hz "
+            f"(publish={self._publish}); live setpoints on '{att_topic}' (Quaternion) + "
+            f"'{vel_topic}' (Vector3); loading policy on first state...")
 
     def _on_imu(self, msg):
         self._imu = msg
 
     def _on_thr(self, msg):
         self._thr = msg
+
+    def _on_attitude(self, msg):
+        # geometry_msgs/Quaternion (x,y,z,w) -> MuJoCo (w,x,y,z), normalised; ignore a zero quat.
+        q = np.array([msg.w, msg.x, msg.y, msg.z], dtype=float)
+        n = np.linalg.norm(q)
+        if n > 1e-9:
+            self._target_quat = q / n
+
+    def _on_velocity(self, msg):
+        # geometry_msgs/Vector3 -> commanded velocity in the TARGET-BODY frame.
+        self._v_cmd = np.array([msg.x, msg.y, msg.z], dtype=float)
 
     def _ensure_model(self) -> bool:
         if self._model is not None:
