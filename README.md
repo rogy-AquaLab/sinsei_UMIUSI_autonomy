@@ -34,6 +34,14 @@ Two thin rclpy nodes that run the **same** ROS-free perception + autonomy code a
   in place of core's placeholder + `perception_node` (do NOT also run core's `main.yaml` — a second
   generator would race on `/cmd/target`). Needs the same control-side reconcile as `navigator_node`'s
   `target` mode; validate on sim/hardware first.
+* **`rl_attitude_node`** — a **self-contained** RL attitude(-velocity) controller: the trained
+  policy (bundled in `models/cruise_policy`) driving the thrusters directly. A rclpy port of
+  `umiusi_sim/tools/ros_policy.py` that needs **no umiusi_sim / umiusi_rl / mujoco** — only
+  stable-baselines3 + torch + gymnasium. Subscribes `/state/imu_state` + `/state/thruster_state_all`,
+  rebuilds the 25-D `attitude_velocity`/`imu` observation (verified bit-identical to
+  `UmiusiPoseEnv._get_obs`), and publishes the four `/cmd/direct/...` `ThrusterOutput`. Launch it
+  standalone with `launch/rl_attitude.launch.py`. See its module docstring for the deg/rad unit
+  caveats (inherited from `ros_policy`).
 
 All detection/decision/allocation logic lives in the installable `umiusi_perception` package (detector +
 FSM + the numpy-only `umiusi_perception.control` allocation); these nodes only do topic plumbing + message
@@ -75,6 +83,17 @@ ros2 launch umiusi_autonomy autonomy.launch.py model_path:=/abs/model.pt publish
 
 Parameters live in `config/autonomy.yaml` (topics, rates, camera FOV, calibration). `model_path`,
 `image_topic`, and `publish` are also launch arguments.
+
+### RL attitude control only (no perception / FSM)
+Drive the thrusters with the bundled trained policy (hold upright + cruise +X):
+```bash
+ros2 launch umiusi_autonomy rl_attitude.launch.py                 # bundled cruise policy
+ros2 launch umiusi_autonomy rl_attitude.launch.py vel_cmd:=0.3    # slower cruise
+ros2 launch umiusi_autonomy rl_attitude.launch.py publish:=false  # predict only (no thrusters)
+```
+Needs `stable-baselines3`, `torch`, `gymnasium` in the ROS runtime env (not rosdep keys — install
+with pip, like the `umiusi_perception` wheel). Requires the controllers/bridge providing
+`/state/imu_state` + `/state/thruster_state_all`.
 
 ## Deploy calibration (verify on hardware — cannot be inferred from the sim)
 * **`fovy_deg`** (both nodes) must match the physical camera vertical FOV — it sets every
