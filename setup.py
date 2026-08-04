@@ -13,6 +13,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
+        ("share/" + package_name + "/models/cruise_policy", glob("models/cruise_policy/*")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -30,6 +31,9 @@ setup(
         "console_scripts": [
             "perception_node = umiusi_autonomy.perception_node:main",
             "navigator_node = umiusi_autonomy.navigator_node:main",
+            "auto_target_generator = umiusi_autonomy.auto_target_generator:main",
+            "rl_attitude_node = umiusi_autonomy.rl_attitude_node:main",
+            "teleop_keyboard = umiusi_autonomy.teleop_keyboard:main",
         ],
     },
 )

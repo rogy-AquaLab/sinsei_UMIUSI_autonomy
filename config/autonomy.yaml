@@ -26,3 +26,20 @@ navigator_node:
     yaw_rate_axis: "y"       # IMU axis carrying the vehicle yaw rate (x/y/z); sim uses y (up)
     yaw_rate_sign: 1.0
     publish: true            # false -> compute the FSM but do NOT command the thrusters (dry test)
+    command_mode: "direct"   # "direct" -> /cmd/direct ThrusterOutput (default, self-enabling).
+                             # "target" -> ride on core: publish Target on /cmd/target (EXPERIMENTAL;
+                             #             needs power-on + AUTO mode; see navigator_node docstring).
+    target_topic: "/cmd/target"   # only used when command_mode == "target"
+
+auto_target_generator:          # lifecycle node for the on-core path (core_autonomy.launch.py)
+  ros__parameters:
+    detections_topic: "/perception_node/detections"
+    imu_topic: "/state/imu_state"
+    target_topic: "/cmd/target"
+    control_hz: 50.0
+    frame_h: 240
+    frame_w: 320
+    fovy_deg: 60.0
+    # DEPLOY CALIBRATION — verify against the mounted IMU (ImuState.angular_velocity is DEG/S):
+    yaw_rate_axis: "y"       # IMU axis carrying the vehicle yaw rate (x/y/z); sim uses y (up)
+    yaw_rate_sign: 1.0
