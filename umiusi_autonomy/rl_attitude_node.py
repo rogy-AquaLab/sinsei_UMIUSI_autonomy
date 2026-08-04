@@ -223,6 +223,8 @@ class RlAttitudeNode(Node):
     def _detach_all(self):
         """DISARM: zero output + runnable false on every thruster -> the control stack detaches
         esc/servo (hardware-level not-allowed). The e-stop / disarm path for the direct loop."""
+        if not self._publish:      # compute-only node never commands /cmd, so nothing to detach
+            return
         for p in POSITIONS:
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=False, servo=False)

@@ -32,6 +32,8 @@ from rclpy.node import Node
 from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable
 from std_msgs.msg import Bool
 
+from umiusi_autonomy.arm import ESTOP_QOS
+
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
 
@@ -65,7 +67,7 @@ class TeleopKeyboard(Node):
 
         self._pub_att = self.create_publisher(Quaternion, self.get_parameter("attitude_topic").value, 10)
         self._pub_vel = self.create_publisher(Vector3, self.get_parameter("velocity_topic").value, 10)
-        self._pub_estop = self.create_publisher(Bool, self.get_parameter("estop_topic").value, 10)
+        self._pub_estop = self.create_publisher(Bool, self.get_parameter("estop_topic").value, ESTOP_QOS)
         self._detach_pubs = {p: self.create_publisher(ThrusterOutput, CMD_PREFIX + p, 10) for p in POSITIONS}
 
         self._v = [0.0, 0.0, 0.0]           # target velocity (body frame)
@@ -144,6 +146,12 @@ class TeleopKeyboard(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = TeleopKeyboard()
+    if not sys.stdin.isatty():
+        node.get_logger().error("teleop_keyboard needs a TTY — run it with `ros2 run` in a terminal.")
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+        return
     settings = termios.tcgetattr(sys.stdin)
     print(HELP)
     print("teleop_keyboard ready. focus this terminal and press keys.\n")
@@ -159,7 +167,11 @@ def main(args=None):
         pass
     finally:
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
-        node.estop(True)          # disarm + detach on exit
+        try:
+            if rclpy.ok():
+                node.estop(True)          # disarm + detach on exit
+        except Exception:  # noqa: BLE001
+            pass
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

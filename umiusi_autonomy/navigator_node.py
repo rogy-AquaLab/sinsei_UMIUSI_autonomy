@@ -211,6 +211,8 @@ class NavigatorNode(Node):
         """DISARM / e-stop. Direct mode: zero + runnable false -> the control stack detaches
         esc/servo. Target mode: zero Target (a soft stop; the hard disarm there is core's
         power/runnable gating, which this node does not own)."""
+        if not self._publish:      # compute-only node never commands, so nothing to detach
+            return
         if self._mode == "target":
             if self._pub_target is not None:
                 self._pub_target.publish(Target())

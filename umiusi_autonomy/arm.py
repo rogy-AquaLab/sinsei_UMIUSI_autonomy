@@ -5,15 +5,21 @@ assert a DETACH — publish ``ThrusterOutput`` with ``runnable.esc = runnable.se
 output, which the control stack resolves to esc/servo *not allowed* (the hardware-level detach). This
 is the emergency-stop path for the direct-override control loop; core's power/mode gating is the other.
 
-Interface exposed on the owning node (a latch):
+Interface exposed on the owning node:
   * ``~/estop`` (std_msgs/Bool)  — ``data: true`` DISARMs immediately; ``data: false`` re-arms.
+    Latched (transient_local, reliable) QoS: a node that (re)starts while an e-stop is asserted picks
+    up the last value and comes up DISARMED, provided the publisher is still alive.
   * ``~/arm``   (std_srvs/SetBool) — ``data: true`` arms, ``data: false`` disarms (programmatic).
 """
 
 from __future__ import annotations
 
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool
 from std_srvs.srv import SetBool
+
+# Latched so a late-joining / restarted node inherits the last e-stop state (reliable + keep-last-1).
+ESTOP_QOS = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
 
 class ArmState:
@@ -22,7 +28,7 @@ class ArmState:
         self._node = node
         self._on_disarm = on_disarm          # called on every disarm transition (publish the detach)
         self.armed = bool(start_armed)
-        self._sub = node.create_subscription(Bool, estop_topic, self._on_estop, 1)
+        self._sub = node.create_subscription(Bool, estop_topic, self._on_estop, ESTOP_QOS)
         self._srv = node.create_service(SetBool, arm_service, self._on_arm)
         node.get_logger().info(
             f"arm state: {'ARMED' if self.armed else 'DISARMED'} "
