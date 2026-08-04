@@ -33,6 +33,7 @@ setup(
             "navigator_node = umiusi_autonomy.navigator_node:main",
             "auto_target_generator = umiusi_autonomy.auto_target_generator:main",
             "rl_attitude_node = umiusi_autonomy.rl_attitude_node:main",
+            "teleop_keyboard = umiusi_autonomy.teleop_keyboard:main",
         ],
     },
 )

@@ -17,6 +17,11 @@ and can be overridden in REAL TIME by publishing the target attitude on ``attitu
 (geometry_msgs/Quaternion) and/or the target velocity (target-body frame) on ``velocity_topic``
 (geometry_msgs/Vector3). Last message wins; a teleop / joystick controller just publishes these.
 
+SAFETY: ``~/estop`` (std_msgs/Bool, true) or ``~/arm`` (std_srvs/SetBool, data:false) DISARMs
+immediately — the loop stops predicting and asserts a DETACH every tick (ThrusterOutput runnable
+esc/servo = false, zero output), so the control stack releases the thrusters. Re-arm with the
+``~/arm`` service (data:true). ``start_armed:=false`` launches disarmed.
+
 UNIT CAVEATS (inherited from ros_policy; confirm on the live bridge — the spec's open
 "FF-frame reconcile" item):
   * IMU ``angular_velocity`` is used as-is as rad/s (msg documents deg/s). Set param
@@ -36,6 +41,8 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Quaternion, Vector3
 from rclpy.node import Node
 from sinsei_umiusi_msgs.msg import ImuState, ThrusterOutput, ThrusterRunnable, ThrusterStateAll
+
+from umiusi_autonomy.arm import ArmState
 
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
@@ -80,6 +87,7 @@ class RlAttitudeNode(Node):
         self.declare_parameter("servo_range_deg", 90.0)
         self.declare_parameter("gyro_deg_per_sec", False)  # convert IMU gyro deg/s -> rad/s (see caveats)
         self.declare_parameter("publish", True)            # False = predict only, do not command
+        self.declare_parameter("start_armed", True)        # False = launch disarmed (safe); arm to run
         # Real-time setpoint topics (hold last; until a message arrives, use the launch defaults below).
         self.declare_parameter("attitude_topic", "~/target_attitude")  # geometry_msgs/Quaternion
         self.declare_parameter("velocity_topic", "~/velocity_cmd")     # geometry_msgs/Vector3 (target-body)
@@ -110,6 +118,8 @@ class RlAttitudeNode(Node):
         self._sub_att = self.create_subscription(Quaternion, att_topic, self._on_attitude, 1)
         self._sub_vel = self.create_subscription(Vector3, vel_topic, self._on_velocity, 1)
         self._pubs = {p: self.create_publisher(ThrusterOutput, CMD_PREFIX + p, 10) for p in POSITIONS}
+        self._arm = ArmState(self, self._detach_all,
+                             start_armed=bool(self.get_parameter("start_armed").value))
         self._timer = self.create_timer(self._dt, self._tick)
         self.get_logger().info(
             f"rl_attitude_node: default target=upright v_cmd=[{self._vel:.3f},0,0] m/s @ {self._hz:.0f} Hz "
@@ -188,6 +198,9 @@ class RlAttitudeNode(Node):
         return np.concatenate([ori_err, gyro, self._v_cmd, servo_n, thrust_n, self._prev_action])
 
     def _tick(self):
+        if not self._arm.armed:            # e-stopped / disarmed: keep asserting the detach
+            self._detach_all()
+            return
         if self._imu is None or self._thr is None:
             return
         if not self._ensure_model():
@@ -207,13 +220,18 @@ class RlAttitudeNode(Node):
             out.angle = float(action[k]) * self._servo_range_deg   # degrees, matching ros_policy
             self._pubs[p].publish(out)
 
-    def stop(self):
+    def _detach_all(self):
+        """DISARM: zero output + runnable false on every thruster -> the control stack detaches
+        esc/servo (hardware-level not-allowed). The e-stop / disarm path for the direct loop."""
         for p in POSITIONS:
             out = ThrusterOutput()
-            out.runnable = ThrusterRunnable(esc=True, servo=True)
+            out.runnable = ThrusterRunnable(esc=False, servo=False)
             out.duty_cycle = 0.0
             out.angle = 0.0
             self._pubs[p].publish(out)
+
+    def stop(self):
+        self._detach_all()
 
 
 def _make_stub_env():

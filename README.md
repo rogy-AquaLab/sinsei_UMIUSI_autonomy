@@ -106,6 +106,22 @@ Topic names are the `attitude_topic` / `velocity_topic` params (default `~/targe
 keys — install with pip, like the `umiusi_perception` wheel). Requires the controllers/bridge
 providing `/state/imu_state` + `/state/thruster_state_all`.
 
+### Keyboard teleop + emergency stop
+`teleop_keyboard` drives `rl_attitude_node` from the keyboard (3-D: separate keys per axis), for
+experiments. Run it in its **own terminal** (it needs the keyboard):
+```bash
+ros2 run umiusi_autonomy teleop_keyboard
+```
+`w/s a/d r/f` = ±velocity x/y/z (body), `i/k j/l u/o` = pitch/yaw/roll target, `SPACE` = zero velocity,
+`t` = upright, **`x` = EMERGENCY STOP**, `z` = re-arm, `q` = quit. The e-stop both signals the
+controller to disarm **and** directly detaches the thrusters (independent of the controller).
+
+**Disarm / e-stop (all direct-drive autonomy nodes** — `rl_attitude_node`, `navigator_node`): publish
+`~/estop` (`std_msgs/Bool` `true`) or call `~/arm` (`std_srvs/SetBool` `data: false`) to DISARM — the
+node stops and asserts a **detach** every tick (`ThrusterOutput` `runnable.esc=servo=false` + zero, so
+the control stack releases esc/servo). Re-arm with `~/arm` `data: true` (or `~/estop` `false`). Launch
+disarmed with `start_armed:=false`. (Core's power-off / Standby mode is the other, stack-wide stop.)
+
 ## Deploy calibration (verify on hardware — cannot be inferred from the sim)
 * **`fovy_deg`** (both nodes) must match the physical camera vertical FOV — it sets every
   bearing/range estimate.

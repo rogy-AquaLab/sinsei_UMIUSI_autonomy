@@ -36,6 +36,10 @@ DEPLOY CALIBRATION (verify on hardware, cannot be inferred from the sim):
     the normalised servo action to radians (default 90, matching configs/umiusi.yaml). NOTE:
     tools/ros_policy currently scales in degrees — reconcile the two against the live bridge during
     hardware bring-up (this is the spec's open "FF-frame sign reconcile" item).
+
+SAFETY: ``~/estop`` (std_msgs/Bool, true) or ``~/arm`` (std_srvs/SetBool, data:false) DISARMs — the
+control tick stops and asserts a detach every cycle (direct mode: runnable esc/servo = false + zero;
+target mode: zero Target). Re-arm via ``~/arm`` (data:true) or ``~/estop`` (false). ``start_armed``.
 """
 
 from __future__ import annotations
@@ -46,6 +50,7 @@ import rclpy
 from rclpy.node import Node
 from sinsei_umiusi_msgs.msg import Target, ThrusterOutput, ThrusterRunnable
 
+from umiusi_autonomy.arm import ArmState
 from umiusi_autonomy_msgs.msg import BalloonDetectionArray
 
 # Thruster position -> feed-forward action index. controllers.yaml: lf=id1, lb=id2, rb=id3, rf=id4;
@@ -108,6 +113,9 @@ class NavigatorNode(Node):
             self._pubs = {p: self.create_publisher(ThrusterOutput, CMD_PREFIX + p, 10)
                           for p in POSITIONS}
             sink = f"{CMD_PREFIX}{{{','.join(POSITIONS)}}}"
+        self.declare_parameter("start_armed", True)    # False = launch disarmed; arm to drive
+        self._arm = ArmState(self, self._detach_all,
+                             start_armed=bool(self.get_parameter("start_armed").value))
         self._timer = self.create_timer(self._dt, self._control_tick)
         self.get_logger().info(
             f"navigator_node[{self._mode}]: detections='{det_topic}', imu='{imu_topic}' -> "
@@ -161,6 +169,9 @@ class NavigatorNode(Node):
         )
 
     def _control_tick(self):
+        if not self._arm.armed:            # e-stopped / disarmed: keep asserting the detach
+            self._detach_all()
+            return
         if not self._ensure_behavior():
             return
         fresh = self._new_dets
@@ -196,18 +207,24 @@ class NavigatorNode(Node):
             out.angle = float(action[k]) * self._servo_range_rad  # normalised servo -> radians
             self._pubs[p].publish(out)
 
-    def stop(self):
-        """Command zero (so the vehicle does not keep driving after we exit)."""
+    def _detach_all(self):
+        """DISARM / e-stop. Direct mode: zero + runnable false -> the control stack detaches
+        esc/servo. Target mode: zero Target (a soft stop; the hard disarm there is core's
+        power/runnable gating, which this node does not own)."""
         if self._mode == "target":
             if self._pub_target is not None:
-                self._pub_target.publish(Target())   # zero setpoint
+                self._pub_target.publish(Target())
             return
         for p in POSITIONS:
             out = ThrusterOutput()
-            out.runnable = ThrusterRunnable(esc=True, servo=True)
+            out.runnable = ThrusterRunnable(esc=False, servo=False)
             out.duty_cycle = 0.0
             out.angle = 0.0
             self._pubs[p].publish(out)
+
+    def stop(self):
+        """Command zero / detach so the vehicle does not keep driving after we exit."""
+        self._detach_all()
 
 
 def main(args=None):
