@@ -50,8 +50,8 @@ import rclpy
 from rclpy.node import Node
 from sinsei_umiusi_msgs.msg import Target, ThrusterOutput, ThrusterRunnable
 
-from umiusi_autonomy.arm import ArmState
 from umiusi_autonomy_msgs.msg import BalloonDetectionArray
+from umiusi_rl_control.arm import ArmState
 
 # Thruster position -> feed-forward action index. controllers.yaml: lf=id1, lb=id2, rb=id3, rf=id4;
 # feedforward_allocation returns [servo_1..4, esc_1..4], so ordered positions map to indices 0..3.

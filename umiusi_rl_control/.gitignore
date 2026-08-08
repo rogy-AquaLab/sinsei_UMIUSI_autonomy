@@ -1,0 +1,8 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# colcon / ament build artifacts (if built in-tree)
+/build/
+/install/
+/log/

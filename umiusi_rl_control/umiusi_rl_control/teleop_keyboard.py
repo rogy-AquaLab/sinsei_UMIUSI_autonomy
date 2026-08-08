@@ -1,13 +1,13 @@
 """teleop_keyboard — keyboard teleop for the RL attitude(-velocity) controller (experiments).
 
-Publishes a target attitude (geometry_msgs/Quaternion) + target velocity (geometry_msgs/Vector3,
-target-body frame) to ``rl_attitude_node`` — designed for 3-D motion (separate keys per axis), unlike
-teleop_twist_keyboard. Includes an EMERGENCY STOP that both signals the controller to disarm AND
-directly detaches the thrusters (independent of the controller staying alive).
+Publishes an ``umiusi_rl_control_msgs/AttitudeTarget`` (target attitude quaternion + target velocity in
+the target-body frame) to ``rl_attitude_node`` — designed for 3-D motion (separate keys per axis),
+unlike teleop_twist_keyboard. Includes an EMERGENCY STOP that both signals the controller to disarm
+AND directly detaches the thrusters (independent of the controller staying alive).
 
 Run in its own terminal (it needs the keyboard):
 
-    ros2 run umiusi_autonomy teleop_keyboard
+    ros2 run umiusi_rl_control teleop_keyboard
 
 Keys
   velocity (body frame, m/s)      attitude target (deg)          safety
@@ -27,12 +27,12 @@ import termios
 import tty
 
 import rclpy
-from geometry_msgs.msg import Quaternion, Vector3
 from rclpy.node import Node
 from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable
 from std_msgs.msg import Bool
 
-from umiusi_autonomy.arm import ESTOP_QOS
+from umiusi_rl_control.arm import ESTOP_QOS
+from umiusi_rl_control_msgs.msg import AttitudeTarget
 
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
@@ -54,8 +54,7 @@ def rpy_to_quat(roll, pitch, yaw):
 class TeleopKeyboard(Node):
     def __init__(self):
         super().__init__("teleop_keyboard")
-        self.declare_parameter("attitude_topic", "/rl_attitude_node/target_attitude")
-        self.declare_parameter("velocity_topic", "/rl_attitude_node/velocity_cmd")
+        self.declare_parameter("setpoint_topic", "/rl_attitude_node/setpoint")
         self.declare_parameter("estop_topic", "/rl_attitude_node/estop")
         self.declare_parameter("vel_step", 0.05)      # m/s per key
         self.declare_parameter("vel_max", 0.4)        # clamp
@@ -65,8 +64,7 @@ class TeleopKeyboard(Node):
         self._vel_max = float(self.get_parameter("vel_max").value)
         self._ang_step = float(self.get_parameter("ang_step_deg").value)
 
-        self._pub_att = self.create_publisher(Quaternion, self.get_parameter("attitude_topic").value, 10)
-        self._pub_vel = self.create_publisher(Vector3, self.get_parameter("velocity_topic").value, 10)
+        self._pub_sp = self.create_publisher(AttitudeTarget, self.get_parameter("setpoint_topic").value, 10)
         self._pub_estop = self.create_publisher(Bool, self.get_parameter("estop_topic").value, ESTOP_QOS)
         self._detach_pubs = {p: self.create_publisher(ThrusterOutput, CMD_PREFIX + p, 10) for p in POSITIONS}
 
@@ -75,9 +73,12 @@ class TeleopKeyboard(Node):
 
     # ---- command emission ----
     def _publish_setpoint(self):
-        self._pub_vel.publish(Vector3(x=self._v[0], y=self._v[1], z=self._v[2]))
+        msg = AttitudeTarget()
+        msg.header.stamp = self.get_clock().now().to_msg()
         w, x, y, z = rpy_to_quat(*(math.radians(a) for a in self._rpy))
-        self._pub_att.publish(Quaternion(x=x, y=y, z=z, w=w))
+        msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z = w, x, y, z
+        msg.velocity.x, msg.velocity.y, msg.velocity.z = self._v[0], self._v[1], self._v[2]
+        self._pub_sp.publish(msg)
 
     def estop(self, engage: bool):
         self._pub_estop.publish(Bool(data=engage))
