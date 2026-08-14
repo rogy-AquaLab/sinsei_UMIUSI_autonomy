@@ -16,13 +16,13 @@ perception_node:
 navigator_node:
   ros__parameters:
     detections_topic: "/perception_node/detections"
-    imu_topic: "/state/imu_state"
+    imu_topic: "/state/imu"
     control_hz: 50.0
     frame_h: 240
     frame_w: 320
     fovy_deg: 60.0
     servo_range_deg: 90.0    # ThrusterOutput.angle [rad] = servo_action * radians(servo_range_deg)
-    # DEPLOY CALIBRATION — verify against the mounted IMU (ImuState.angular_velocity is DEG/S):
+    # DEPLOY CALIBRATION — verify against the mounted IMU (sensor_msgs/Imu.angular_velocity is RAD/S):
     yaw_rate_axis: "y"       # IMU axis carrying the vehicle yaw rate (x/y/z); sim uses y (up)
     yaw_rate_sign: 1.0
     publish: true            # false -> compute the FSM but do NOT command the thrusters (dry test)
@@ -34,12 +34,12 @@ navigator_node:
 auto_target_generator:          # lifecycle node for the on-core path (core_autonomy.launch.py)
   ros__parameters:
     detections_topic: "/perception_node/detections"
-    imu_topic: "/state/imu_state"
+    imu_topic: "/state/imu"
     target_topic: "/cmd/target"
     control_hz: 50.0
     frame_h: 240
     frame_w: 320
     fovy_deg: 60.0
-    # DEPLOY CALIBRATION — verify against the mounted IMU (ImuState.angular_velocity is DEG/S):
+    # DEPLOY CALIBRATION — verify against the mounted IMU (sensor_msgs/Imu.angular_velocity is RAD/S):
     yaw_rate_axis: "y"       # IMU axis carrying the vehicle yaw rate (x/y/z); sim uses y (up)
     yaw_rate_sign: 1.0

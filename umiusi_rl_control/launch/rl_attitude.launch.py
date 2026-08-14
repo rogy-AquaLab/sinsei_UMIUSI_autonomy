@@ -8,7 +8,7 @@
 Runs just ``rl_attitude_node`` (no perception / FSM / core). It holds upright + cruises body +X using
 the bundled ``models/cruise_policy`` policy. Needs stable-baselines3 + torch + gymnasium in the ROS
 runtime env, and the controllers/bridge (sinsei_umiusi_control or umiusi_sim_bridge) providing
-``/state/imu_state`` + ``/state/thruster_state_all`` and consuming ``/cmd/direct/...``.
+``/state/imu`` + ``/state/thruster_state_all`` and consuming ``/cmd/direct/...``.
 """
 
 from launch import LaunchDescription

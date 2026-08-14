@@ -4,7 +4,7 @@ A SELF-CONTAINED rclpy port of ``umiusi_sim/tools/ros_policy.py``: it needs NO u
 mujoco — only the bundled policy (``models/cruise_policy``) and stable-baselines3 + torch + gymnasium
 to run it. Loop:
 
-  * SUBSCRIBE  /state/imu_state (ImuState) + /state/thruster_state_all (ThrusterStateAll)
+  * SUBSCRIBE  /state/imu (sensor_msgs/Imu) + /state/thruster_state_all (ThrusterStateAll)
   * rebuild the policy's 25-D observation for task=attitude_velocity / obs_mode=imu, EXACTLY as
     ``UmiusiPoseEnv._get_obs`` does — layout [ori_err(3), gyro(3), v_cmd(3), servo_n(4), thrust_n(4),
     prev_action(8)] — using a vendored ``mju_subQuat`` (verified bit-identical to MuJoCo), apply the
@@ -25,8 +25,8 @@ esc/servo = false, zero output), so the control stack releases the thrusters. Re
 
 UNIT CAVEATS (inherited from ros_policy; confirm on the live bridge — the spec's open
 "FF-frame reconcile" item):
-  * IMU ``angular_velocity`` is used as-is as rad/s (msg documents deg/s). Set param
-    ``gyro_deg_per_sec:=true`` to convert if the bridge really sends deg/s.
+  * IMU ``angular_velocity`` is used as-is as rad/s (sensor_msgs/Imu is rad/s by the ROS standard, so
+    ``gyro_deg_per_sec`` stays False; set it true only if a bridge wrongly sends deg/s).
   * servo output ``ThrusterOutput.angle`` is published in DEGREES (= action * servo_range_deg), as
     ros_policy does; msg documents rad. Confirm what the plugin/hardware expects.
 """
@@ -40,7 +40,8 @@ import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
-from sinsei_umiusi_msgs.msg import ImuState, ThrusterOutput, ThrusterRunnable, ThrusterStateAll
+from sensor_msgs.msg import Imu
+from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable, ThrusterStateAll
 
 from umiusi_rl_control.arm import ArmState
 from umiusi_rl_control_msgs.msg import AttitudeTarget
@@ -81,7 +82,7 @@ class RlAttitudeNode(Node):
     def __init__(self):
         super().__init__("rl_attitude_node")
         self.declare_parameter("model_path", "")   # "" -> bundled models/cruise_policy/final.zip
-        self.declare_parameter("imu_topic", "/state/imu_state")
+        self.declare_parameter("imu_topic", "/state/imu")
         self.declare_parameter("thruster_state_topic", "/state/thruster_state_all")
         self.declare_parameter("control_hz", 50.0)
         self.declare_parameter("vel_cmd", 0.4)             # forward (+X) commanded speed [m/s]
@@ -109,7 +110,7 @@ class RlAttitudeNode(Node):
         self._thr = None
 
         self._sub_imu = self.create_subscription(
-            ImuState, self.get_parameter("imu_topic").value, self._on_imu, 1)
+            Imu, self.get_parameter("imu_topic").value, self._on_imu, 1)
         self._sub_thr = self.create_subscription(
             ThrusterStateAll, self.get_parameter("thruster_state_topic").value, self._on_thr, 1)
         # Real-time setpoint (optional): last message wins; absence keeps the defaults above.
@@ -181,7 +182,7 @@ class RlAttitudeNode(Node):
 
     def _build_obs(self):
         imu, thr = self._imu, self._thr
-        q = imu.quaternion
+        q = imu.orientation
         cur_quat = np.array([q.w, q.x, q.y, q.z], dtype=float)   # ROS xyzw -> MuJoCo wxyz
         g = imu.angular_velocity
         gyro = np.array([g.x, g.y, g.z], dtype=float)

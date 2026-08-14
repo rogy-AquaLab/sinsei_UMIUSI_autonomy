@@ -44,7 +44,7 @@ ros2 launch umiusi_rl_control rl_attitude.launch.py vel_cmd:=0.3    # slower cru
 ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=false  # predict only (no thrusters)
 ```
 Requires the controllers/bridge (`sinsei_umiusi_control` or `umiusi_sim_bridge`) providing
-`/state/imu_state` + `/state/thruster_state_all` and consuming `/cmd/direct/...`.
+`/state/imu` + `/state/thruster_state_all` and consuming `/cmd/direct/...`.
 
 **Real-time setpoint** (last message wins; defaults = upright + `vel_cmd`):
 ```bash
@@ -70,7 +70,7 @@ with `~/arm` `data: true` (or `~/estop` `false`). `start_armed:=false` launches 
 power-off / Standby is the other, stack-wide stop.)
 
 ## Unit caveats (inherited from `umiusi_sim/tools/ros_policy`; confirm on the live bridge)
-- IMU `angular_velocity` is used as-is as rad/s (msg documents deg/s); set `gyro_deg_per_sec:=true` to convert.
+- IMU `angular_velocity` is used as-is as rad/s (sensor_msgs/Imu is rad/s by the ROS standard); set `gyro_deg_per_sec:=true` only if a bridge wrongly sends deg/s.
 - servo output `ThrusterOutput.angle` is published in DEGREES (= action × `servo_range_deg`); msg documents rad.
 
 ## License

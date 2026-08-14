@@ -7,7 +7,7 @@ Two thin rclpy nodes that run the **same** ROS-free perception + autonomy code a
  onboard camera            perception_node                 navigator_node                sinsei_umiusi_control
  sensor_msgs/Image  ─────▶ learned detector +      ─────▶  behaviour FSM +        ─────▶ /cmd/direct/thruster_
  (/front_cam/image_raw)    sanitise_near_colours          feedforward_allocation         controller/output_{lf,lb,rb,rf}
-                           │                               ▲  ImuState (yaw rate)         (ThrusterOutput, direct override)
+                           │                               ▲  sensor_msgs/Imu (yaw rate)  (ThrusterOutput, direct override)
                            └──▶ BalloonDetectionArray ─────┘
 ```
 
@@ -94,9 +94,9 @@ stack releases esc/servo). Re-arm with `~/arm` `data: true` (or `~/estop` `false
 ## Deploy calibration (verify on hardware — cannot be inferred from the sim)
 * **`fovy_deg`** (both nodes) must match the physical camera vertical FOV — it sets every
   bearing/range estimate.
-* **IMU yaw rate**: `ImuState.angular_velocity` is **deg/s**; the FSM wants the body yaw rate in
-  rad/s. `yaw_rate_axis` (`x`/`y`/`z`, default `y`=up as in sim) and `yaw_rate_sign` select and
-  orient the component. Confirm against the mounted IMU.
+* **IMU yaw rate**: `sensor_msgs/Imu.angular_velocity` is **rad/s** (ROS standard), matching the FSM.
+  `yaw_rate_axis` (`x`/`y`/`z`, default `y`=up as in sim) and `yaw_rate_sign` select and orient the
+  component. Confirm against the mounted IMU.
 * **Servo scaling**: `ThrusterOutput.angle` is documented in **rad**; `servo_range_deg` (default 90,
   matching `configs/umiusi.yaml`) sets the half-range for the normalised-servo → rad mapping. NOTE:
   `tools/ros_policy.py` currently scales in degrees — reconcile the two against the live bridge
