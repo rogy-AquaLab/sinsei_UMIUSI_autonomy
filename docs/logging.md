@@ -23,18 +23,42 @@
 ## 使い方
 
 ```bash
-# 録画開始 (別ターミナル。Ctrl-C で停止)
-./tools/record_camera.sh --url rtsp://localhost:8554/cam1
+# 映像: 前後カメラを同時に、切り捨てに強い生 H264 で (Ctrl-C で停止)
+./tools/record_camera.sh --both --raw
 
-# 切り捨てに強い生 H264 で録りたいとき (推奨、下記参照)
-./tools/record_camera.sh --raw
-
-# 同時に rosbag (映像トピックは除外し、圧縮画像だけ入れる例)
+# それ以外: rosbag。**-a は使わないこと** (下記)
 ros2 bag record -o run_$(date +%Y%m%d-%H%M%S) \
   /state/imu /state/thruster_state_all /state/high_power_circuit_info \
-  /perception_node/detections /cmd/target /cmd/direct/thruster_controller/output_lf \
-  /front_cam/image_raw/compressed
+  /state/low_power_circuit_info /state/main_power_enabled \
+  /perception_node/detections /cmd/target \
+  /cmd/direct/thruster_controller/output_lf \
+  /cmd/direct/thruster_controller/output_lb \
+  /cmd/direct/thruster_controller/output_rb \
+  /cmd/direct/thruster_controller/output_rf \
+  /joint_states /tf /tf_static
 ```
+
+## `ros2 bag record -a` は使わない — 実測
+
+`-a` は `/front_cam/image_raw` (生 `sensor_msgs/Image`) まで録ってしまう。実機で計測した差:
+
+| | 認識周期 | CPU 使用 | 容量 |
+|---|---:|---:|---:|
+| bag 無し | 7.74 Hz | 63.2% | — |
+| **トピックを絞る** | **7.66 Hz** | **67.6%** (+4.4 pt) | **184 MB/時** |
+| `-a` (全トピック) | 6.84 Hz (**−12%**) | 93.2% (**+30 pt**) | **39 GB/時** |
+
+**`-a` は容量が 200 倍、CPU を 30 ポイント食い、perception が 12% 落ちる。**
+一方で**絞れば perception への影響は誤差の範囲**に収まる。
+
+`-a` が重い理由は `/front_cam/image_raw` ただ 1 つで、他のトピック
+(`/state/*`, `/cmd/*`, `/tf`, `/joint_states`, `/rosout`) はすべて小さい。
+映像は上の `record_camera.sh` で H264 のまま録るほうが、**CPU も容量も桁違いに安い**
+(録画の追加コストは CPU +2.4 pt)。
+
+> どうしても bag に映像を入れたいときだけ `camera_bridge_node` の
+> `publish_compressed:=true` を使い、`/front_cam/image_raw/compressed` を録る。
+> 生 Image (`/front_cam/image_raw`) は絶対に bag に入れない。
 
 出力先は `~/recordings/<開始時刻>/` で、`meta.txt` に開始時刻 (ISO と UNIX 秒)、
 RTSP URL、セグメント長、ホスト名が入る。**rosbag と同じ Pi の時計なので、
@@ -97,10 +121,45 @@ ros2 run umiusi_autonomy camera_bridge_node --ros-args \
 RTSP 直録 (上記) のほうが安い。** 生 `sensor_msgs/Image` を bag に入れるのは
 320x240 でも 3.5 MB/s あるので勧めない。
 
+## rosbag の metadata が書かれないことがある
+
+実機では `ros2 bag record` を SIGINT で止めても **`metadata.yaml` が書かれない**ことがある
+(単体で直接 SIGINT を送っても再現。終了に 20 秒かかったうえで `.mcap` だけが残る)。
+そのままだと `ros2 bag info` / `ros2 bag play` が
+`Could not find metadata in bag directory` で開けない。
+
+**データは失われていない。** MCAP は自己記述形式なので、reindex すれば完全に復元できる:
+
+```bash
+ros2 bag reindex <bag ディレクトリ>
+```
+
+復元例 (実機、149 秒ぶん): `/state/imu` 6576 件、`/perception_node/detections` 993 件、
+`/state/thruster_state_all` 6581 件 — すべて読めるようになる。
+
+`tools/record_run.sh` は停止時にも reindex を試みるが、**シグナルの届き方によっては
+停止処理まで到達しないことがある** (バックグラウンド起動時に再現)。確実なのは、
+走行後にまとめて直すこと:
+
+```bash
+./tools/record_run.sh --fix     # ~/runs 配下で metadata が欠けている bag を全部 reindex
+```
+
+**走行のたびに最後に `--fix` を打つ運用にしておけば取りこぼさない。**
+
+## 走行 1 回ぶんをまとめて記録する
+
+```bash
+./tools/record_run.sh --name pool-01
+```
+
+映像 (前後カメラ、H264 そのまま) と rosbag (状態・指令・検出の 15 トピック) を同時に開始し、
+Ctrl-C で両方をきれいに閉じる。出力は `~/runs/<日時>-<名前>/` に
+`video/` `bag/` `meta.txt` が揃う。**実機実測で perception への影響なし** (7.74 -> 7.80 Hz)。
+
 ## 最低限これだけは残す (競技当日)
 
-1. `tools/record_camera.sh --raw` で映像
-2. `ros2 bag record` で `/state/imu` `/state/thruster_state_all` `/perception_node/detections`
-   `/cmd/target` `/cmd/direct/...`
+1. **`tools/record_run.sh --name <走行名>`** — 映像と bag を同時に開始し、停止時に
+   bag の reindex まで済ませる。個別に回すより取りこぼしが少ない
 3. `~/umiusi_logs/` のノードログ (`tools/umiusi_stack.sh` が自動で残す)
 4. 走行前に `tools/bench_rates.py` を 20 秒回して**その日の周期の記録**を取る
