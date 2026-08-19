@@ -154,8 +154,20 @@ git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_control.git
 git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_core.git
 git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_msgs.git
 git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_ui.git
-git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_autonomy.git
+
+# autonomy は **private リポジトリ**。Pi に GitHub の認証が要る
+git clone -b feature/rl-control-split \
+    git@github.com:rogy-AquaLab/sinsei_UMIUSI_autonomy.git
 ```
+
+> **`sinsei_UMIUSI_autonomy` は private なので、Pi に認証情報が無いと clone できない**
+> (`fatal: could not read Username for 'https://github.com'`)。次のいずれかが必要:
+>
+> * Pi に deploy key を置いて SSH で clone する (推奨。読み取り専用にできる)
+> * Personal Access Token を使う
+> * PC で clone して `rsync -az --exclude=.git <repo> pi@<Pi>:~/ros2-ws/src/` で送る
+>
+> 他の 4 リポジトリは public なので HTTPS で clone できる。
 
 `sinsei_UMIUSI_autonomy` は 4 パッケージのモノレポで、**`umiusi_autonomy_msgs` も含まれる**
 (`umiusi_autonomy` / `umiusi_autonomy_msgs` / `umiusi_rl_control` / `umiusi_rl_control_msgs`)。
@@ -175,6 +187,24 @@ colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 > `sinsei_umiusi_core` は `behaviortree_cpp` を要求する。rosdep が入れられない場合は
 > `colcon build --packages-up-to umiusi_autonomy` で回避できる。
+
+> **`src/` に `umiusi_autonomy_msgs` が単独で置かれていないか確認すること。**
+> 以前は別リポジトリだったが `sinsei_UMIUSI_autonomy` に取り込んだため、古い環境では
+> 両方存在して `colcon build: Duplicate package names not supported` で止まる。
+> 単独のほうを消せばよい。
+
+### 検出器チェックポイント (git に入っていない)
+
+`camp_mix.pt` などの検出器の重みは **`umiusi_sim` 側で gitignore されており、
+どのリポジトリにも入っていない**。PC から手で持ってくる必要がある。
+
+```bash
+# [PC] umiusi_sim/models/perception_learned/ から
+rsync -az camp_mix.pt camp_real.pt camp_sim.pt pi@<Pi>:~/models/
+```
+
+RL 姿勢制御のポリシーは `sinsei_UMIUSI_autonomy` に入っているので、こちらは clone だけでよい
+(`umiusi_rl_control/models/cruise_policy/`)。
 
 ---
 
