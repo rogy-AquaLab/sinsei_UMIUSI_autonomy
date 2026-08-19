@@ -4,7 +4,7 @@ A SELF-CONTAINED rclpy port of ``umiusi_sim/tools/ros_policy.py``: it needs NO u
 mujoco — only the bundled policy (``models/cruise_policy``) and stable-baselines3 + torch + gymnasium
 to run it. Loop:
 
-  * SUBSCRIBE  /state/imu_state (ImuState) + /state/thruster_state_all (ThrusterStateAll)
+  * SUBSCRIBE  /state/imu (sensor_msgs/Imu) + /state/thruster_state_all (ThrusterStateAll)
   * rebuild the policy's 25-D observation for task=attitude_velocity / obs_mode=imu, EXACTLY as
     ``UmiusiPoseEnv._get_obs`` does — layout [ori_err(3), gyro(3), v_cmd(3), servo_n(4), thrust_n(4),
     prev_action(8)] — using a vendored ``mju_subQuat`` (verified bit-identical to MuJoCo), apply the
@@ -13,9 +13,10 @@ to run it. Loop:
     (ThrusterOutput, runnable=true), action [servo x4, esc x4] -> {angle, duty_cycle}.
 
 Command: defaults to hold UPRIGHT (target = identity) + CRUISE forward (body +X at ``vel_cmd`` m/s),
-and can be overridden in REAL TIME by publishing the target attitude on ``attitude_topic``
-(geometry_msgs/Quaternion) and/or the target velocity (target-body frame) on ``velocity_topic``
-(geometry_msgs/Vector3). Last message wins; a teleop / joystick controller just publishes these.
+and can be overridden in REAL TIME by publishing an ``umiusi_rl_control_msgs/AttitudeTarget`` on
+``setpoint_topic`` (target attitude quaternion + feed-forward velocity in the target-body frame;
+``type_mask`` selects which fields apply). Last message wins; a teleop / joystick controller just
+publishes it.
 
 SAFETY: ``~/estop`` (std_msgs/Bool, true) or ``~/arm`` (std_srvs/SetBool, data:false) DISARMs
 immediately — the loop stops predicting and asserts a DETACH every tick (ThrusterOutput runnable
@@ -24,8 +25,8 @@ esc/servo = false, zero output), so the control stack releases the thrusters. Re
 
 UNIT CAVEATS (inherited from ros_policy; confirm on the live bridge — the spec's open
 "FF-frame reconcile" item):
-  * IMU ``angular_velocity`` is used as-is as rad/s (msg documents deg/s). Set param
-    ``gyro_deg_per_sec:=true`` to convert if the bridge really sends deg/s.
+  * IMU ``angular_velocity`` is used as-is as rad/s (sensor_msgs/Imu is rad/s by the ROS standard, so
+    ``gyro_deg_per_sec`` stays False; set it true only if a bridge wrongly sends deg/s).
   * servo output ``ThrusterOutput.angle`` is published in DEGREES (= action * servo_range_deg), as
     ros_policy does; msg documents rad. Confirm what the plugin/hardware expects.
 """
@@ -38,11 +39,12 @@ from pathlib import Path
 import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import Quaternion, Vector3
 from rclpy.node import Node
-from sinsei_umiusi_msgs.msg import ImuState, ThrusterOutput, ThrusterRunnable, ThrusterStateAll
+from sensor_msgs.msg import Imu
+from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable, ThrusterStateAll
 
-from umiusi_autonomy.arm import ArmState
+from umiusi_rl_control.arm import ArmState
+from umiusi_rl_control_msgs.msg import AttitudeTarget
 
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
@@ -80,7 +82,7 @@ class RlAttitudeNode(Node):
     def __init__(self):
         super().__init__("rl_attitude_node")
         self.declare_parameter("model_path", "")   # "" -> bundled models/cruise_policy/final.zip
-        self.declare_parameter("imu_topic", "/state/imu_state")
+        self.declare_parameter("imu_topic", "/state/imu")
         self.declare_parameter("thruster_state_topic", "/state/thruster_state_all")
         self.declare_parameter("control_hz", 50.0)
         self.declare_parameter("vel_cmd", 0.4)             # forward (+X) commanded speed [m/s]
@@ -88,9 +90,8 @@ class RlAttitudeNode(Node):
         self.declare_parameter("gyro_deg_per_sec", False)  # convert IMU gyro deg/s -> rad/s (see caveats)
         self.declare_parameter("publish", True)            # False = predict only, do not command
         self.declare_parameter("start_armed", True)        # False = launch disarmed (safe); arm to run
-        # Real-time setpoint topics (hold last; until a message arrives, use the launch defaults below).
-        self.declare_parameter("attitude_topic", "~/target_attitude")  # geometry_msgs/Quaternion
-        self.declare_parameter("velocity_topic", "~/velocity_cmd")     # geometry_msgs/Vector3 (target-body)
+        # Real-time setpoint (hold last; until a message arrives, use the launch defaults below).
+        self.declare_parameter("setpoint_topic", "~/setpoint")   # umiusi_rl_control_msgs/AttitudeTarget
 
         self._hz = float(self.get_parameter("control_hz").value)
         self._dt = 1.0 / self._hz
@@ -109,22 +110,20 @@ class RlAttitudeNode(Node):
         self._thr = None
 
         self._sub_imu = self.create_subscription(
-            ImuState, self.get_parameter("imu_topic").value, self._on_imu, 1)
+            Imu, self.get_parameter("imu_topic").value, self._on_imu, 1)
         self._sub_thr = self.create_subscription(
             ThrusterStateAll, self.get_parameter("thruster_state_topic").value, self._on_thr, 1)
-        # Real-time command inputs (optional): last message wins; absence keeps the defaults above.
-        att_topic = self.get_parameter("attitude_topic").value
-        vel_topic = self.get_parameter("velocity_topic").value
-        self._sub_att = self.create_subscription(Quaternion, att_topic, self._on_attitude, 1)
-        self._sub_vel = self.create_subscription(Vector3, vel_topic, self._on_velocity, 1)
+        # Real-time setpoint (optional): last message wins; absence keeps the defaults above.
+        sp_topic = self.get_parameter("setpoint_topic").value
+        self._sub_sp = self.create_subscription(AttitudeTarget, sp_topic, self._on_setpoint, 1)
         self._pubs = {p: self.create_publisher(ThrusterOutput, CMD_PREFIX + p, 10) for p in POSITIONS}
         self._arm = ArmState(self, self._detach_all,
                              start_armed=bool(self.get_parameter("start_armed").value))
         self._timer = self.create_timer(self._dt, self._tick)
         self.get_logger().info(
             f"rl_attitude_node: default target=upright v_cmd=[{self._vel:.3f},0,0] m/s @ {self._hz:.0f} Hz "
-            f"(publish={self._publish}); live setpoints on '{att_topic}' (Quaternion) + "
-            f"'{vel_topic}' (Vector3); loading policy on first state...")
+            f"(publish={self._publish}); live setpoint (AttitudeTarget) on '{sp_topic}'; "
+            "loading policy on first state...")
 
     def _on_imu(self, msg):
         self._imu = msg
@@ -132,19 +131,58 @@ class RlAttitudeNode(Node):
     def _on_thr(self, msg):
         self._thr = msg
 
-    def _on_attitude(self, msg):
-        # geometry_msgs/Quaternion (x,y,z,w) -> MuJoCo (w,x,y,z), normalised; ignore a zero quat.
-        q = np.array([msg.w, msg.x, msg.y, msg.z], dtype=float)
-        n = np.linalg.norm(q)
-        if n > 1e-9:
-            self._target_quat = q / n
+    def _on_setpoint(self, msg):
+        # umiusi_rl_control_msgs/AttitudeTarget. type_mask selects which fields to apply (mavros-style):
+        # a masked-out field keeps its previous value; default mask 0 = update both.
+        if not (msg.type_mask & AttitudeTarget.IGNORE_ATTITUDE):
+            q = np.array([msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z],
+                         dtype=float)
+            n = np.linalg.norm(q)          # ROS xyzw -> MuJoCo wxyz, normalised; ignore a zero quat
+            if n > 1e-9:
+                self._target_quat = q / n
+        if not (msg.type_mask & AttitudeTarget.IGNORE_VELOCITY):
+            self._v_cmd = np.array([msg.velocity.x, msg.velocity.y, msg.velocity.z], dtype=float)
 
-    def _on_velocity(self, msg):
-        # geometry_msgs/Vector3 -> commanded velocity in the TARGET-BODY frame.
-        self._v_cmd = np.array([msg.x, msg.y, msg.z], dtype=float)
+    def _try_export_model(self) -> bool:
+        """`<model_path の親>/export/` か `models/cruise_policy/export/` を素 torch で読む。
+
+        見つからなければ False を返し、呼び出し元が従来の SB3 経路にフォールバックする。
+        """
+        from umiusi_rl_control.policy_infer import PolicyRunner
+
+        mp = str(self.get_parameter("model_path").value).strip()
+        cands = []
+        if mp:
+            cands.append(Path(mp).parent / "export")
+        cands.append(Path(get_package_share_directory("umiusi_rl_control"))
+                     / "models" / "cruise_policy" / "export")
+        for d in cands:
+            if not (d / "weights.pt").exists():
+                continue
+            try:
+                runner = PolicyRunner(d)
+            except Exception as e:  # noqa: BLE001
+                self.get_logger().warning(f"export の読み込みに失敗 ({d}): {type(e).__name__}: {e}")
+                continue
+
+            class _M:  # model.predict(obs, deterministic=) 互換の薄いラッパ
+                def predict(self, obs, deterministic=True):
+                    return runner.act(obs, already_normalized=True), None
+
+            self._model = _M()
+            self._norm_obs = runner.normalize
+            self.get_logger().info(f"policy loaded from {d} (SB3 非依存の素 torch 推論)")
+            return True
+        return False
 
     def _ensure_model(self) -> bool:
         if self._model is not None:
+            return True
+        # 実機優先: SB3 非依存の書き出し (export/) があればそちらを使う。
+        # SB3 の policy zip は numpy 2.x で保存されており、ROS Jazzy 標準の numpy 1.26 では
+        # `ModuleNotFoundError: numpy._core.numeric` で読めない (custom_objects でもシムでも不可)。
+        # export/ 版は torch だけで動き、SB3 と出力が完全一致することを検証済み。
+        if self._try_export_model():
             return True
         try:
             from stable_baselines3 import PPO
@@ -157,7 +195,7 @@ class RlAttitudeNode(Node):
             return False
         mp = str(self.get_parameter("model_path").value).strip()
         if not mp:
-            mp = str(Path(get_package_share_directory("umiusi_autonomy"))
+            mp = str(Path(get_package_share_directory("umiusi_rl_control"))
                      / "models" / "cruise_policy" / "final.zip")
         model_path = Path(mp)
         if not model_path.exists():
@@ -182,7 +220,7 @@ class RlAttitudeNode(Node):
 
     def _build_obs(self):
         imu, thr = self._imu, self._thr
-        q = imu.quaternion
+        q = imu.orientation
         cur_quat = np.array([q.w, q.x, q.y, q.z], dtype=float)   # ROS xyzw -> MuJoCo wxyz
         g = imu.angular_velocity
         gyro = np.array([g.x, g.y, g.z], dtype=float)

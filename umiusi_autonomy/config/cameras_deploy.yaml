@@ -1,0 +1,34 @@
+# sinsei_umiusi_control の cameras_param_file に渡す実機用テンプレート。
+#
+#   ros2 launch sinsei_umiusi_control main.yaml enable_cameras:=true \
+#       cameras_param_file:=<このファイル>
+#
+# 実機で確認した注意点:
+#   * USB カメラは **H264 を出せるデバイスノード** を指すこと。実機では /dev/video4 だった
+#     (video0 は MJPG/YUYV、video2 は unicam=CSI で H264 非対応)。挿し順で変わるので
+#     `v4l2-ctl --device=/dev/videoN --list-formats` で必ず確認する。
+#   * pi_camera は `libcamerasrc` が必要。`sudo apt install gstreamer1.0-libcamera`。
+#   * rtspclientsink の接続先 (RTSP サーバ) は別プロセスで用意する必要がある。
+#   * framerate が perception への供給上限を決める。ブリッジ側で絞るとフレームを
+#     取りこぼすので、**絞るならここで絞る**こと。
+/**:
+  pi_camera:
+    ros__parameters:
+      pipeline: >-
+        libcamerasrc !
+        video/x-raw,width=1280,height=720,framerate=15/1 !
+        videoconvert !
+        v4l2h264enc extra-controls="controls,video_bitrate=3000000,h264_i_frame_period=30" !
+        video/x-h264,level=(string)4,profile=main !
+        h264parse config-interval=1 !
+        queue max-size-buffers=100 !
+        rtspclientsink location=rtsp://localhost:8554/cam1
+
+  usb_camera:
+    ros__parameters:
+      pipeline: >-
+        v4l2src device=/dev/video4 !
+        video/x-h264,width=800,height=600,framerate=15/1 !
+        h264parse config-interval=1 !
+        queue max-size-buffers=100 !
+        rtspclientsink location=rtsp://localhost:8554/cam2

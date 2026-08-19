@@ -28,6 +28,8 @@ def generate_launch_description():
     model_path = LaunchConfiguration("model_path")
     image_topic = LaunchConfiguration("image_topic")
     use_rosbridge = LaunchConfiguration("use_rosbridge")
+    use_camera_bridge = LaunchConfiguration("use_camera_bridge")
+    rtsp_url = LaunchConfiguration("rtsp_url")
 
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
@@ -35,7 +37,30 @@ def generate_launch_description():
         DeclareLaunchArgument("image_topic", default_value="/front_cam/image_raw",
                               description="onboard camera topic"),
         DeclareLaunchArgument("use_rosbridge", default_value="true",
-                              description="also start rosbridge_websocket (as core's main.yaml does)"),
+                              description="also start rosbridge_websocket (as core's main.yaml does). "
+                                          "UI を使わない運用では false にすると CPU が空く"),
+        DeclareLaunchArgument("use_camera_bridge", default_value="true",
+                              description="RTSP -> ROS Image のブリッジを起動する。実機カメラは "
+                                          "gst_camera_node が RTSP に流すだけで ROS トピックを "
+                                          "出さないため、perception にはこれが必要"),
+        DeclareLaunchArgument("rtsp_url", default_value="rtsp://localhost:8554/cam1",
+                              description="ブリッジが読む RTSP URL (前方カメラ = cam1)"),
+
+        # --- 実機カメラ映像を perception に渡す (umiusi_autonomy) ---
+        Node(
+            package="umiusi_autonomy",
+            executable="camera_bridge_node",
+            name="camera_bridge_node",
+            output="screen",
+            condition=IfCondition(use_camera_bridge),
+            parameters=[{
+                "rtsp_url": rtsp_url,
+                "image_topic": image_topic,
+                "width": 320, "height": 240,   # autonomy.yaml の frame_w/frame_h に合わせる
+                "max_rate_hz": 0.0,            # 制限をかけると取りこぼす (実測) — カメラ側で絞ること
+                "auto_rate": False,            # AIMD 追従は実験的。既定は無効
+            }],
+        ),
 
         # --- autonomy side (umiusi_autonomy) ---
         Node(
@@ -44,6 +69,10 @@ def generate_launch_description():
             name="perception_node",
             output="screen",
             parameters=[params, {"model_path": model_path, "image_topic": image_topic}],
+            # 実機では torch のスレッドを 1 に固定する。他ノードと CPU を奪い合うと
+            # スレッドを増やすほど遅くなる (実測: 負荷下で 4 スレッド 142 ms/frame に対し
+            # 1 スレッド 113.9 ms/frame。エンドツーエンドでも 5.32 -> 6.34 Hz)。
+            additional_env={"OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"},
         ),
         Node(
             package="umiusi_autonomy",

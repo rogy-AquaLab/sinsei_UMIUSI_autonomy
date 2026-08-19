@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""SB3 非依存の PPO(MlpPolicy) 推論。torch と numpy だけで動く(numpy 1.x でも可)。"""
+from __future__ import annotations
+from pathlib import Path
+import numpy as np
+import torch
+import torch.nn as nn
+
+
+class PolicyRunner:
+    def __init__(self, export_dir):
+        d = Path(export_dir)
+        sd = torch.load(d / "weights.pt", map_location="cpu", weights_only=True)
+        z = np.load(d / "obs_norm.npz")
+        self.mean, self.var = z["mean"], z["var"]
+        self.clip, self.eps = float(z["clip"]), float(z["eps"])
+
+        # mlp_extractor.policy_net.{0,2,...} と action_net を取り出す
+        layers, i = [], 0
+        while f"mlp_extractor.policy_net.{i}.weight" in sd:
+            w = sd[f"mlp_extractor.policy_net.{i}.weight"]
+            b = sd[f"mlp_extractor.policy_net.{i}.bias"]
+            lin = nn.Linear(w.shape[1], w.shape[0])
+            lin.weight.data, lin.bias.data = w, b
+            layers += [lin, nn.Tanh()]
+            i += 2
+        w, b = sd["action_net.weight"], sd["action_net.bias"]
+        act = nn.Linear(w.shape[1], w.shape[0])
+        act.weight.data, act.bias.data = w, b
+        layers.append(act)
+        self.net = nn.Sequential(*layers).eval()
+        self.obs_dim = self.mean.shape[0]
+
+    def normalize(self, obs):
+        o = np.asarray(obs, dtype=np.float64)
+        return np.clip((o - self.mean) / np.sqrt(self.var + self.eps),
+                       -self.clip, self.clip).astype(np.float32)
+
+    @torch.no_grad()
+    def act(self, obs, already_normalized=False):
+        o = np.asarray(obs, dtype=np.float32) if already_normalized else self.normalize(obs)
+        a = self.net(torch.from_numpy(o).float().unsqueeze(0)).squeeze(0).numpy()
+        return np.clip(a, -1.0, 1.0)

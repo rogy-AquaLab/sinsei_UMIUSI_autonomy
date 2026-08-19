@@ -1,0 +1,106 @@
+# ロギング — 競技後に分析できるように残す
+
+## なぜ rosbag だけでは足りないか
+
+実機カメラは `gst_camera_node` が **RTSP に流すだけで ROS トピックを出さない**
+(`gst_camera_node` は GStreamer パイプラインのアダプタで publisher を持たない)。
+そのため `ros2 bag record -a` を回しても**映像は 1 フレームも残らない**。
+
+さらに **V4L2 デバイスは二重に開けない**。`gst_camera_node` が `/dev/video4` を
+掴んでいる間、別プロセスが同じデバイスを開こうとすると `Device is busy` で失敗する
+(実測で確認済み)。したがって録画は **RTSP 側から** 行う必要がある。
+
+## 方針: 映像は H264 のまま、それ以外は rosbag
+
+| 対象 | 手段 | コスト |
+|---|---|---|
+| 映像 | RTSP から H264 のまま録画 (`tools/record_camera.sh`) | **CPU 15.5%**、1.25 MB/s (800x600@15) |
+| 状態・指令・検出 | `ros2 bag record` (映像トピック以外) | 小さい |
+| ノードのログ | `~/umiusi_logs/` | 小さい |
+
+デコードも再エンコードもしないので、Pi の CPU をほとんど食わない。
+
+## 使い方
+
+```bash
+# 録画開始 (別ターミナル。Ctrl-C で停止)
+./tools/record_camera.sh --url rtsp://localhost:8554/cam1
+
+# 切り捨てに強い生 H264 で録りたいとき (推奨、下記参照)
+./tools/record_camera.sh --raw
+
+# 同時に rosbag (映像トピックは除外し、圧縮画像だけ入れる例)
+ros2 bag record -o run_$(date +%Y%m%d-%H%M%S) \
+  /state/imu /state/thruster_state_all /state/high_power_circuit_info \
+  /perception_node/detections /cmd/target /cmd/direct/thruster_controller/output_lf \
+  /front_cam/image_raw/compressed
+```
+
+出力先は `~/recordings/<開始時刻>/` で、`meta.txt` に開始時刻 (ISO と UNIX 秒)、
+RTSP URL、セグメント長、ホスト名が入る。**rosbag と同じ Pi の時計なので、
+この開始時刻を基準に映像と bag を突き合わせられる。**
+
+## mp4 セグメント vs 生 H264 — 実測にもとづく使い分け
+
+| | mp4 セグメント (既定) | **生 H264 (`--raw`)** |
+|---|---|---|
+| 途中の電源断・`kill -9` | **最後のセグメントが壊れる** (`moov atom not found`) | **壊れない。そのまま再生できる** |
+| 失う長さ | 最大 1 セグメント分 (既定 30 秒) | ほぼゼロ |
+| 扱いやすさ | そのまま再生・シーク可 | mp4 化が一手間 |
+| ファイル分割 | 自動 | 単一ファイル |
+
+**競技本番など「確実に残す」ことが最優先なら `--raw` を使うこと。** 実測で
+`kill -9` した後でも `ffprobe` が h264 / 800x600 と認識でき、内容を失わなかった。
+
+> 生 H264 で保存するときは **Annex-B バイトストリーム**にする必要がある。
+> `h264parse` の既定出力は AVC (長さ前置) で、そのまま `filesink` に書くと
+> start code が無く再生できない (実際に踏んだ)。`record_camera.sh` は
+> `video/x-h264,stream-format=byte-stream,alignment=au` を挟んで対処済み。
+
+### mp4 化 (再エンコードなし)
+
+```bash
+ffmpeg -nostdin -r 15 -i cam.h264 -c copy cam.mp4
+```
+
+`-c copy` なので画質劣化なし・一瞬で終わる (28 MB → 28 MB)。
+`-nostdin` を付けないと ffmpeg が標準入力を食ってスクリプトが壊れる。
+
+## mp4 セグメントを使うときの注意
+
+`splitmuxsink` は **最後のセグメントを閉じるのに EOS が要る**。
+`kill -9` や電源断では `moov atom` が書かれず、そのセグメントは失われる。
+
+* 停止は必ず **Ctrl-C (SIGINT)**。`record_camera.sh` は SIGINT を受けて EOS を流し、
+  finalize を待ってから終了する
+* セグメントは短めに (既定 30 秒)。失う最大長がそのまま損失になる
+* 電源断が心配なら `--raw`
+
+## 容量の目安
+
+800x600@15 で **約 1.25 MB/s = 4.3 GB/時**。実機の空きは 200 GB 以上あるので
+競技当日を通しで録っても問題ない。解像度と bitrate を下げればさらに減る
+(`cameras_deploy.yaml` の `video_bitrate`)。
+
+## 映像を ROS 側にも残したい場合
+
+`camera_bridge_node` に `publish_compressed:=true` を渡すと
+`<image_topic>/compressed` に JPEG (`sensor_msgs/CompressedImage`) を出す。
+これは rosbag にそのまま入るので、**bag だけで映像も含めて完結**させたいときに使う。
+
+```bash
+ros2 run umiusi_autonomy camera_bridge_node --ros-args \
+    -p publish_compressed:=true -p jpeg_quality:=80
+```
+
+ただし JPEG エンコードの CPU を新たに払うことになる。**CPU に余裕が無い実機本番では
+RTSP 直録 (上記) のほうが安い。** 生 `sensor_msgs/Image` を bag に入れるのは
+320x240 でも 3.5 MB/s あるので勧めない。
+
+## 最低限これだけは残す (競技当日)
+
+1. `tools/record_camera.sh --raw` で映像
+2. `ros2 bag record` で `/state/imu` `/state/thruster_state_all` `/perception_node/detections`
+   `/cmd/target` `/cmd/direct/...`
+3. `~/umiusi_logs/` のノードログ (`tools/umiusi_stack.sh` が自動で残す)
+4. 走行前に `tools/bench_rates.py` を 20 秒回して**その日の周期の記録**を取る

@@ -19,11 +19,10 @@ path and the deploy-calibration notes.
 
 from __future__ import annotations
 
-import math
-
 import rclpy
 from rclpy.lifecycle import LifecycleNode, LifecycleState, TransitionCallbackReturn
-from sinsei_umiusi_msgs.msg import ImuState, Target
+from sensor_msgs.msg import Imu
+from sinsei_umiusi_msgs.msg import Target
 
 from umiusi_autonomy_msgs.msg import BalloonDetectionArray
 
@@ -34,7 +33,7 @@ class AutoTargetGenerator(LifecycleNode):
     def __init__(self) -> None:
         super().__init__("auto_target_generator")
         self.declare_parameter("detections_topic", "/perception_node/detections")
-        self.declare_parameter("imu_topic", "/state/imu_state")
+        self.declare_parameter("imu_topic", "/state/imu")
         self.declare_parameter("target_topic", "/cmd/target")
         self.declare_parameter("control_hz", 50.0)
         self.declare_parameter("frame_h", 240)
@@ -63,7 +62,7 @@ class AutoTargetGenerator(LifecycleNode):
         self._sub_det = self.create_subscription(
             BalloonDetectionArray, self.get_parameter("detections_topic").value, self._on_detections, 10)
         self._sub_imu = self.create_subscription(
-            ImuState, self.get_parameter("imu_topic").value, self._on_imu, 10)
+            Imu, self.get_parameter("imu_topic").value, self._on_imu, 10)
         self._timer = self.create_timer(self._dt, self._tick, autostart=False)
         self.get_logger().info("auto_target_generator configured (FSM-driven Target on /cmd/target)")
         return TransitionCallbackReturn.SUCCESS
@@ -121,9 +120,9 @@ class AutoTargetGenerator(LifecycleNode):
         return True
 
     def _on_imu(self, msg) -> None:
-        # ImuState.angular_velocity is DEG/S; the FSM wants the body yaw rate in RAD/S.
+        # sensor_msgs/Imu.angular_velocity is RAD/S (ROS standard), which is what the FSM wants.
         v = (msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z)
-        self._yaw_rate = self._yaw_sign * math.radians(v[self._yaw_axis])
+        self._yaw_rate = self._yaw_sign * v[self._yaw_axis]
 
     def _on_detections(self, msg: BalloonDetectionArray) -> None:
         if not self._ensure_behavior():

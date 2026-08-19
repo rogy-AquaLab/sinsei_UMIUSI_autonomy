@@ -1,7 +1,7 @@
 """navigator_node — high-level balloon-popping navigation, a THIN rclpy wrapper around the FSM.
 
 Subscribes the per-frame detections (``BalloonDetectionArray`` from ``perception_node``) and the IMU
-(``sinsei_umiusi_msgs/ImuState`` for the yaw rate), runs the shared behaviour FSM
+(``sensor_msgs/Imu`` on ``/state/imu`` for the yaw rate), runs the shared behaviour FSM
 (``umiusi_perception.autonomy.BalloonBehavior`` — the SAME object driving ``tools/autonomy_run``) at a fixed
 control rate, and converts its {surge, heave, yaw} drive command into the four per-thruster
 direct-override commands via the analytical feed-forward allocation
@@ -29,9 +29,9 @@ COMMAND MODES (``command_mode`` parameter):
          — so magnitudes/signs can diverge from the direct path until those are reconciled.
 
 DEPLOY CALIBRATION (verify on hardware, cannot be inferred from the sim):
-  * ImuState.angular_velocity is in DEG/S; the sim FSM expects the body yaw rate in RAD/S about the
-    vehicle's vertical axis. ``yaw_rate_axis`` / ``yaw_rate_sign`` select and orient that component
-    (default y-up, +, matching the sim). Confirm the axis/sign against the mounted IMU.
+  * sensor_msgs/Imu.angular_velocity is RAD/S (ROS standard), matching the sim FSM's body yaw rate.
+    ``yaw_rate_axis`` / ``yaw_rate_sign`` select and orient that component (default y-up, +, matching
+    the sim). Confirm the axis/sign against the mounted IMU.
   * ThrusterOutput.angle is documented in RAD; ``servo_range_deg`` sets the half-range used to map
     the normalised servo action to radians (default 90, matching configs/umiusi.yaml). NOTE:
     tools/ros_policy currently scales in degrees — reconcile the two against the live bridge during
@@ -50,8 +50,8 @@ import rclpy
 from rclpy.node import Node
 from sinsei_umiusi_msgs.msg import Target, ThrusterOutput, ThrusterRunnable
 
-from umiusi_autonomy.arm import ArmState
 from umiusi_autonomy_msgs.msg import BalloonDetectionArray
+from umiusi_rl_control.arm import ArmState
 
 # Thruster position -> feed-forward action index. controllers.yaml: lf=id1, lb=id2, rb=id3, rf=id4;
 # feedforward_allocation returns [servo_1..4, esc_1..4], so ordered positions map to indices 0..3.
@@ -65,7 +65,7 @@ class NavigatorNode(Node):
     def __init__(self):
         super().__init__("navigator_node")
         self.declare_parameter("detections_topic", "/perception_node/detections")
-        self.declare_parameter("imu_topic", "/state/imu_state")
+        self.declare_parameter("imu_topic", "/state/imu")
         self.declare_parameter("control_hz", 50.0)
         self.declare_parameter("frame_h", 240)
         self.declare_parameter("frame_w", 320)
@@ -99,9 +99,8 @@ class NavigatorNode(Node):
         imu_topic = self.get_parameter("imu_topic").value
         self._sub_det = self.create_subscription(
             BalloonDetectionArray, det_topic, self._on_detections, 10)
-        # Import ImuState lazily-safe: it is a build dep so importing at module top is fine here.
-        from sinsei_umiusi_msgs.msg import ImuState
-        self._sub_imu = self.create_subscription(ImuState, imu_topic, self._on_imu, 10)
+        from sensor_msgs.msg import Imu
+        self._sub_imu = self.create_subscription(Imu, imu_topic, self._on_imu, 10)
 
         if self._mode == "target":
             target_topic = self.get_parameter("target_topic").value
@@ -146,9 +145,9 @@ class NavigatorNode(Node):
         return True
 
     def _on_imu(self, msg):
-        # ImuState.angular_velocity is DEG/S; the FSM wants the body yaw rate in RAD/S.
+        # sensor_msgs/Imu.angular_velocity is RAD/S (ROS standard), which is what the FSM wants.
         v = (msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z)
-        self._yaw_rate = self._yaw_sign * math.radians(v[self._yaw_axis])
+        self._yaw_rate = self._yaw_sign * v[self._yaw_axis]
 
     def _on_detections(self, msg: BalloonDetectionArray):
         if not self._ensure_behavior():
