@@ -14,7 +14,8 @@ set -o pipefail
 
 WS="${UMIUSI_WS:-$HOME/ros2-ws}"
 MODEL="${UMIUSI_MODEL:-$HOME/models/camp_mix.pt}"
-PERCEPTION_SRC="${UMIUSI_PERCEPTION_SRC:-$HOME/perception/src}"
+# umiusi_perception は pip で入れるのが正 (下記は入っていない場合の暫定フォールバック)
+PERCEPTION_SRC="${UMIUSI_PERCEPTION_SRC:-}"
 CAMERAS_PARAM="${UMIUSI_CAMERAS_PARAM:-}"
 RTSP_URL="${UMIUSI_RTSP_URL:-rtsp://localhost:8554/cam1}"
 BRIDGE_RATE="${UMIUSI_BRIDGE_RATE:-10.0}"   # perception が捌ける値に合わせる (供給過多は逆効果)
@@ -30,7 +31,10 @@ setup_env() {
   source /opt/ros/jazzy/setup.bash
   # shellcheck disable=SC1091
   source "$WS/install/setup.bash"
-  export PYTHONPATH="$PERCEPTION_SRC:${PYTHONPATH:-}"
+  if ! python3 -c "import umiusi_perception" 2>/dev/null; then
+    [ -n "$PERCEPTION_SRC" ] && export PYTHONPATH="$PERCEPTION_SRC:${PYTHONPATH:-}" \
+      || echo "警告: umiusi_perception が見つかりません (pip install --no-deps <perception>)"
+  fi
   export PATH="$HOME/.local/bin:$PATH"
   mkdir -p "$LOGDIR"
 }

@@ -143,8 +143,46 @@ class RlAttitudeNode(Node):
         if not (msg.type_mask & AttitudeTarget.IGNORE_VELOCITY):
             self._v_cmd = np.array([msg.velocity.x, msg.velocity.y, msg.velocity.z], dtype=float)
 
+    def _try_export_model(self) -> bool:
+        """`<model_path の親>/export/` か `models/cruise_policy/export/` を素 torch で読む。
+
+        見つからなければ False を返し、呼び出し元が従来の SB3 経路にフォールバックする。
+        """
+        from umiusi_rl_control.policy_infer import PolicyRunner
+
+        mp = str(self.get_parameter("model_path").value).strip()
+        cands = []
+        if mp:
+            cands.append(Path(mp).parent / "export")
+        cands.append(Path(get_package_share_directory("umiusi_rl_control"))
+                     / "models" / "cruise_policy" / "export")
+        for d in cands:
+            if not (d / "weights.pt").exists():
+                continue
+            try:
+                runner = PolicyRunner(d)
+            except Exception as e:  # noqa: BLE001
+                self.get_logger().warning(f"export の読み込みに失敗 ({d}): {type(e).__name__}: {e}")
+                continue
+
+            class _M:  # model.predict(obs, deterministic=) 互換の薄いラッパ
+                def predict(self, obs, deterministic=True):
+                    return runner.act(obs, already_normalized=True), None
+
+            self._model = _M()
+            self._norm_obs = runner.normalize
+            self.get_logger().info(f"policy loaded from {d} (SB3 非依存の素 torch 推論)")
+            return True
+        return False
+
     def _ensure_model(self) -> bool:
         if self._model is not None:
+            return True
+        # 実機優先: SB3 非依存の書き出し (export/) があればそちらを使う。
+        # SB3 の policy zip は numpy 2.x で保存されており、ROS Jazzy 標準の numpy 1.26 では
+        # `ModuleNotFoundError: numpy._core.numeric` で読めない (custom_objects でもシムでも不可)。
+        # export/ 版は torch だけで動き、SB3 と出力が完全一致することを検証済み。
+        if self._try_export_model():
             return True
         try:
             from stable_baselines3 import PPO

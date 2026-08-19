@@ -16,7 +16,7 @@ hdr()  { printf "\n\033[1m== %s ==\033[0m\n" "$*"; }
 WS="${UMIUSI_WS:-$HOME/ros2-ws}"
 source /opt/ros/jazzy/setup.bash
 [ -f "$WS/install/setup.bash" ] && source "$WS/install/setup.bash"
-export PYTHONPATH="${UMIUSI_PERCEPTION_SRC:-$HOME/perception/src}:${PYTHONPATH:-}"
+[ -n "${UMIUSI_PERCEPTION_SRC:-}" ] && export PYTHONPATH="$UMIUSI_PERCEPTION_SRC:${PYTHONPATH:-}"
 
 [ "${1:-}" = "--start" ] && { "$(dirname "$0")/umiusi_stack.sh" start; sleep 5; }
 
