@@ -148,14 +148,23 @@ class RlAttitudeNode(Node):
 
         見つからなければ False を返し、呼び出し元が従来の SB3 経路にフォールバックする。
         """
-        from umiusi_rl_control.policy_infer import PolicyRunner
+        try:
+            from umiusi_rl_control.policy_infer import PolicyRunner
+        except Exception as e:  # noqa: BLE001  (torch 未導入など)
+            self.get_logger().error(
+                f"素 torch 推論を読み込めません ({type(e).__name__}: {e}); "
+                "torch を入れるか SB3 経路を使ってください", throttle_duration_sec=10.0)
+            return False
 
         mp = str(self.get_parameter("model_path").value).strip()
-        cands = []
         if mp:
-            cands.append(Path(mp).parent / "export")
-        cands.append(Path(get_package_share_directory("umiusi_rl_control"))
-                     / "models" / "cruise_policy" / "export")
+            # model_path を明示したときは **その隣の export/ だけ** を見る。
+            # ここで package share のバンドル済みポリシーに落ちると、新しいポリシーを
+            # 試しているつもりで巡航ポリシーが動く事故になる。
+            cands = [Path(mp).parent / "export"]
+        else:
+            cands = [Path(get_package_share_directory("umiusi_rl_control"))
+                     / "models" / "cruise_policy" / "export"]
         for d in cands:
             if not (d / "weights.pt").exists():
                 continue

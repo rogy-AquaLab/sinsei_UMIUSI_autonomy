@@ -92,6 +92,7 @@ class CameraBridge(Node):
         self._cap = None
         self._fail = 0
         self._n = 0
+        self._last_reconnect = 0.0
 
         self._pub_c = None
         if bool(self.get_parameter("publish_compressed").value):
@@ -105,7 +106,6 @@ class CameraBridge(Node):
         self._target_dt = None      # auto_rate 時の目標間隔 [s]。None = 無制限で開始
         self._last_pub = 0.0
         if self._auto:
-            from rclpy.qos import qos_profile_sensor_data  # noqa: F401
             self._consumer_stamps = []
             ctopic = str(self.get_parameter("consumer_topic").value)
             # 型を問わず到着だけ数えたいので、遅延バインドで購読する
@@ -165,10 +165,15 @@ class CameraBridge(Node):
         ok, frame = self._cap.read()
         if not ok or frame is None:
             self._fail += 1
-            if self._fail >= 10:
-                self.get_logger().warning("フレームが取れないので再接続します",
-                                          throttle_duration_sec=10.0)
+            # タイマは最速 (1 ms) で回りうるので、失敗回数だけを条件にすると
+            # RTSP 断のあいだ 1 ms ごとに再接続を叩いてしまう。時間でも間隔を空ける。
+            now = self.get_clock().now().nanoseconds * 1e-9
+            if self._fail >= 10 and (now - self._last_reconnect) >= self._reconnect:
+                self.get_logger().warning(
+                    f"フレームが取れないので再接続します ({self._reconnect:.1f}秒間隔)",
+                    throttle_duration_sec=10.0)
                 self._fail = 0
+                self._last_reconnect = now
                 self._open()
             return
         self._fail = 0

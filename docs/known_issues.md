@@ -63,21 +63,23 @@ ros2 run umiusi_autonomy camera_bridge_node --ros-args \
 publish サイズは `autonomy.yaml` の `frame_w/h` に合わせて 320x240 が既定
 (640x480 の生 Image は 921 kB/frame あり、RELIABLE QoS では転送だけで頭打ちになる)。
 
-### A-4. 【高】バンドル済み RL ポリシーが実機で読めない
+### A-4. 【解決済み】バンドル済み RL ポリシーが実機で読めない
 
 `models/cruise_policy/final.zip` は **numpy 2.5.0** で保存されており、Pi (ROS Jazzy 標準の
 **numpy 1.26.4**) では `ModuleNotFoundError: No module named 'numpy._core.numeric'` で失敗する。
 `custom_objects` でも `numpy._core` のシムでも回避できない。
 
 **修正**: 重み + 正規化統計を素形式へ書き出し、SB3/cloudpickle 非依存の torch 推論に切り替える。
-検証済みの実装が `tools/policy_infer.py` にあり、**SB3 との出力差は 200 サンプルで 0.000e+00**。
+検証済みの実装が `umiusi_rl_control/policy_infer.py` にあり、**SB3 との出力差は 200 サンプルで 0.000e+00**。
 
 - 書き出し: `umiusi_sim/export_policy.py` → `weights.pt` + `obs_norm.npz` + `meta.json`
 - 実機側は **torch だけ**でよくなる (SB3・gymnasium・cloudpickle が不要になる)
 - 副次効果として実機の依存が大幅に減る
 
-`rl_attitude_node._ensure_model()` に、export ディレクトリがあればそちらを使うフォールバックを
-足すのが最小差分。
+**実装済み** — `rl_attitude_node._ensure_model()` が `export/` を自動採用する
+(`_try_export_model()`)。実機で外部シム無しに動作することを確認済み。
+`model_path` を明示した場合は**その隣の `export/` だけ**を見る (バンドル済みポリシーへ
+黙って落ちると、新しいポリシーを試しているつもりで巡航ポリシーが動く事故になるため)。
 
 ### A-5. 【中】FSM が `umiusi_perception` に依存していることが分かりにくい
 
@@ -120,14 +122,31 @@ torch を必要としない**。実機に入れるのは `pip install --no-deps`
 > デバイス番号は USB の挿し順で変わりうる。恒久的には udev ルールで
 > `by-id` の固定名を作り、それを pipeline に書くのが安全。
 
-### B-2. 【高】`gstreamer1.0-libcamera` が入っていない
+### B-2. 【解決済み】前カメラ (CSI) が `libcamerasrc` 無しで起動しない
 
-前方 CSI カメラ (`pi_camera`) は `libcamerasrc` を使うが、実機に要素が無く
-`GStreamer error: no element "libcamerasrc"` で FATAL 終了する。
+前方カメラは **Raspberry Pi Camera Module 3 NoIR (`imx708_noir`)** で、unicam (`/dev/media1`) と
+ISP (`/dev/media0`) に正しく認識されている。起動しなかったのは GStreamer プラグインの問題。
+
+**apt の `gstreamer1.0-libcamera` を入れてはいけない。** Ubuntu 24.04 の版 (0.2.0) は
+Raspberry Pi 用 IPA を持たず、次で失敗する:
+
+```
+WARN  IPAManager  No IPA found in '/usr/lib/aarch64-linux-gnu/libcamera'
+ERROR RPI  Failed to load a suitable IPA library
+ERROR RPI  Failed to register camera imx708_noir: -22
+```
+
+実機には既に **Raspberry Pi 版 libcamera 0.7.1 が `/usr/local`** に入っており、
+動作する IPA (`ipa_rpi_vc4.so`) と専用の GStreamer プラグインを持っている。
+ただし `/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0` は gst の既定探索パスに
+**入っていない**ため、明示が要る:
 
 ```bash
-sudo apt install gstreamer1.0-libcamera
+export GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
 ```
+
+`tools/umiusi_stack.sh` と `config/deploy.env` に設定済み。これで前カメラのパイプラインが
+`PLAYING` に到達し、**CPU 14.8%** で動く (ISP がハードウェアで色変換するため軽い)。
 
 ### B-3. 【中】カメラ 1 本の失敗でノードが落ちる
 
@@ -206,8 +225,8 @@ pi  -  memlock unlimited
 
 ## C. 対応の優先順
 
-1. **B-8 / B-1 / B-2** — ハードが繋がらない・映らないので最優先
-2. **A-4 / A-3** — これが無いと姿勢制御と perception が実機で成立しない
+1. **B-8** — CAN テレメトリ。ハードが繋がらないので最優先
+   (B-1 / B-2 / A-3 / A-4 は解決済み)
 3. **A-1** — 安全性に直結 (スパイクで制御が跳ねる)
 4. **B-4 / B-5 / B-6 / B-9** — セットアップの再現性
 5. **A-2 / B-7** — 性能

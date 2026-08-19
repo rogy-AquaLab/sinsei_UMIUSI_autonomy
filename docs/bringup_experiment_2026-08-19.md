@@ -163,7 +163,7 @@ ModuleNotFoundError: No module named 'numpy._core.numeric'
 `custom_objects` でも `numpy._core` シムでも回避不可 (次は `PCG64 is not a known BitGenerator`)。
 
 **対処**: 重みと正規化統計を素形式へ書き出し、SB3/cloudpickle 非依存の torch 推論に置換。
-`export_policy.py` で書き出し、`tools/policy_infer.py` で推論。
+`export_policy.py` で書き出し、`umiusi_rl_control/policy_infer.py` で推論。
 **SB3 との出力差は 200 サンプルで最大 0.000e+00 (完全一致)**。実機 numpy 1.26 で動作確認済み。
 
 ## 6. カメラ

@@ -36,6 +36,13 @@ setup_env() {
       || echo "警告: umiusi_perception が見つかりません (pip install --no-deps <perception>)"
   fi
   export PATH="$HOME/.local/bin:$PATH"
+  # 前カメラ (CSI, imx708) を動かすには Raspberry Pi 版 libcamera (/usr/local, v0.7.1) の
+  # GStreamer プラグインが要る。このディレクトリは gst の既定探索パスに入っていないので
+  # 明示する必要がある。apt の gstreamer1.0-libcamera (0.2.0) は Pi 用 IPA を持たず
+  # `Failed to load a suitable IPA library` で失敗するので入れてはいけない。
+  for d in /usr/local/lib/aarch64-linux-gnu/gstreamer-1.0 /usr/local/lib/gstreamer-1.0; do
+    [ -f "$d/libgstlibcamera.so" ] && export GST_PLUGIN_PATH="$d${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}"
+  done
   mkdir -p "$LOGDIR"
 }
 
@@ -78,9 +85,22 @@ start() {
 }
 
 stop() {
+  # まず自分が起動した launch に SIGINT を送り、行儀よく終わらせる。
+  # `pgrep -f "ros2 launch"` を無差別に kill -9 すると、このスタックと無関係な
+  # launch まで巻き添えにするので使わない。
+  if [ -f "$PIDFILE" ]; then
+    while read -r pid; do [ -n "$pid" ] && kill -INT "$pid" 2>/dev/null; done < "$PIDFILE"
+    for _ in $(seq 1 50); do
+      alive=false
+      while read -r pid; do [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && alive=true; done < "$PIDFILE"
+      [ "$alive" = false ] && break
+      sleep 0.1
+    done
+    while read -r pid; do [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null; done < "$PIDFILE"
+    rm -f "$PIDFILE"
+  fi
+  # 取りこぼした個別ノードだけを名指しで止める
   for n in $NODES; do pgrep -f "$n" | xargs -r kill -9 2>/dev/null; done
-  pgrep -f "ros2 launch" | xargs -r kill -9 2>/dev/null
-  [ -f "$PIDFILE" ] && { xargs -r kill -9 < "$PIDFILE" 2>/dev/null; rm -f "$PIDFILE"; }
   sleep 2
   echo "停止しました"
 }
