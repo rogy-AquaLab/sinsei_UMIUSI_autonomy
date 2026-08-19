@@ -38,22 +38,30 @@
 - あるいは `max_rate_hz` の既定値を上げる (Pi 4 の実力は 19.8 Hz)。ただし
   フルスタック時は CPU が飽和するので **12–15 Hz あたりが実用点**
 
-### A-3. 【高】実機カメラ映像を perception に渡す経路が無い
+### A-3. 【解決済み】実機カメラ映像を perception に渡す経路が無い
 
-`gst_camera_node` は GStreamer パイプラインを起動するだけで、**ROS トピックに画像を出さない**。
-一方 `perception_node` は `sensor_msgs/Image` を購読する。両者が繋がっていない。
+`gst_camera_node` は GStreamer パイプラインを起動するだけで **ROS トピックに画像を出さない**。
+一方 `perception_node` は `sensor_msgs/Image` を購読するため、両者が繋がっていなかった。
 
-**修正案** (影響の小さい順):
+**`umiusi_autonomy/camera_bridge_node.py` を追加して解決** (2026-08-20)。
+UI が既に見ている RTSP ストリームをそのまま tap するので、`sinsei_UMIUSI_control` は無改変、
+カメラを二重に開くこともない。
 
-1. **RTSP → ROS ブリッジノードを autonomy 側に新設**(推奨)。既に RTSP サーバは動いており、
-   `cv2.VideoCapture("rtsp://localhost:8554/cam1")` → `cv_bridge` → publish で済む。
-   `sinsei_UMIUSI_control` に一切手を入れずに閉じる。
-2. `gst_camera_node` に `appsink` 分岐と publisher を追加する (control 側の変更が必要)
-3. `perception_node` が RTSP を直接読む (perception が転送方式に依存してしまうので非推奨)
+```bash
+ros2 run umiusi_autonomy camera_bridge_node --ros-args \
+    -p rtsp_url:=rtsp://localhost:8554/cam1 -p width:=320 -p height:=240
+```
 
-**帯域の注意**: 640×480 の生 Image は 921 KB/frame あり、RELIABLE QoS では 6.5 Hz で頭打ちになる。
-**320×240 なら 30 Hz 出る**。`autonomy.yaml` の `frame_w: 320 / frame_h: 240` とも一致するので、
-ブリッジ側でリサイズしてから publish するのが良い。
+**デコードと色変換/縮小はハードウェアに逃がすこと**が性能上の要点。実測:
+
+| パイプライン | CPU |
+|---|---:|
+| `videoconvert ! videoscale` (software) | **102%** (CPU 律速でレートも 15→11.6 Hz に低下) |
+| **`v4l2h264dec ! v4l2convert`** (hardware) | **33〜43%** |
+
+既定は HW 経路で、開けない環境では software に自動フォールバックする。
+publish サイズは `autonomy.yaml` の `frame_w/h` に合わせて 320x240 が既定
+(640x480 の生 Image は 921 kB/frame あり、RELIABLE QoS では転送だけで頭打ちになる)。
 
 ### A-4. 【高】バンドル済み RL ポリシーが実機で読めない
 
