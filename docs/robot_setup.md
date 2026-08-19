@@ -155,8 +155,11 @@ git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_core.git
 git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_msgs.git
 git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_ui.git
 git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_autonomy.git
-# umiusi_autonomy_msgs は別リポジトリ。PC から rsync するか、remote があればここで clone
 ```
+
+`sinsei_UMIUSI_autonomy` は 4 パッケージのモノレポで、**`umiusi_autonomy_msgs` も含まれる**
+(`umiusi_autonomy` / `umiusi_autonomy_msgs` / `umiusi_rl_control` / `umiusi_rl_control_msgs`)。
+別途 clone する必要はない。
 
 > `sinsei_UMIUSI_control` は **必ず `main` の最新**を使うこと
 > (ESC 推力符号の修正 PR#307 が入っている)。

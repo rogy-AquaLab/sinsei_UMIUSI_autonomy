@@ -1,3 +1,4 @@
+import os
 from glob import glob
 
 from setuptools import find_packages, setup
@@ -13,7 +14,12 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
-        ("share/" + package_name + "/models/cruise_policy", glob("models/cruise_policy/*")),
+        # ディレクトリを除外する (export/ サブディレクトリを含むため)
+        ("share/" + package_name + "/models/cruise_policy",
+         [f for f in glob("models/cruise_policy/*") if os.path.isfile(f)]),
+        # SB3 非依存の書き出し (実機の numpy 1.26 では policy zip が読めないため)
+        ("share/" + package_name + "/models/cruise_policy/export",
+         glob("models/cruise_policy/export/*")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
