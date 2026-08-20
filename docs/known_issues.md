@@ -218,27 +218,38 @@ sudo ufw allow in on <有線IF> from 10.42.0.0/24
 SSH だけなら PC 側の ufw は関係ない (PC からの outbound のため)。**PC でも ROS 2 を動かして
 Pi と通信する場合にのみ必要。**
 
-### B-5. 【高】`pip install torch` は aarch64 でも CUDA 版を引く
+### B-5. 【解決済み】`pip install torch` は aarch64 でも CUDA 版を引く
 
-PyPI 既定の `torch` は aarch64 でも `+cu130` を取得し、`nvidia-*` 一式で **4.5 GB** を消費する
-(GPU は無いので全て無駄)。さらに **`setuptools` が 84 に上がり colcon の制約 `<80` に違反する**。
+PyPI 既定の `torch` は aarch64 でも `+cu130` を取得し、`nvidia-*` 一式で **4.5 GB** を
+消費する (GPU は無いので全て無駄)。さらに `setuptools` が 84 に上がり
+`colcon-core` の制約 `<80` に違反してビルドが壊れる。
 
-```bash
-# CPU 版を明示する
-python3 -m pip install --user --break-system-packages \
-    --index-url https://download.pytorch.org/whl/cpu torch
-python3 -m pip install --user --break-system-packages "setuptools<80"
+**対処**: 機体の `/etc/pip.conf` で CPU インデックスを既定にする。
+
+```ini
+[global]
+break-system-packages = true
+index-url = https://download.pytorch.org/whl/cpu
+extra-index-url = https://pypi.org/simple
 ```
 
-### B-6. 【中】実機に `pip` が入っていない
+これで `pip install torch` も `rosdep install` 経由の pip も CPU 版を取る。
+`torch` は rosdep のカスタムルール (`rosdep/umiusi.yaml` の `python3-torch-cpu`) から
+`package.xml` に宣言済みなので、**`rosdep install` だけで入る**。
 
-Ubuntu 24.04 の Pi イメージには `python3-pip` も `ensurepip` も無い。sudo を使わずに入れるなら:
+> Ubuntu 24.04 に `python3-torch` という apt パッケージは**存在しない** (universe を
+> 有効にしても無い) ため、pip 経由になる。
 
-```bash
-curl -sSL -o /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py
-python3 /tmp/get-pip.py --user --break-system-packages
-export PATH="$HOME/.local/bin:$PATH"
-```
+### B-6. 【解決済み】実機に `pip` が入っていない + rosdep の PEP 668 拒否
+
+Ubuntu 24.04 の Pi イメージには `python3-pip` も `ensurepip` も無い。加えて
+**rosdep の pip インストーラは PEP 668 環境で実行自体を拒否する**
+(`externally managed` として `InstallFailed` を投げる)。
+
+**対処**: `/etc/pip.conf` に `break-system-packages = true` を書く
+(`PIP_BREAK_SYSTEM_PACKAGES=1` でも可 — rosdep 自身が推奨している方法)。
+pip 本体は `apt install python3-pip`、無ければ `get-pip.py` で入れる。
+手順は `robot_setup.md` の 2-1。
 
 ### B-7. 【中】`ros2_control` がリアルタイム優先度を取れていない
 
@@ -281,6 +292,6 @@ pi  -  memlock unlimited
 
 1. **B-8** — CAN テレメトリ。ハードが繋がらないので最優先
    (A-1 / A-2 / A-3 / A-4 / B-1 / B-2 は解決済み)
-3. **B-4 / B-5 / B-6 / B-9** — セットアップの再現性
+3. **B-9** — セットアップの再現性 (B-4/B-5/B-6 は解決済み)
 4. **B-7** — 性能
 5. **A-5 / A-6 / B-3** — 運用性・分かりやすさ

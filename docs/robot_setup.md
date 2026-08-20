@@ -40,46 +40,80 @@ git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_autonomy.git
 `umiusi_rl_control_msgs`)。**`src/` に単独の `umiusi_autonomy_msgs` が残っていると
 `Duplicate package names not supported` でビルドが止まる**ので、あれば消す。
 
-## 2. Python 依存
+## 2. 依存の解決
 
-公式手順に含まれないもの。**`pip` が無ければ先に入れる** (Ubuntu の Pi イメージには
-`python3-pip` も `ensurepip` も無い):
+**ほとんどは `rosdep` で入る。** 機体で一度だけ次を設定しておけば、以降は
+`rosdep install` だけで済む。
+
+### 2-1. 一度だけの設定
+
+**pip の設定** — `/etc/pip.conf` に置く:
+
+```ini
+[global]
+break-system-packages = true
+index-url = https://download.pytorch.org/whl/cpu
+extra-index-url = https://pypi.org/simple
+```
+
+* `break-system-packages` は PEP 668 対応。**これが無いと rosdep の pip インストーラは
+  「externally managed」として実行自体を拒否する** (`PIP_BREAK_SYSTEM_PACKAGES=1` でも可)
+* `index-url` を PyTorch の CPU インデックスにするのが要点。PyPI 既定の `torch` は
+  **aarch64 でも CUDA 版を引き、`nvidia-*` で 4.5 GB を無駄にする**。rosdep のルールには
+  `--index-url` を書けないので、pip 側で指定する。他のパッケージは `extra-index-url` の
+  PyPI に落ちる
+
+**pip 本体** — Ubuntu の Pi イメージには `python3-pip` も `ensurepip` も無い:
 
 ```bash
 sudo apt install -y python3-pip || {
   curl -sSL -o /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py
-  python3 /tmp/get-pip.py --user --break-system-packages
+  python3 /tmp/get-pip.py --break-system-packages
 }
-export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### 2-1. `umiusi_perception` (FSM を含む。torch 不要)
-
-`navigator_node` と `auto_target_generator` も FSM のためにこれを必要とする。
-FSM 連鎖は numpy + scipy だけで動く。
+**UMIUSI 固有の rosdep ルール** — `torch` は rosdep の公開データベースに無いので、
+このリポジトリのルールを登録する:
 
 ```bash
-# umiusi_sim/packages/perception を Pi に置いてから
-python3 -m pip install --user --break-system-packages --no-deps ~/perception
+sudo tee /etc/ros/rosdep/sources.list.d/50-umiusi.list <<< \
+  "yaml https://raw.githubusercontent.com/rogy-AquaLab/sinsei_UMIUSI_autonomy/main/rosdep/umiusi.yaml"
+rosdep update
+```
+
+> Ubuntu 24.04 に `python3-torch` という apt パッケージは**存在しない** (universe を
+> 有効にしても無い)。だから pip 経由になる。定義は `rosdep/umiusi.yaml`。
+
+### 2-2. 依存のインストール
+
+```bash
+cd ~/ros2-ws
+rosdep install -i --from-paths src -y --rosdistro jazzy
+```
+
+これで `rclpy` / `cv_bridge` / `python3-opencv` / `python3-numpy` / `python3-scipy` /
+**`torch` (CPU 版)** まで入る。
+
+### 2-3. `umiusi_perception` (まだ手動)
+
+検出器と風船割り FSM の実体。`navigator_node` と `auto_target_generator` も FSM のために
+必要とする (perception_node だけではない)。
+
+**供給元の `Umiusi_sim` が private なので、まだ rosdep では入れられない。**
+`rosdep/umiusi.yaml` にルール自体は用意してあるので、**`Umiusi_sim` を public にすれば
+`package.xml` に一行足すだけで rosdep に載る**。それまでは手動:
+
+```bash
+# PC から packages/perception を機体に置いてから
+python3 -m pip install --no-deps ~/perception
 python3 -c "from umiusi_perception.autonomy import BalloonBehavior; print('OK')"
 ```
 
-### 2-2. torch (学習済み検出器を使う場合のみ)
+`--no-deps` なのは、torch/scipy を上の rosdep 経由で入れた分と二重にしないため。
 
-**PyPI 既定の `torch` は aarch64 でも CUDA 版を引き、`nvidia-*` で 4.5 GB 無駄になる。
-必ず CPU 版のインデックスを指定すること。**
+### 2-4. 検出器チェックポイント (git に入っていない)
 
-```bash
-python3 -m pip install --user --break-system-packages --no-cache-dir \
-    --index-url https://download.pytorch.org/whl/cpu torch
-python3 -m pip install --user --break-system-packages "setuptools<80"   # colcon の制約
-```
-
-> `setuptools` が 80 以上になると `colcon-core` が壊れる。torch を入れた後は必ず確認する。
-
-### 2-3. 検出器チェックポイント (git に入っていない)
-
-`camp_mix.pt` などは `umiusi_sim` 側で gitignore されており**どのリポジトリにも無い**。
+`camp_mix.pt` などは `Umiusi_sim` 側で gitignore されており**どのリポジトリにも無い**。
 PC から手で持ってくる。
 
 ```bash
@@ -92,7 +126,6 @@ RL 姿勢制御のポリシーは autonomy リポジトリに入っているの�
 
 ```bash
 cd ~/ros2-ws
-rosdep install -i --from-paths src -y --rosdistro jazzy
 colcon build --packages-up-to umiusi_autonomy --cmake-args -DCMAKE_BUILD_TYPE=Release
 ```
 
