@@ -121,14 +121,30 @@ ros2 run umiusi_autonomy camera_bridge_node --ros-args \
 RTSP 直録 (上記) のほうが安い。** 生 `sensor_msgs/Image` を bag に入れるのは
 320x240 でも 3.5 MB/s あるので勧めない。
 
-## rosbag の metadata が書かれないことがある
+## bag の metadata が書かれないことがある — 真の原因は SIGINT の継承
 
-実機では `ros2 bag record` を SIGINT で止めても **`metadata.yaml` が書かれない**ことがある
-(単体で直接 SIGINT を送っても再現。終了に 20 秒かかったうえで `.mcap` だけが残る)。
-そのままだと `ros2 bag info` / `ros2 bag play` が
-`Could not find metadata in bag directory` で開けない。
+`ros2 bag record` を止めたのに **`metadata.yaml` が書かれず**、`ros2 bag info` / `play` が
+`Could not find metadata in bag directory` で開けないことがある。
 
-**データは失われていない。** MCAP は自己記述形式なので、reindex すれば完全に復元できる:
+当初これを「rosbag2 の癖」と書いていたが**誤りだった**。真の原因は POSIX のシグナル継承:
+
+* **非対話シェルが `&` で起こした子プロセスは、SIGINT を `SIG_IGN` のまま継承する**
+* CPython は SIGINT が `SIG_IGN` のとき既定ハンドラを入れないので、
+  **`ros2 bag record` は SIGINT を完全に無視する** → SIGKILL で殺される → metadata なし
+* 同じ理由で、シェルスクリプト側の `trap ... INT` も**入口で無視されたシグナルは trap できない**
+  ため無効化される (bash の仕様)。録画スクリプトの graceful stop が毎回空振りしていた
+
+**対処済み**: `record_camera.sh` / `record_run.sh` は `set -m` (ジョブ制御) を有効にして
+子を独立したプロセスグループで起こし、SIGINT が届くようにした。`umiusi_stack.sh` は
+`SIGINT → SIGTERM → SIGKILL` の段階的停止にした。
+
+> **実機での Ctrl-C 動作は未検証。** `set -m` により子が別プロセスグループになるため、
+> tty からの Ctrl-C は親にだけ届き、親の trap が子へ転送する形に変わる。次回の実機作業で
+> 確認すること。
+
+### それでも開けないときは reindex
+
+**データは失われていない。** MCAP は自己記述形式なので完全に復元できる:
 
 ```bash
 ros2 bag reindex <bag ディレクトリ>
@@ -137,28 +153,8 @@ ros2 bag reindex <bag ディレクトリ>
 復元例 (実機、149 秒ぶん): `/state/imu` 6576 件、`/perception_node/detections` 993 件、
 `/state/thruster_state_all` 6581 件 — すべて読めるようになる。
 
-### 原因の一つは「バックグラウンド起動の子は SIGINT を無視する」こと
-
-非対話シェル (スクリプト) が `&` で起こした子プロセスは、POSIX により
-**SIGINT / SIGQUIT を `SIG_IGN` のまま引き継ぐ**。CPython は起動時、SIGINT が
-`SIG_IGN` だと既定ハンドラを入れないため、**`ros2 bag record` は SIGINT を完全に無視する**。
-結果として最後は SIGKILL で落ち、`metadata.yaml` が書かれない。
-同じ理由で bash スクリプト側の `trap ... INT` も効かない
-(「入口で無視されていたシグナルは trap できない」)。
-
-`tools/record_camera.sh` / `tools/record_run.sh` は先頭で **`set -m` (ジョブ制御)** を
-有効にしてこれを回避している。子が独自のプロセスグループになり `SIG_IGN` を
-引き継がないので、`kill -INT` が本来どおり届く。
-
-それでも電源断や SIGKILL では停止処理まで到達しない。確実なのは、
-走行後にまとめて直すこと:
-
-```bash
-./tools/record_run.sh --fix     # ~/runs 配下 (--dir / UMIUSI_RUN_DIR で変更可) の
-                                # metadata が欠けている bag を全部 reindex
-```
-
-**走行のたびに最後に `--fix` を打つ運用にしておけば取りこぼさない。**
+**走行後に `record_run.sh --fix` を打つ運用**にしておけば、`~/runs` 配下でこの状態に
+なっているものをまとめて直せる。保険として残してある。
 
 ## 走行 1 回ぶんをまとめて記録する
 

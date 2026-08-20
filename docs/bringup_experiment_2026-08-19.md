@@ -18,6 +18,10 @@ core ユニット取り付け後の初回実機検証。対象機体 **`alexandr
 有線直結。**Pi は DHCP クライアント**で、ケーブル両端が共にクライアントだったため通信不可だった
 (静的 IP ではない)。PC 側を DHCP サーバ兼 NAT にして解決。
 
+> **【後日補足】** これは公式 Wiki (raspi-setup-2) の言う **「PC からのインターネット共有」**
+> そのもので、正規のワークフローだった。Pi 側の `link-local: [ipv4]` は共有の有無に関わらず
+> mDNS を効かせるための設定。接続は IP ではなく `ssh pi@<機体名>.local` が正。
+
 ```bash
 sudo nmcli con mod "Wired connection 1" ipv4.method shared   # PC=10.42.0.1/24
 sudo ufw allow in on eno1 from 10.42.0.0/24                  # ← これが無いと DDS が通らない
@@ -183,7 +187,11 @@ ModuleNotFoundError: No module named 'numpy._core.numeric'
 - `usb_camera` の `device=/dev/video2` は誤り。`docs/camera.md` と実機の両方が **`/dev/video4`** を指す。
   正しいデバイスで手動実行すると `PLAYING` に到達しエラー無し、**CPU 12.3%** のみ
   (カメラ内蔵 H264 ハードエンコードのため Pi は parse と RTSP 転送だけ)。
-- `pi_camera` は **`no element "libcamerasrc"`** で FATAL。`gstreamer1.0-libcamera` 未導入。
+- `pi_camera` は **`no element "libcamerasrc"`** で FATAL。
+  **【後日訂正】これは誤診断だった。** libcamera は公式手順どおり `/usr/local` にソースビルド
+  済みで、環境変数も `~/.bashrc` に設定されていた。**非対話 SSH では `.bashrc` が即 return する**
+  ため `GST_PLUGIN_PATH` が効かず、プラグインが見つからなかっただけ。対話 SSH からなら
+  最初から動いていた。詳細は `known_issues.md` B-2 / B-2b。
 - RTSP サーバ (`localhost:8554`) は稼働している。
 - パイプラインエラー時に `rclcpp::shutdown()` を呼ぶため、**カメラ1本の失敗でノードが丸ごと落ちる**。
 
