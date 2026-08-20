@@ -19,6 +19,7 @@ conf_thresh     : detector confidence floor (default: the checkpoint's stored va
 input_size      : detector square input (default: the checkpoint's stored value).
 fovy_deg        : camera vertical FOV, must match the physical camera (default 60.0).
 max_rate_hz     : cap the detector rate; frames arriving faster are dropped (default 10 Hz, 0 = no cap).
+                  位相追従で間引くので、入力が上限より速くても出力は上限に張り付く。
 sanitise_near   : run the near red/blue colour re-confirmation (default True).
 """
 
@@ -31,6 +32,7 @@ from sensor_msgs.msg import Image
 from umiusi_autonomy_msgs.msg import BalloonDetection, BalloonDetectionArray
 
 from umiusi_autonomy.image_convert import image_to_rgb
+from umiusi_autonomy.rate_limiter import RateLimiter
 
 
 class PerceptionNode(Node):
@@ -48,9 +50,11 @@ class PerceptionNode(Node):
         self._model_path = self.get_parameter("model_path").value
         self._fovy = float(self.get_parameter("fovy_deg").value)
         self._sanitise = bool(self.get_parameter("sanitise_near").value)
-        rate = float(self.get_parameter("max_rate_hz").value)
-        self._min_period = (1.0 / rate) if rate > 0 else 0.0
-        self._last_stamp = None
+        # 位相追従の間引き。素朴に「通した時刻から一定時間空ける」方式だと、入力が上限より
+        # わずかに速いだけで 1 フレームおきに落ち、目標の半分近くまで下がる
+        # (実機: 15 Hz 入力 + 10 Hz 上限 -> 7.9 Hz)。RateLimiter を参照。
+        self._limiter = RateLimiter(float(self.get_parameter("max_rate_hz").value))
+        self._warned_no_stamp = False
 
         self._detector = None       # lazily loaded on the first frame (defer torch import)
         self._sanitise_fn = None
@@ -65,7 +69,7 @@ class PerceptionNode(Node):
                 "parameter 'model_path' is empty — set it to a learned detector .pt checkpoint")
         self.get_logger().info(
             f"perception_node: image='{image_topic}' -> detections='{det_topic}' "
-            f"(fovy={self._fovy:.0f}deg, max_rate={rate:.0f}Hz, sanitise_near={self._sanitise})")
+            f"(fovy={self._fovy:.0f}deg, max_rate={self._limiter.rate_hz:.0f}Hz, sanitise_near={self._sanitise})")
 
     def _ensure_detector(self):
         """Load the detector on first use (defers the torch/umiusi_perception import off the build path)."""
@@ -98,9 +102,16 @@ class PerceptionNode(Node):
 
     def _on_image(self, msg: Image):
         # rate cap: drop frames that arrive faster than max_rate_hz (realistic Pi-4 detector timing).
+        # ヘッダの stamp を使うが、**設定していない publisher だと 0 のまま進まず全フレームが
+        # 落ちて perception が沈黙する**ので、その場合はノードの時計に切り替える。
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        if self._min_period > 0.0 and self._last_stamp is not None \
-                and (stamp - self._last_stamp) < self._min_period:
+        if stamp <= 0.0:
+            if not self._warned_no_stamp:
+                self._warned_no_stamp = True
+                self.get_logger().warning(
+                    "画像の header.stamp が設定されていません。レート制限にノードの時計を使います")
+            stamp = self.get_clock().now().nanoseconds * 1e-9
+        if not self._limiter.allow(stamp):
             return
         if not self._model_path or not self._ensure_detector():
             return
@@ -112,7 +123,6 @@ class PerceptionNode(Node):
         dets = self._detector(rgb)
         if self._sanitise:
             dets = self._sanitise_fn(rgb, dets)
-        self._last_stamp = stamp
         self._pub.publish(self._to_msg(msg.header, dets))
 
     @staticmethod
