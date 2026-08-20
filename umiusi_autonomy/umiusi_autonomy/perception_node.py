@@ -25,7 +25,10 @@ sanitise_near   : run the near red/blue colour re-confirmation (default True).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import rclpy
+from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 
@@ -47,7 +50,13 @@ class PerceptionNode(Node):
         self.declare_parameter("max_rate_hz", 10.0)
         self.declare_parameter("sanitise_near", True)
 
-        self._model_path = self.get_parameter("model_path").value
+        self._model_path = str(self.get_parameter("model_path").value).strip()
+        if not self._model_path:
+            # 未指定なら同梱の検出器を使う (clone しただけで動くように)。
+            # 実際の水中は camp_real.pt のほうが強い (F1 0.80 vs 0.69) ので、
+            # 競技ではそちらを model_path で指定すること。models/detector/README.md 参照。
+            self._model_path = str(Path(get_package_share_directory("umiusi_autonomy"))
+                                   / "models" / "detector" / "camp_mix.pt")
         self._fovy = float(self.get_parameter("fovy_deg").value)
         self._sanitise = bool(self.get_parameter("sanitise_near").value)
         # 位相追従の間引き。素朴に「通した時刻から一定時間空ける」方式だと、入力が上限より

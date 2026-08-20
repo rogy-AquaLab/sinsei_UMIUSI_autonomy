@@ -22,6 +22,7 @@
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>umiusi_autonomy_msgs</exec_depend>
   <exec_depend>sinsei_umiusi_msgs</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>   <!-- 同梱検出器のパス解決 -->
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-scipy</exec_depend>      <!-- umiusi_perception の FSM 連鎖が使う -->
   <!-- navigator_node reuses the shared arm/disarm (e-stop) helper from the control layer -->

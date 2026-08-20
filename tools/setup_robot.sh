@@ -123,6 +123,6 @@ python3 -c "import umiusi_autonomy.perception_node, umiusi_rl_control.rl_attitud
   && ok "ノードの import" || ng "ノードの import に失敗"
 
 hdr "次にやること"
-echo "  * 検出器のチェックポイントを PC から置く: rsync -az camp_mix.pt pi@<機体名>.local:~/models/"
-echo "    (git に入っていないので、これだけは手動)"
+echo "  * 検出器は同梱のものが既定で使われる (models/detector/camp_mix.pt)。"
+echo "    実際の水中は camp_real.pt のほうが強いので、競技では model_path で切り替える。"
 echo "  * 受け入れ試験: $WS/src/sinsei_UMIUSI_autonomy/tools/acceptance_test.sh"

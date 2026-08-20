@@ -82,16 +82,25 @@ PC から `packages/perception` を持ってきて渡す:
 
 **`Umiusi_sim` を public にすれば、この引数なしで git から入る** (スクリプトが自動で試す)。
 
-### 検出器チェックポイント (git に入っていない)
+### 検出器 (同梱済み)
 
-`camp_mix.pt` などは `Umiusi_sim` 側で gitignore されており**どのリポジトリにも無い**。
-これだけは PC から手で持ってくる:
+風船検出器の重みは**リポジトリに同梱してある**ので、転送は要らない。
+未指定なら `models/detector/camp_mix.pt` が使われる。
+
+| ファイル | real_val の F1 | 用途 |
+|---|---:|---|
+| **`camp_real.pt`** | **0.80** | **実際の水中はこちらが強い。競技はこれ** |
+| `camp_mix.pt` (既定) | 0.69 | 両対応。実機で通しの動作確認をしたのはこちら |
+
+競技で切り替えるとき:
 
 ```bash
-rsync -az camp_mix.pt pi@<機体名>.local:~/models/
+ros2 launch umiusi_autonomy core_autonomy.launch.py \
+    model_path:=$(ros2 pkg prefix umiusi_autonomy)/share/umiusi_autonomy/models/detector/camp_real.pt
 ```
 
-RL 姿勢制御のポリシーは autonomy リポジトリに入っているので clone だけでよい。
+詳細は `umiusi_autonomy/models/detector/README.md`。
+RL 姿勢制御のポリシーも `umiusi_rl_control/models/cruise_policy/` に同梱済み。
 
 > **`rosdep install` だけで完結させたい場合** — `rosdep/umiusi.yaml` を登録すれば
 > torch も rosdep で入るが、**システム側に `/etc/pip.conf` を置く必要がある**
