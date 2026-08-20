@@ -1,0 +1,41 @@
+# UMIUSI 固有の rosdep ルール。公開データベース (rosdistro) に無い依存をここで定義する。
+#
+# 使い方 (機体で一度だけ):
+#   sudo tee /etc/ros/rosdep/sources.list.d/50-umiusi.list <<< \
+#     "yaml https://raw.githubusercontent.com/rogy-AquaLab/sinsei_UMIUSI_autonomy/main/rosdep/umiusi.yaml"
+#   rosdep update
+#
+# あわせて pip の設定も要る (下の注記と docs/robot_setup.md を参照)。
+
+# ----------------------------------------------------------------------------
+# torch (CPU 版)
+#
+# Ubuntu 24.04 には python3-torch という apt パッケージが**存在しない**ため pip で入れる。
+# ただし PyPI 既定の torch は aarch64 でも CUDA 版を引き、nvidia-* で 4.5 GB を無駄にする。
+# CPU 版を取らせるには pip 側でインデックスを指定する必要がある (rosdep のルールには
+# --index-url を書けない)。機体の /etc/pip.conf に次を置くこと:
+#
+#   [global]
+#   break-system-packages = true
+#   index-url = https://download.pytorch.org/whl/cpu
+#   extra-index-url = https://pypi.org/simple
+#
+# break-system-packages は PEP 668 対応。rosdep の pip インストーラは、これが無いと
+# 「externally managed」として実行を拒否する (PIP_BREAK_SYSTEM_PACKAGES=1 でも可)。
+python3-torch-cpu:
+  ubuntu:
+    pip:
+      packages: [torch]
+
+# ----------------------------------------------------------------------------
+# umiusi_perception — 検出器と風船割り FSM の実体
+#
+# **まだ package.xml から参照していない。** 供給元の Umiusi_sim が private なため、
+# このルールを有効にすると認証の無い機体で `rosdep install` が失敗するため。
+# Umiusi_sim を public にすれば、そのまま使えるようになる。
+# それまでは docs/robot_setup.md のとおり PC から転送して pip install する。
+umiusi_perception:
+  ubuntu:
+    pip:
+      packages:
+        - "umiusi_perception @ git+https://github.com/rogy-AquaLab/Umiusi_sim.git#subdirectory=packages/perception"

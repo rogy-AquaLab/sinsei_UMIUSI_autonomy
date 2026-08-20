@@ -24,6 +24,8 @@
   <exec_depend>umiusi_rl_control_msgs</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+  <!-- ポリシー推論 (torch)。CPU 版を取らせるには機体の pip 設定が要る。rosdep/umiusi.yaml を参照 -->
+  <exec_depend>python3-torch-cpu</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
