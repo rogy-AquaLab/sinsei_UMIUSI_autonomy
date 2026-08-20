@@ -137,12 +137,25 @@ ros2 bag reindex <bag ディレクトリ>
 復元例 (実機、149 秒ぶん): `/state/imu` 6576 件、`/perception_node/detections` 993 件、
 `/state/thruster_state_all` 6581 件 — すべて読めるようになる。
 
-`tools/record_run.sh` は停止時にも reindex を試みるが、**シグナルの届き方によっては
-停止処理まで到達しないことがある** (バックグラウンド起動時に再現)。確実なのは、
+### 原因の一つは「バックグラウンド起動の子は SIGINT を無視する」こと
+
+非対話シェル (スクリプト) が `&` で起こした子プロセスは、POSIX により
+**SIGINT / SIGQUIT を `SIG_IGN` のまま引き継ぐ**。CPython は起動時、SIGINT が
+`SIG_IGN` だと既定ハンドラを入れないため、**`ros2 bag record` は SIGINT を完全に無視する**。
+結果として最後は SIGKILL で落ち、`metadata.yaml` が書かれない。
+同じ理由で bash スクリプト側の `trap ... INT` も効かない
+(「入口で無視されていたシグナルは trap できない」)。
+
+`tools/record_camera.sh` / `tools/record_run.sh` は先頭で **`set -m` (ジョブ制御)** を
+有効にしてこれを回避している。子が独自のプロセスグループになり `SIG_IGN` を
+引き継がないので、`kill -INT` が本来どおり届く。
+
+それでも電源断や SIGKILL では停止処理まで到達しない。確実なのは、
 走行後にまとめて直すこと:
 
 ```bash
-./tools/record_run.sh --fix     # ~/runs 配下で metadata が欠けている bag を全部 reindex
+./tools/record_run.sh --fix     # ~/runs 配下 (--dir / UMIUSI_RUN_DIR で変更可) の
+                                # metadata が欠けている bag を全部 reindex
 ```
 
 **走行のたびに最後に `--fix` を打つ運用にしておけば取りこぼさない。**
@@ -154,12 +167,14 @@ ros2 bag reindex <bag ディレクトリ>
 ```
 
 映像 (前後カメラ、H264 そのまま) と rosbag (状態・指令・検出の 15 トピック) を同時に開始し、
-Ctrl-C で両方をきれいに閉じる。出力は `~/runs/<日時>-<名前>/` に
+Ctrl-C で両方をきれいに閉じる。出力は `~/runs/<日時>-<名前>/` (`UMIUSI_RUN_DIR` で変更可) に
 `video/` `bag/` `meta.txt` が揃う。**実機実測で perception への影響なし** (7.74 -> 7.80 Hz)。
 
 ## 最低限これだけは残す (競技当日)
 
-1. **`tools/record_run.sh --name <走行名>`** — 映像と bag を同時に開始し、停止時に
-   bag の reindex まで済ませる。個別に回すより取りこぼしが少ない
+1. **`tools/record_run.sh --name <走行名>`** — 映像と bag を同時に開始する。
+   個別に回すより取りこぼしが少ない
+2. **走行後に `tools/record_run.sh --fix`** — 停止処理が最後まで走らないことがあるので、
+   metadata の復元はここで確実に取り切る (上記「rosbag の metadata が…」参照)
 3. `~/umiusi_logs/` のノードログ (`tools/umiusi_stack.sh` が自動で残す)
 4. 走行前に `tools/bench_rates.py` を 20 秒回して**その日の周期の記録**を取る

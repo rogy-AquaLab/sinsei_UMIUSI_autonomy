@@ -84,19 +84,32 @@ start() {
   status
 }
 
+# $PIDFILE の各 PID に $1 を送り、$2 デシ秒だけ全員の終了を待つ。全員消えたら 0 を返す。
+signal_and_wait() {
+  local sig="$1" ticks="$2" pid alive
+  while read -r pid; do [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && kill "-$sig" "$pid" 2>/dev/null; done < "$PIDFILE"
+  for _ in $(seq 1 "$ticks"); do
+    alive=false
+    while read -r pid; do [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && alive=true; done < "$PIDFILE"
+    [ "$alive" = false ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
 stop() {
-  # まず自分が起動した launch に SIGINT を送り、行儀よく終わらせる。
+  # まず自分が起動した launch を行儀よく終わらせる。
   # `pgrep -f "ros2 launch"` を無差別に kill -9 すると、このスタックと無関係な
   # launch まで巻き添えにするので使わない。
+  #
+  # SIGINT -> SIGTERM -> SIGKILL と段階的に上げる。SIGINT だけでは足りない:
+  # 非対話シェルが `&` で起こした子は SIGINT を SIG_IGN のまま引き継ぎ、CPython は
+  # その場合に既定ハンドラを入れないため、**`ros2 launch` は SIGINT を無視する**
+  # (実測: 起動直後の disposition が SIG_IGN)。SIGTERM は SIG_IGN を引き継がず、
+  # launch 側も明示的にハンドラを入れるので確実に届く。
   if [ -f "$PIDFILE" ]; then
-    while read -r pid; do [ -n "$pid" ] && kill -INT "$pid" 2>/dev/null; done < "$PIDFILE"
-    for _ in $(seq 1 50); do
-      alive=false
-      while read -r pid; do [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && alive=true; done < "$PIDFILE"
-      [ "$alive" = false ] && break
-      sleep 0.1
-    done
-    while read -r pid; do [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null; done < "$PIDFILE"
+    # ROS 2 の launch ツリーは片付けに 10 秒以上かかることがあるので余裕をもって待つ
+    signal_and_wait INT 100 || signal_and_wait TERM 150 || signal_and_wait KILL 20
     rm -f "$PIDFILE"
   fi
   # 取りこぼした個別ノードだけを名指しで止める

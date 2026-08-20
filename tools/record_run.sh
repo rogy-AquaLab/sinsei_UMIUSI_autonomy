@@ -11,9 +11,21 @@
 # docs/logging.md — `ros2 bag record -a` は容量 200 倍・CPU +30pt・認識 -12% になる。
 set -o pipefail
 
+# **`set -m` は必須**。非対話シェルが `&` で起こした子は SIGINT/SIGQUIT を SIG_IGN で
+# 引き継ぐ (POSIX)。この状態だと
+#   * `ros2 bag record` は SIGINT を無視する (CPython は SIG_IGN のとき既定ハンドラを
+#     入れないため) -> SIGKILL に落ちて metadata.yaml が書かれない
+#   * `record_camera.sh` の `trap ... INT` も効かない (bash は「入口で無視されていた
+#     シグナルは trap できない」) -> SIGKILL され、孫の gst-launch が孤児として録り続ける
+# ジョブ制御を有効にすると子は独自のプロセスグループになり SIG_IGN を引き継がないので、
+# kill -INT が本来どおり届く。
+set -m
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NAME=""
-OUTROOT="${UMIUSI_REC_DIR:-$HOME/runs}"
+# record_camera.sh の UMIUSI_REC_DIR (既定 ~/recordings) とは別物。取り違えると
+# --fix の走査先と実際の保存先がずれるので、専用の変数にしている。
+OUTROOT="${UMIUSI_RUN_DIR:-$HOME/runs}"
 BAG_ONLY=false
 CAM_ONLY=false
 FIX=false
@@ -25,7 +37,7 @@ while [ $# -gt 0 ]; do
     --bag-only) BAG_ONLY=true; shift ;;
     --camera-only) CAM_ONLY=true; shift ;;
     --fix) FIX=true; shift ;;
-    *) echo "使い方: $0 [--name 名前] [--dir DIR] [--bag-only|--camera-only]"; exit 1 ;;
+    *) echo "使い方: $0 [--name 名前] [--dir DIR] [--bag-only|--camera-only] [--fix]"; exit 1 ;;
   esac
 done
 
@@ -49,6 +61,10 @@ if [ "$FIX" = true ]; then
   done
   echo "$n 件を修復しました"
   exit 0
+fi
+
+if [ "$BAG_ONLY" = true ] && [ "$CAM_ONLY" = true ]; then
+  echo "--bag-only と --camera-only は同時に指定できません"; exit 1
 fi
 
 STAMP=$(date +%Y%m%d-%H%M%S)
@@ -75,6 +91,38 @@ TOPICS="
 "
 
 PIDS=""
+CLEANED=false
+
+# **子プロセスを起こす前に** trap を張る。起動直後〜trap 設定前に Ctrl-C が入ると
+# 録画と bag が孤児として回り続けてしまうため。
+cleanup() {
+  [ "$CLEANED" = true ] && return 0   # trap 経由と wait 後の二重呼び出しを防ぐ
+  CLEANED=true
+  echo ""
+  echo "停止しています..."
+  for pid in $PIDS; do kill -INT "$pid" 2>/dev/null; done
+  for _ in $(seq 1 150); do
+    alive=false
+    for pid in $PIDS; do kill -0 "$pid" 2>/dev/null && alive=true; done
+    [ "$alive" = false ] && break
+    sleep 0.1
+  done
+  for pid in $PIDS; do kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null; done
+  sleep 1
+  # rosbag2 は停止時に metadata.yaml を書かないことがある (実機で再現)。
+  # そのままだと `ros2 bag info/play` が "Could not find metadata" で開けないが、
+  # MCAP は自己記述形式なので reindex すれば完全に復元できる。ここで済ませておく。
+  # ただし**この停止処理まで到達しないことがある**ので、最後に --fix を打つ運用も残すこと。
+  if [ -d "$OUT/bag" ] && [ ! -f "$OUT/bag/metadata.yaml" ]; then
+    echo "  bag の metadata が無いので reindex します..."
+    ros2 bag reindex "$OUT/bag" > "$OUT/reindex.log" 2>&1 \
+      && echo "  reindex 完了" || echo "  ⚠ reindex に失敗 (bag/reindex.log を確認)"
+  fi
+  echo "保存しました: $OUT"
+  du -sh "$OUT"/* 2>/dev/null | sed 's/^/  /'
+}
+trap cleanup INT TERM
+
 echo "記録先: $OUT"
 
 if [ "$BAG_ONLY" != true ]; then
@@ -110,29 +158,5 @@ fi
 echo ""
 echo "記録中。停止は Ctrl-C (kill -9 は使わないこと — bag と mp4 が閉じられません)"
 
-cleanup() {
-  echo ""
-  echo "停止しています..."
-  for pid in $PIDS; do kill -INT "$pid" 2>/dev/null; done
-  for _ in $(seq 1 150); do
-    alive=false
-    for pid in $PIDS; do kill -0 "$pid" 2>/dev/null && alive=true; done
-    [ "$alive" = false ] && break
-    sleep 0.1
-  done
-  for pid in $PIDS; do kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null; done
-  sleep 1
-  # rosbag2 は停止時に metadata.yaml を書かないことがある (実機で再現)。
-  # そのままだと `ros2 bag info/play` が "Could not find metadata" で開けないが、
-  # MCAP は自己記述形式なので reindex すれば完全に復元できる。ここで済ませておく。
-  if [ -d "$OUT/bag" ] && [ ! -f "$OUT/bag/metadata.yaml" ]; then
-    echo "  bag の metadata が無いので reindex します..."
-    ros2 bag reindex "$OUT/bag" > "$OUT/reindex.log" 2>&1 \
-      && echo "  reindex 完了" || echo "  ⚠ reindex に失敗 (bag/reindex.log を確認)"
-  fi
-  echo "保存しました: $OUT"
-  du -sh "$OUT"/* 2>/dev/null | sed 's/^/  /'
-}
-trap cleanup INT TERM
 for pid in $PIDS; do wait "$pid" 2>/dev/null; done
 cleanup

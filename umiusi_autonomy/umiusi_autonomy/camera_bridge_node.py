@@ -92,7 +92,7 @@ class CameraBridge(Node):
         self._cap = None
         self._fail = 0
         self._n = 0
-        self._last_reconnect = 0.0
+        self._last_reconnect = float("-inf")   # 初回は待たずに再接続する (sim time で 0 始まりでも)
 
         self._pub_c = None
         if bool(self.get_parameter("publish_compressed").value):

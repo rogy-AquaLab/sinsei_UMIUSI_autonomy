@@ -12,6 +12,9 @@
 #
 # 実測: CPU 15.5% / 800x600@15 で約 1.25 MB/s (4.3 GB/時)。
 set -o pipefail
+# このスクリプト自体が `&` で起動されたときでも、子が SIGINT を SIG_IGN で
+# 引き継がないようにジョブ制御を有効にする (record_run.sh 冒頭の注記を参照)。
+set -m
 
 URL="${UMIUSI_RTSP_URL:-rtsp://localhost:8554/cam1}"
 OUTROOT="${UMIUSI_REC_DIR:-$HOME/recordings}"
@@ -61,6 +64,29 @@ fi
 echo "停止は Ctrl-C (きれいに閉じるため kill -9 は使わないこと)"
 
 PIDS=""
+CLEANED=false
+
+# **子プロセスを起こす前に** trap を張る。起動直後〜trap 設定前に Ctrl-C が入ると
+# gst-launch が孤児として録り続けてしまうため。
+cleanup() {
+  [ "$CLEANED" = true ] && return 0   # trap 経由と wait 後の二重呼び出しを防ぐ
+  CLEANED=true
+  echo ""
+  echo "EOS を送って finalize しています..."
+  for pid in $PIDS; do kill -INT "$pid" 2>/dev/null; done
+  for _ in $(seq 1 100); do
+    still=false
+    for pid in $PIDS; do kill -0 "$pid" 2>/dev/null && still=true; done
+    [ "$still" = false ] && break
+    sleep 0.1
+  done
+  for pid in $PIDS; do
+    kill -0 "$pid" 2>/dev/null && { echo "応答しないので強制終了 (最終セグメントが壊れる可能性)"; kill -9 "$pid"; }
+  done
+  echo "保存先: $OUT"
+  ls -la "$OUT" 2>/dev/null | tail -6
+}
+trap cleanup INT TERM
 
 # 1 本ぶんの録画パイプラインを起動し、PID を $PIDS に足す。$1=RTSP URL, $2=接頭辞 (cam1/cam2)
 # **$(start_one ...) の形で呼ばないこと**: コマンド置換だと別シェルの子になり、
@@ -92,22 +118,5 @@ else
   start_one "$URL" cam
 fi
 
-cleanup() {
-  echo ""
-  echo "EOS を送って finalize しています..."
-  for pid in $PIDS; do kill -INT "$pid" 2>/dev/null; done
-  for _ in $(seq 1 100); do
-    still=false
-    for pid in $PIDS; do kill -0 "$pid" 2>/dev/null && still=true; done
-    [ "$still" = false ] && break
-    sleep 0.1
-  done
-  for pid in $PIDS; do
-    kill -0 "$pid" 2>/dev/null && { echo "応答しないので強制終了 (最終セグメントが壊れる可能性)"; kill -9 "$pid"; }
-  done
-  echo "保存先: $OUT"
-  ls -la "$OUT" 2>/dev/null | tail -6
-}
-trap cleanup INT TERM
 for pid in $PIDS; do wait "$pid"; done
 cleanup

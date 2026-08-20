@@ -144,8 +144,10 @@ class RlAttitudeNode(Node):
             self._v_cmd = np.array([msg.velocity.x, msg.velocity.y, msg.velocity.z], dtype=float)
 
     def _try_export_model(self) -> bool:
-        """`<model_path の親>/export/` か `models/cruise_policy/export/` を素 torch で読む。
+        """素 torch で export ディレクトリを読む。
 
+        `model_path` を指定したときは `<model_path の親>/export/` **だけ**、
+        未指定のときは `models/cruise_policy/export/` だけを見る (C-1)。
         見つからなければ False を返し、呼び出し元が従来の SB3 経路にフォールバックする。
         """
         try:
