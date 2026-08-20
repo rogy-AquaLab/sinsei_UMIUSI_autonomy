@@ -209,13 +209,19 @@ UI (WebRTC) 側でも映像は見えるが、そちらは MediaMTX 経由の生�
 
 ---
 
-## 5. 見ておきたいこと (今回まだ実機で未検証)
+## 5. 実測値 (2026-08-21、`tools/experiment_test.sh` で確認)
 
-| 項目 | 見かた | 期待 |
+| 項目 | 見かた | 実測 |
 |---|---|---|
-| **IMU フィルタの棄却率** | ノードのログに `IMU サンプルを破棄` | 静止時はほぼ 0。多すぎるなら `imu_max_gyro` / `imu_max_step_deg` を緩める |
-| **認識周期が 10 Hz に張り付くか** | `ros2 topic hz /perception_node/detections` | `max_rate_hz=10` で 10 Hz 付近 (以前は 7.9 Hz に落ちていた) |
-| **Ctrl-C で録画が閉じるか** | 停止後に `ls ~/runs/*/video/` と `pgrep gst-launch` | ファイルが読め、孤児プロセスが残らない |
-| **RL の実機での復元** | 傾けて `/cmd/direct/...` の duty | 戻す向き。発散しない |
+| **IMU フィルタの棄却率** | ノードのログに `IMU サンプルを破棄` | 静置 20 秒で 2 件。`imu_glitch.py` 30 秒ではジャイロ異常 0 件 / クォータニオンのノルム異常 1 件 — **フィルタが化けサンプルを拾えている**。閾値の変更は不要 |
+| **認識周期が 10 Hz に張り付くか** | `ros2 topic hz /perception_node/detections` | **単体 10.01 Hz で張り付く**（以前は 7.9 Hz）。BT を載せた本番構成では 9.26 Hz / CPU 74.8% |
+| **Ctrl-C で録画が閉じるか** | 停止後に `ls ~/runs/*/video/` と `pgrep gst-launch` | **閉じる**。bag の `metadata.yaml` も書かれ reindex 不要、孤児プロセスも残らない |
+| **RL の実機での復元** | 傾けて `/cmd/direct/...` の duty | **未確認** — `publish:=false` でしか回していない。手順 1-4 で確認すること |
 
+> **記録は 30 秒以上録ること。** `record_run.sh` は起動に 10 秒以上かかり (`ros2 topic list` と
+> カメラの立ち上げ)、`ros2 bag record` の discovery にも数秒かかる。15 秒だと **bag に `/tf` しか
+> 入らない**（実機で踏んだ）。30 秒あれば `/state/imu` が 50 Hz、`detections` が 10 Hz で入る。
+
+その他の実測: `/front_cam/image_raw` 15.1 Hz / `/state/imu` 50.2 Hz /
+`/state/thruster_state_all` 50.0 Hz / VESC 4 台すべて応答 / CPU 温度 42〜48°C (throttle なし)。
 数値の基準は `performance_tuning.md`、確認項目の全体像は `competition_checklist.md`。
