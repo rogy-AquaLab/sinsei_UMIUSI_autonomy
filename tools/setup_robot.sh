@@ -116,8 +116,3 @@ for m in numpy scipy cv2 torch; do have_py "$m" && ok "$m" || ng "$m"; done
 have_py umiusi_perception && ok "umiusi_perception" || ng "umiusi_perception (perception と FSM が動かない)"
 python3 -c "import umiusi_autonomy.perception_node, umiusi_rl_control.rl_attitude_node" 2>/dev/null \
   && ok "ノードの import" || ng "ノードの import に失敗"
-
-hdr "次にやること"
-echo "  * 検出器は同梱の camp_mix.pt が既定。競技は camp_real.pt のほうが強い"
-echo "    (models/detector/README.md)"
-echo "  * 受け入れ試験: $WS/src/sinsei_UMIUSI_autonomy/tools/acceptance_test.sh"
