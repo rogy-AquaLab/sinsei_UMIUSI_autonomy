@@ -52,6 +52,7 @@ from sinsei_umiusi_msgs.msg import Target, ThrusterOutput, ThrusterRunnable
 
 from umiusi_autonomy_msgs.msg import BalloonDetectionArray
 from umiusi_rl_control.arm import ArmState
+from umiusi_rl_control.imu_sanity import ImuSanity
 
 # Thruster position -> feed-forward action index. controllers.yaml: lf=id1, lb=id2, rb=id3, rf=id4;
 # feedforward_allocation returns [servo_1..4, esc_1..4], so ordered positions map to indices 0..3.
@@ -73,6 +74,9 @@ class NavigatorNode(Node):
         self.declare_parameter("servo_range_deg", 90.0)
         self.declare_parameter("yaw_rate_axis", "y")      # IMU axis carrying the vehicle yaw rate
         self.declare_parameter("yaw_rate_sign", 1.0)
+        # IMU のサニティフィルタ (実機の化けサンプル対策)。0 以下で無効化できる。
+        self.declare_parameter("imu_max_gyro", 10.0)        # [rad/s] これを超えたら破棄
+        self.declare_parameter("imu_max_step_deg", 30.0)    # 1 サンプルの姿勢跳躍上限 [deg]
         self.declare_parameter("publish", True)            # False = compute only, do not command
         # "direct" (default, unchanged): feed-forward allocate here -> /cmd/direct ThrusterOutput.
         # "target": ride on sinsei_umiusi_control -> publish a Target on /cmd/target and let the
@@ -85,6 +89,9 @@ class NavigatorNode(Node):
         self._servo_range_rad = math.radians(float(self.get_parameter("servo_range_deg").value))
         self._yaw_axis = _AXIS.get(str(self.get_parameter("yaw_rate_axis").value).lower(), 1)
         self._yaw_sign = float(self.get_parameter("yaw_rate_sign").value)
+        self._imu_sanity = ImuSanity(
+            max_gyro=float(self.get_parameter("imu_max_gyro").value),
+            max_step_deg=float(self.get_parameter("imu_max_step_deg").value))
         self._publish = bool(self.get_parameter("publish").value)
         self._mode = str(self.get_parameter("command_mode").value).lower()
 
@@ -145,9 +152,19 @@ class NavigatorNode(Node):
         return True
 
     def _on_imu(self, msg):
+        # 実機の BNO055 は物理的にありえないサンプルを混ぜてくる (ゼロクォータニオン、
+        # 角速度の int16 フルスケール張り付き、姿勢の跳躍)。ヨーレートをそのまま制御に
+        # 使うので、1 発のスパイクで制御が跳ねる。ここで弾く。
+        q, g = msg.orientation, msg.angular_velocity
+        sample, reason = self._imu_sanity.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
+        if reason is not None:
+            self.get_logger().warning(
+                f"IMU サンプルを破棄: {reason} (棄却率 {self._imu_sanity.reject_ratio:.1%})",
+                throttle_duration_sec=5.0)
+            if sample is None:
+                return          # まだ 1 つも有効値が無い
         # sensor_msgs/Imu.angular_velocity is RAD/S (ROS standard), which is what the FSM wants.
-        v = (msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z)
-        self._yaw_rate = self._yaw_sign * v[self._yaw_axis]
+        self._yaw_rate = self._yaw_sign * sample.gyro[self._yaw_axis]
 
     def _on_detections(self, msg: BalloonDetectionArray):
         if not self._ensure_behavior():

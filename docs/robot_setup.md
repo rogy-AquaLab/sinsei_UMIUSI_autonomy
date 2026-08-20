@@ -31,14 +31,9 @@ groups                         # video / gpio / i2c / dialout が含まれるこ
 
 ## 1. autonomy リポジトリを置く
 
-**`sinsei_UMIUSI_autonomy` は private** なので、Pi に GitHub の認証が無いと clone できない
-(`fatal: could not read Username`)。他の 4 リポジトリは public。
-
 ```bash
 cd ~/ros2-ws/src
-git clone git@github.com:rogy-AquaLab/sinsei_UMIUSI_autonomy.git   # deploy key が要る
-# 認証を置きたくなければ PC から:
-#   rsync -az --exclude=.git <PC の repo> pi@<機体名>.local:~/ros2-ws/src/
+git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_autonomy.git
 ```
 
 4 パッケージのモノレポ (`umiusi_autonomy` / `umiusi_autonomy_msgs` / `umiusi_rl_control` /

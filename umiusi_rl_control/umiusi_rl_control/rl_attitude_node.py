@@ -44,6 +44,7 @@ from sensor_msgs.msg import Imu
 from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable, ThrusterStateAll
 
 from umiusi_rl_control.arm import ArmState
+from umiusi_rl_control.imu_sanity import ImuSanity
 from umiusi_rl_control_msgs.msg import AttitudeTarget
 
 POSITIONS = ("lf", "lb", "rb", "rf")
@@ -87,6 +88,8 @@ class RlAttitudeNode(Node):
         self.declare_parameter("control_hz", 50.0)
         self.declare_parameter("vel_cmd", 0.4)             # forward (+X) commanded speed [m/s]
         self.declare_parameter("servo_range_deg", 90.0)
+        self.declare_parameter("imu_max_gyro", 10.0)       # IMU サニティ: 角速度上限 [rad/s]
+        self.declare_parameter("imu_max_step_deg", 30.0)   # IMU サニティ: 姿勢跳躍上限 [deg]
         self.declare_parameter("gyro_deg_per_sec", False)  # convert IMU gyro deg/s -> rad/s (see caveats)
         self.declare_parameter("publish", True)            # False = predict only, do not command
         self.declare_parameter("start_armed", True)        # False = launch disarmed (safe); arm to run
@@ -107,6 +110,9 @@ class RlAttitudeNode(Node):
         self._model = None
         self._norm_obs = None
         self._imu = None
+        self._imu_sanity = ImuSanity(
+            max_gyro=float(self.get_parameter("imu_max_gyro").value),
+            max_step_deg=float(self.get_parameter("imu_max_step_deg").value))
         self._thr = None
 
         self._sub_imu = self.create_subscription(
@@ -126,7 +132,15 @@ class RlAttitudeNode(Node):
             "loading policy on first state...")
 
     def _on_imu(self, msg):
-        self._imu = msg
+        # 実機の BNO055 は化けサンプルを混ぜてくる。姿勢と角速度を直接ポリシーの観測に
+        # 入れるので、1 発のスパイクで指令が跳ねる。ここで弾いて直前の有効値を保持する。
+        q, g = msg.orientation, msg.angular_velocity
+        sample, reason = self._imu_sanity.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
+        if reason is not None:
+            self.get_logger().warning(
+                f"IMU サンプルを破棄: {reason} (棄却率 {self._imu_sanity.reject_ratio:.1%})",
+                throttle_duration_sec=5.0)
+        self._imu = sample
 
     def _on_thr(self, msg):
         self._thr = msg
@@ -231,10 +245,8 @@ class RlAttitudeNode(Node):
 
     def _build_obs(self):
         imu, thr = self._imu, self._thr
-        q = imu.orientation
-        cur_quat = np.array([q.w, q.x, q.y, q.z], dtype=float)   # ROS xyzw -> MuJoCo wxyz
-        g = imu.angular_velocity
-        gyro = np.array([g.x, g.y, g.z], dtype=float)
+        cur_quat = np.array(imu.quat, dtype=float)      # ImuSanity が (w,x,y,z) 正規化済みで返す
+        gyro = np.array(imu.gyro, dtype=float)
         if self._gyro_to_rad:
             gyro = np.radians(gyro)
         states = [getattr(thr, p) for p in POSITIONS]
