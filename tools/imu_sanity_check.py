@@ -8,10 +8,15 @@
     python3 tools/imu_sanity_check.py               # 60 秒。その間に機体を手で振る
     python3 tools/imu_sanity_check.py --duration 90
     python3 tools/imu_sanity_check.py --max-gyro 10 --max-step-deg 30   # 閾値を変えて試す
-    python3 tools/imu_sanity_check.py --save /tmp/imu_raw.csv           # 生データを残す
 
-`--save` した CSV は `tools/imu_sanity_replay.py` に食わせると、**手元の PC で**閾値を
-振り直して何度でも評価できる (ROS も実機も要らない)。実機で測り直すより速い。
+**生データを残したいときは `record_run.sh` を並行で回す** (このツールは記録しない):
+
+    ./tools/record_run.sh --bag-only --name imu-motion &
+    python3 tools/imu_sanity_check.py --duration 150
+    kill -INT %1
+
+残した bag は `tools/imu_sanity_replay.py` に食わせると、**手元の PC で**閾値を振り直して
+何度でも評価できる。実機で測り直すより速い。
 
 **姿勢の跳躍は「最後に *採用* されたサンプル」との差分**で判定される。棄却が続くと
 比較対象が古いままになるので、速く動かすほど連鎖しやすい。連続棄却が `stale_after`
@@ -64,9 +69,6 @@ class Checker(Node):
         self._last_print = 0.0
         self._win_gyro = 0.0
         self._win_step = 0.0
-        # 生データ。閾値の評価は後から手元でやり直せるようにする (imu_sanity_replay.py)。
-        # 50 Hz × 数分でも数千行なので、書き出しは最後にまとめて行う
-        self.raw: list[tuple] = []
         print(f"'{a.topic}' を {a.duration:.0f} 秒みます。"
               f"閾値 gyro {a.max_gyro} rad/s / step {a.max_step_deg} deg")
         print("**機体を手で動かしてください** (ゆっくり → 速く、傾け・ヨー振り)\n")
@@ -88,17 +90,18 @@ class Checker(Node):
                 step_deg = math.degrees(
                     _angle_between(prev.quat, (q.w / n, q.x / n, q.y / n, q.z / n)))
 
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        self.raw.append((now - self.t0, stamp, q.w, q.x, q.y, q.z, g.x, g.y, g.z))
-
+        before = self.san.resyncs
         _, reason = self.san.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
+        resynced = self.san.resyncs > before
 
-        moving = gmax > MOVING_GYRO
-        self.gyro_all.append(gmax)
-        self.step_all.append(step_deg)
-        if moving:
-            self.gyro_moving.append(gmax)
-            self.step_moving.append(step_deg)
+        # 統計は採用されたサンプルだけ。化けを混ぜると max がそれに支配され、
+        # 「正常な運動が閾値までどれくらい余裕があるか」が読めなくなる
+        if reason is None and not resynced:
+            if gmax > MOVING_GYRO:
+                self.gyro_moving.append(gmax)
+                self.step_moving.append(step_deg)
+            self.gyro_all.append(gmax)
+            self.step_all.append(step_deg)
 
         if reason is not None:
             key = reason.split(" (")[0]
@@ -125,16 +128,6 @@ class Checker(Node):
         if now - self.t0 >= self.a.duration:
             raise SystemExit(0)
 
-    def save(self):
-        if not self.a.save or not self.raw:
-            return
-        with open(self.a.save, "w") as f:
-            f.write("t_rel,stamp,qw,qx,qy,qz,gx,gy,gz\n")
-            for r in self.raw:
-                f.write("%.6f,%.6f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f\n" % r)
-        print(f"  生データ {len(self.raw)} 行を保存: {self.a.save}")
-        print("  手元で評価し直す: python3 tools/imu_sanity_replay.py <このファイル> --sweep")
-
     def report(self):
         a = self.a
         el = (time.time() - self.t0) if self.t0 else 0.0
@@ -145,11 +138,11 @@ class Checker(Node):
             return 1
         print(f"  {self.n} サンプル / {el:.1f} 秒 ({self.n / el:.1f} Hz)")
         nm = len(self.gyro_moving)
-        print(f"  うち動作中 (|gyro| > {MOVING_GYRO} rad/s): {nm} サンプル ({nm / self.n:.1%})")
+        print(f"  採用 {self.san.accepted} / うち動作中 (|gyro| > {MOVING_GYRO} rad/s): {nm} サンプル")
         print()
         print(f"  棄却 {self.san.rejected} 件 ({self.san.reject_ratio:.3%})"
               f" / 連続棄却の最大 {self.consec_max} 回"
-              f" / stale ({self.san.stale_after} 連続超え) {self.stale_events} 回")
+              f" / 再同期 {self.san.resyncs} 回 (IMU の姿勢基準が飛んだ回数)")
         for k, v in sorted(self.reasons.items(), key=lambda kv: -kv[1]):
             print(f"    - {k}: {v} 件")
         if self.rejected_detail:
@@ -157,6 +150,7 @@ class Checker(Node):
             for line in self.rejected_detail:
                 print(f"    {line}")
         print()
+        print("  以下は採用されたサンプルのみ (棄却分は上の一覧)")
         print(f"  {'':22} {'p50':>8} {'p95':>8} {'p99':>8} {'max':>8}   閾値      余裕")
         for label, xs, thr in (
             ("角速度 [rad/s] 全体", self.gyro_all, a.max_gyro),
@@ -172,14 +166,17 @@ class Checker(Node):
                   f" {mx:8.2f}   {thr:6.1f}   {margin:5.1f} 倍")
         print()
         ng = 0
-        if self.stale_events > 0:
-            print("  ⚠ 連続棄却が stale 判定に達しました。閾値が厳しすぎます"); ng += 1
-        elif self.san.reject_ratio > 0.01:
+        if self.consec_max > self.san.stale_after + 1:
+            print(f"  ⚠ 連続棄却が {self.consec_max} 回。再同期が効いていません"); ng += 1
+        if self.san.reject_ratio > 0.01:
             print("  ⚠ 棄却率が 1% を超えています。閾値の見直しを検討してください"); ng += 1
         if nm < 50:
             print("  ⚠ 動作中のサンプルがほとんどありません。機体を動かして測り直してください"); ng += 1
         if ng == 0:
-            print("  問題なし — 動作中も正常サンプルは弾かれていません")
+            if self.san.resyncs:
+                print(f"  問題なし — IMU が {self.san.resyncs} 回飛んだが、いずれも再同期して復帰")
+            else:
+                print("  問題なし — 動作中も正常サンプルは弾かれていません")
         print("=" * 68)
         return ng
 
@@ -190,7 +187,6 @@ def main():
     ap.add_argument("--duration", type=float, default=60.0, help="計測秒数")
     ap.add_argument("--max-gyro", type=float, default=10.0, help="imu_max_gyro と同じ値 [rad/s]")
     ap.add_argument("--max-step-deg", type=float, default=30.0, help="imu_max_step_deg と同じ値")
-    ap.add_argument("--save", default="", help="生データ (CSV) の保存先。閾値の評価をやり直せる")
     a = ap.parse_args()
 
     rclpy.init()
@@ -201,7 +197,6 @@ def main():
         pass
     finally:
         rc = node.report()
-        node.save()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

@@ -99,3 +99,43 @@ def test_最初のサンプルが化けていても落ちない():
 def test_フルスケール定数がBNO055の仕様と一致する():
     # int16 の最大値 / 16 LSB per deg/s -> rad/s
     assert GYRO_FULL_SCALE == pytest.approx(math.radians(32767 / 16.0), abs=0.01)
+
+
+def test_resyncs_after_a_permanent_attitude_jump():
+    """IMU の姿勢基準ごと飛んだら、数サンプルで再同期して復帰すること。
+
+    実機 (2026-08-21) で BNO055 の姿勢が一度だけ 169° 飛び、飛んだ先で正常に追従を
+    続ける事象を観測した。再同期しないと「飛ぶ前の姿勢」と比べ続けて永久に棄却する
+    (実測 150 秒間ずっと、棄却率 96%)。
+    """
+    san = ImuSanity(max_gyro=10.0, max_step_deg=30.0, stale_after=5)
+    level = (1.0, 0.0, 0.0, 0.0)
+    still = (0.0, 0.0, 0.0)
+    for _ in range(10):
+        assert san.update(level, still)[1] is None
+
+    flipped = (0.0, 0.0, 0.0, 1.0)          # 180° 違う姿勢。以降ここに貼り付く
+    rejected = 0
+    for _ in range(20):
+        _, reason = san.update(flipped, still)
+        if reason is not None:
+            rejected += 1
+
+    # stale_after + 1 サンプルで復帰し、それ以降は採用される
+    assert rejected == san.stale_after + 1, f"復帰しなかった (棄却 {rejected} 件)"
+    assert san.resyncs == 1
+    assert san.last.quat == flipped
+    assert not san.stale
+
+
+def test_resync_does_not_let_through_absolute_garbage():
+    """再同期の対象は姿勢の跳躍だけ。ノルム異常とフルスケール化けは弾き続けること。"""
+    san = ImuSanity(max_gyro=10.0, max_step_deg=30.0, stale_after=5)
+    level = (1.0, 0.0, 0.0, 0.0)
+    san.update(level, (0.0, 0.0, 0.0))
+
+    for _ in range(20):                      # ノルム 0 は何度続いても通さない
+        assert san.update((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0))[1] is not None
+    for _ in range(20):                      # フルスケール化けも同様
+        assert san.update(level, (GYRO_FULL_SCALE,) * 3)[1] is not None
+    assert san.resyncs == 0

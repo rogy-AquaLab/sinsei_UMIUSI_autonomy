@@ -135,11 +135,18 @@ class RlAttitudeNode(Node):
         # 実機の BNO055 は化けサンプルを混ぜてくる。姿勢と角速度を直接ポリシーの観測に
         # 入れるので、1 発のスパイクで指令が跳ねる。ここで弾いて直前の有効値を保持する。
         q, g = msg.orientation, msg.angular_velocity
+        resyncs = self._imu_sanity.resyncs
         sample, reason = self._imu_sanity.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
         if reason is not None:
             self.get_logger().warning(
                 f"IMU サンプルを破棄: {reason} (棄却率 {self._imu_sanity.reject_ratio:.1%})",
                 throttle_duration_sec=5.0)
+        elif self._imu_sanity.resyncs > resyncs:
+            # 姿勢基準そのものが飛んだ。フィルタは再同期したが、目標姿勢は飛ぶ前の基準で
+            # 与えられているので、**目標を入れ直す必要がある**。黙って進むと危険。
+            self.get_logger().warning(
+                f"IMU の姿勢基準が飛んだので再同期しました "
+                f"(通算 {self._imu_sanity.resyncs} 回)。目標姿勢を与え直してください")
         self._imu = sample
 
     def _on_thr(self, msg):

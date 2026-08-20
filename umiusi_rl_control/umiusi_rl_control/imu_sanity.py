@@ -13,6 +13,14 @@
 
 判定は「疑わしきは捨てる」。捨てたときは直前の有効値を返し、連続して捨て続けた場合は
 `stale` が True になるので、呼び出し側でフェイルセーフに落とせる。
+
+ただし **姿勢の跳躍だけは「捨て続ける」ことができない**。実機で、BNO055 の姿勢基準が
+一度だけ 169° 飛び、飛んだ先で正常に追従を続ける事象を観測した (2026-08-21、
+`|q|`=1.000 で角速度とも整合、以降なめらか)。跳躍は「最後に *採用* した値」との差分で
+見るので、比較対象が飛ぶ前の姿勢に固定されたままになり、**150 秒間ずっと棄却し続けて
+復帰しなかった** (棄却率 96%)。姿勢だけが古い値に貼り付くので、制御は effectively
+盲目になる。そこで `stale` に達したら跳躍チェックだけを解除して再同期する
+(絶対値で判定できるノルム異常とフルスケール化けは、そのまま弾き続ける)。
 """
 
 from __future__ import annotations
@@ -60,6 +68,7 @@ class ImuSanity:
         self.last: ImuSample | None = None
         self.rejected = 0          # 累計の棄却数 (診断用)
         self.accepted = 0
+        self.resyncs = 0           # 跳躍チェックを解除して再同期した回数 (診断用)
         self._consecutive = 0
 
     @property
@@ -87,6 +96,8 @@ class ImuSanity:
             self._consecutive += 1
             return self.last, reason
 
+        if self.stale:
+            self.resyncs += 1
         w, x, y, z = (float(v) for v in quat_wxyz)
         n = math.sqrt(w * w + x * x + y * y + z * z)
         self.last = ImuSample(quat=(w / n, x / n, y / n, z / n),
@@ -117,7 +128,10 @@ class ImuSanity:
             return (f"角速度が上限超過 ({gmax:.2f} rad/s)"
                     + (" — int16 フルスケール相当の化け" if near_fs else ""))
 
-        if self.last is not None:
+        # `stale` の間は跳躍チェックを行わない。IMU の姿勢基準そのものが飛んだ場合、
+        # 飛ぶ前の値と比べ続ける限り永久に復帰できないため (モジュール冒頭の注記)。
+        # 復帰までの遅れは stale_after + 1 サンプル (既定 6 = 50 Hz で 120 ms)。
+        if self.last is not None and not self.stale:
             step = _angle_between(self.last.quat, (w / n, x / n, y / n, z / n))
             if step > self.max_step:
                 return f"姿勢が急変 ({math.degrees(step):.1f} deg/sample)"
