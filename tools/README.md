@@ -22,6 +22,13 @@
 |---|---|
 | `record_camera.sh` | **カメラ映像の録画**。実機カメラは ROS トピックを出さず rosbag に残らないため、RTSP から H264 のまま録る (再エンコードなし、CPU 15.5%)。`--raw` は切り捨てに強い生 H264 で、`kill -9` や電源断でも壊れない。詳細は `docs/logging.md` |
 
+## 実験用
+
+| スクリプト | 用途 |
+|---|---|
+| `set_attitude.py` | **rl_attitude の目標姿勢を roll/pitch/yaw [deg] で与える**。素だと `~/setpoint` にクォータニオンを publish する必要があるので、その代わり。`--hold` で押し続ける（QoS depth=1 なので 1 発だと取りこぼす）、`--level` で水平・停止。`--vel` 未指定なら速度指令は変更しない |
+| `view_detections.py` | **検出結果を画像に重ねて表示**（時刻照合はせず、最後に届いた検出を重ねる）。**PC 側で動かす**こと（Pi でやると CPU が飽和して認識周期が落ちる）。`--save` で mp4 保存（表示も続く。録画だけなら `--no-window` を併用）|
+
 ## センサ確認
 
 | スクリプト | 用途 |
@@ -57,6 +64,6 @@ ros2 bag record -o run_$(date +%Y%m%d-%H%M%S) /state/imu /perception_node/detect
 ./umiusi_stack.sh stop
 ```
 
-関連ドキュメント: `docs/robot_setup.md` (セットアップ手順) /
+関連ドキュメント: `docs/experiment_guide.md` (実験手順) / `docs/robot_setup.md` (セットアップ) /
 `docs/performance_tuning.md` (性能チューニング) / `docs/logging.md` (記録) /
 `docs/competition_checklist.md` (競技前の確認項目) / `docs/known_issues.md` (既知の問題)
