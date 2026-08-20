@@ -24,8 +24,6 @@
   <exec_depend>sinsei_umiusi_msgs</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-scipy</exec_depend>      <!-- umiusi_perception の FSM 連鎖が使う -->
-  <!-- 検出器 (torch)。CPU 版を取らせるには機体の pip 設定が要る。rosdep/umiusi.yaml を参照 -->
-  <exec_depend>python3-torch-cpu</exec_depend>
   <!-- navigator_node reuses the shared arm/disarm (e-stop) helper from the control layer -->
   <exec_depend>umiusi_rl_control</exec_depend>
 
