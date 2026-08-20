@@ -23,6 +23,16 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
 
 共有を切り替えた直後は、Pi が経路変更に適応するまで**数分かかる**。
 
+### まとめて確認したいとき
+
+```bash
+./tools/experiment_test.sh            # 事前確認 → perception → 姿勢制御 → ロギング
+./tools/experiment_test.sh --perception   # 個別に
+```
+
+起動から判定・停止までを自動で通す。**スラスタは回さない**（RL は `publish=false` 固定）。
+以下は同じことを手で、目で見ながらやる手順。
+
 ---
 
 ## 1. `rl_attitude` を単独で

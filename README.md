@@ -36,12 +36,17 @@ autonomy を載せて、**姿勢制御と認識をそれぞれ単体で**確か�
 |---|---|---|
 | 1. 導入 | `cd ~/ros2-ws/src && git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_autonomy.git`<br>`cd sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh` | [`docs/robot_setup.md`](docs/robot_setup.md) |
 | 2. 確認 | `./tools/acceptance_test.sh` — CAN / VESC / カメラ / torch / 周期 / IMU を自動判定 | 〃 |
-| 3. 単体実験 | `./tools/umiusi_stack.sh start --attitude` / `--perception`（下記） | [`docs/experiment_guide.md`](docs/experiment_guide.md) |
+| 3. 単体実験 | `./tools/experiment_test.sh` で一括確認、または `./tools/umiusi_stack.sh start --attitude` / `--perception`（下記） | [`docs/experiment_guide.md`](docs/experiment_guide.md) |
 | 4. 記録 | `./tools/record_run.sh --name <走行名>` → 走行後に `--fix` | [`docs/logging.md`](docs/logging.md) |
 | 5. 通し | `./tools/umiusi_stack.sh start`（本番構成） | 下記「launch ファイルの使い分け」 |
 
 検出器も RL ポリシーも**リポジトリに同梱**しているので、転送するファイルはありません。
 ログは既定で `/tmp/umiusi_logs/{control,core,rl}.log`（`UMIUSI_LOGDIR` で変更可）。
+
+**まとめて確認したいとき**は `./tools/experiment_test.sh` — 事前確認（cameras 設定と H264 デバイスの
+一致など）→ perception 単体 → 姿勢制御単体 → ロギング を、起動から判定・停止まで自動で通します。
+**スラスタは回しません**（RL は `publish=false` 固定）。実際に回す確認は
+[`docs/experiment_guide.md`](docs/experiment_guide.md) の 1-4 を e-stop を用意して手順どおりに。
 
 ### 姿勢制御 (`rl_attitude`) の単体実験
 
