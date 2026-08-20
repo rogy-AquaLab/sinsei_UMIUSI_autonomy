@@ -90,6 +90,10 @@ class RlAttitudeNode(Node):
         self.declare_parameter("servo_range_deg", 90.0)
         self.declare_parameter("imu_max_gyro", 10.0)       # IMU サニティ: 角速度上限 [rad/s]
         self.declare_parameter("imu_max_step_deg", 30.0)   # IMU サニティ: 姿勢跳躍上限 [deg]
+        # 既定は「検出するが破棄しない」。実機では該当が 0.44% しかないうえ、フィルタ自身の
+        # 誤爆 (姿勢基準が飛ぶと復帰できない) のほうが被害が大きかった。閾値を決めるための
+        # データが貯まるまでは観測に徹する。true にすると従来どおり破棄する。
+        self.declare_parameter("imu_sanity_enforce", False)
         self.declare_parameter("gyro_deg_per_sec", False)  # convert IMU gyro deg/s -> rad/s (see caveats)
         self.declare_parameter("publish", True)            # False = predict only, do not command
         self.declare_parameter("start_armed", True)        # False = launch disarmed (safe); arm to run
@@ -112,7 +116,8 @@ class RlAttitudeNode(Node):
         self._imu = None
         self._imu_sanity = ImuSanity(
             max_gyro=float(self.get_parameter("imu_max_gyro").value),
-            max_step_deg=float(self.get_parameter("imu_max_step_deg").value))
+            max_step_deg=float(self.get_parameter("imu_max_step_deg").value),
+            enforce=bool(self.get_parameter("imu_sanity_enforce").value))
         self._thr = None
 
         self._sub_imu = self.create_subscription(
@@ -133,13 +138,21 @@ class RlAttitudeNode(Node):
 
     def _on_imu(self, msg):
         # 実機の BNO055 は化けサンプルを混ぜてくる。姿勢と角速度を直接ポリシーの観測に
-        # 入れるので、1 発のスパイクで指令が跳ねる。ここで弾いて直前の有効値を保持する。
+        # 入れるので、1 発のスパイクで指令が跳ねる。ただし **既定では検出するだけで弾かない**
+        # (`imu_sanity_enforce`)。理由は imu_sanity.py 冒頭。
         q, g = msg.orientation, msg.angular_velocity
+        resyncs = self._imu_sanity.resyncs
         sample, reason = self._imu_sanity.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
         if reason is not None:
+            self.get_logger().warning(self._imu_sanity.describe(reason),
+                                      throttle_duration_sec=5.0)
+        # enforce=False では reason が付いたまま採用されるので、独立した if で見る
+        if self._imu_sanity.resyncs > resyncs:
+            # 姿勢基準そのものが飛んだ。フィルタは再同期したが、目標姿勢は飛ぶ前の基準で
+            # 与えられているので、**目標を入れ直す必要がある**。黙って進むと危険。
             self.get_logger().warning(
-                f"IMU サンプルを破棄: {reason} (棄却率 {self._imu_sanity.reject_ratio:.1%})",
-                throttle_duration_sec=5.0)
+                f"IMU の姿勢基準が飛んだので再同期しました "
+                f"(通算 {self._imu_sanity.resyncs} 回)。目標姿勢を与え直してください")
         self._imu = sample
 
     def _on_thr(self, msg):

@@ -23,11 +23,27 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
 
 共有を切り替えた直後は、Pi が経路変更に適応するまで**数分かかる**。
 
+### まとめて確認したいとき
+
+```bash
+./tools/experiment_test.sh            # 事前確認 → perception → 姿勢制御 → ロギング
+./tools/experiment_test.sh --perception   # 個別に
+```
+
+起動から判定・停止までを自動で通す。**スラスタは回さない**（RL は `publish=false` 固定）。
+以下は同じことを手で、目で見ながらやる手順。
+
 ---
 
 ## 1. `rl_attitude` を単独で
 
 ### 1-1. まず指令を出さずに見る
+
+```bash
+./tools/umiusi_stack.sh start --attitude    # control + RL。カメラは上げない
+```
+
+手で組む場合はこちら（内容は同じ）:
 
 ```bash
 ros2 launch sinsei_umiusi_control main.yaml enable_cameras:=false
@@ -38,6 +54,7 @@ ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=false
 `policy loaded from .../export (SB3 非依存の素 torch 推論)` が出れば読めている。
 
 ```bash
+tail -f /tmp/umiusi_logs/rl.log                                # ポリシー読み込みと棄却率
 ros2 topic hz /state/imu                                       # 50 Hz
 python3 tools/imu_monitor.py                                   # 傾けて姿勢を目視
 ```
@@ -79,10 +96,12 @@ ros2 topic echo /cmd/direct/thruster_controller/output_lf       # duty_cycle / a
 
 ### 1-4. 実際に回す
 
-モータを繋いで `publish:=true` で起動する。**必ず e-stop を手元に**:
+モータを繋いで publish を有効にして起動する。**必ず e-stop を手元に**:
 
 ```bash
-ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=true
+./tools/umiusi_stack.sh stop
+./tools/umiusi_stack.sh start --attitude --publish
+# 手で組む場合: ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=true
 ```
 
 ```bash
@@ -108,12 +127,27 @@ ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"    #
 ## 2. `perception` を単独で
 
 ```bash
-ros2 launch sinsei_umiusi_control main.yaml enable_cameras:=true
-ros2 launch umiusi_autonomy core_autonomy.launch.py use_rosbridge:=false
+./tools/umiusi_stack.sh stop
+./tools/umiusi_stack.sh start --perception   # カメラブリッジ + perception だけ
+```
+
+手で組む場合はこちら:
+
+```bash
+ros2 launch sinsei_umiusi_control main.yaml enable_cameras:=true \
+    cameras_param_file:=$(ros2 pkg prefix umiusi_autonomy)/share/umiusi_autonomy/config/cameras_deploy.yaml
+ros2 launch umiusi_autonomy core_autonomy.launch.py use_core:=false use_rosbridge:=false
 ```
 
 `core_autonomy` はカメラブリッジと perception も起動する。認識だけ見たいので
-`use_rosbridge:=false` にして CPU を空ける。
+`use_core:=false`（BT を起動しない）と `use_rosbridge:=false`（UI を起動しない）で CPU を空ける。
+
+> **`cameras_param_file` を渡さないとカメラが開かない。** 実機既定の `params/cameras.yaml` は
+> `usb_camera` が `/dev/video2`（unicam = H264 非対応）を指しており、pipeline が開けず RTSP に
+> 映像が来ない（`known_issues.md` の B-1）。その状態だと `camera_bridge_node` が
+> `ハードウェア経路 ... software に落とします` / `接続できません` を出し続ける。
+> `umiusi_stack.sh` は同梱の `cameras_deploy.yaml`（`/dev/video4`）を自動で渡す。
+> デバイス番号は挿し順で変わるので `v4l2-ctl --device=/dev/video4 --list-formats` で確認すること。
 
 ```bash
 ros2 topic hz /front_cam/image_raw            # ブリッジが画像を流しているか
@@ -122,7 +156,8 @@ ros2 topic echo --once /perception_node/detections
 ```
 
 `/cmd/target` が出ないのは**正常** (core の BT が AUTO に入るまで
-`auto_target_generator` は activate されない)。単体で見るなら手動で遷移させる。
+`auto_target_generator` は activate されない。`--perception` では BT 自体を起動しない)。
+単体で見るなら手動で遷移させる (README「`/cmd/target` が出ないとき」)。
 
 ### 検出器の切り替え
 
@@ -174,13 +209,20 @@ UI (WebRTC) 側でも映像は見えるが、そちらは MediaMTX 経由の生�
 
 ---
 
-## 5. 見ておきたいこと (今回まだ実機で未検証)
+## 5. 実測値 (2026-08-21、`tools/experiment_test.sh` で確認)
 
-| 項目 | 見かた | 期待 |
+| 項目 | 見かた | 実測 |
 |---|---|---|
-| **IMU フィルタの棄却率** | ノードのログに `IMU サンプルを破棄` | 静止時はほぼ 0。多すぎるなら `imu_max_gyro` / `imu_max_step_deg` を緩める |
-| **認識周期が 10 Hz に張り付くか** | `ros2 topic hz /perception_node/detections` | `max_rate_hz=10` で 10 Hz 付近 (以前は 7.9 Hz に落ちていた) |
-| **Ctrl-C で録画が閉じるか** | 停止後に `ls ~/runs/*/video/` と `pgrep gst-launch` | ファイルが読め、孤児プロセスが残らない |
-| **RL の実機での復元** | 傾けて `/cmd/direct/...` の duty | 戻す向き。発散しない |
+| **IMU の化けサンプル** | ノードのログに `IMU の異常サンプルを検出` | 手で 150 秒振って **0.44%** (ノルム異常 24 / 角速度スパイク 9)。いずれも読み出し化けで、速い運動ではない。**既定では検出のみで破棄しない** (`imu_sanity_enforce:=true` で破棄。`known_issues.md` A-1) |
+| **IMU の姿勢基準の飛び** | `IMU の姿勢基準が飛んだので再同期` | 150 秒に 1 回、169°。**飛んだら目標姿勢を与え直すこと** (飛ぶ前の基準で与えているため) |
+| **認識周期が 10 Hz に張り付くか** | `ros2 topic hz /perception_node/detections` | **単体 10.01 Hz で張り付く**（以前は 7.9 Hz）。BT を載せた本番構成では 9.26 Hz / CPU 74.8% |
+| **Ctrl-C で録画が閉じるか** | 停止後に `ls ~/runs/*/video/` と `pgrep gst-launch` | **閉じる**。bag の `metadata.yaml` も書かれ reindex 不要、孤児プロセスも残らない |
+| **RL の実機での復元** | 傾けて `/cmd/direct/...` の duty | **未確認** — `publish:=false` でしか回していない。手順 1-4 で確認すること |
 
+> **記録は 30 秒以上録ること。** `record_run.sh` は起動に 10 秒以上かかり (`ros2 topic list` と
+> カメラの立ち上げ)、`ros2 bag record` の discovery にも数秒かかる。15 秒だと **bag に `/tf` しか
+> 入らない**（実機で踏んだ）。30 秒あれば `/state/imu` が 50 Hz、`detections` が 10 Hz で入る。
+
+その他の実測: `/front_cam/image_raw` 15.1 Hz / `/state/imu` 50.2 Hz /
+`/state/thruster_state_all` 50.0 Hz / VESC 4 台すべて応答 / CPU 温度 42〜48°C (throttle なし)。
 数値の基準は `performance_tuning.md`、確認項目の全体像は `competition_checklist.md`。

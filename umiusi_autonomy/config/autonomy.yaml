@@ -26,8 +26,12 @@ navigator_node:
     yaw_rate_axis: "y"       # IMU axis carrying the vehicle yaw rate (x/y/z); sim uses y (up)
     yaw_rate_sign: 1.0
     # IMU サニティフィルタ (実機 BNO055 の化けサンプル対策)。
-    # ゼロクォータニオン / 角速度の int16 フルスケール張り付き / 姿勢の跳躍 を弾く。
-    imu_max_gyro: 10.0        # [rad/s] これを超えるサンプルは破棄 (フルスケールは 35.74)
+    # ゼロクォータニオン / 角速度の int16 フルスケール張り付き / 姿勢の跳躍 を検出する。
+    # **既定は検出とログだけで、値は破棄しない** — 実機で該当は 0.44% しかなく、一方で
+    # フィルタ自身の誤爆のほうが被害が大きかったため (docs/known_issues.md A-1)。
+    # データが貯まって閾値を決めたら true にする。
+    imu_sanity_enforce: false
+    imu_max_gyro: 10.0        # [rad/s] 検出の閾値 (フルスケールは 35.74)
     imu_max_step_deg: 30.0    # 1 サンプルの姿勢跳躍上限 [deg]。50Hz なら 1500 deg/s 相当
     publish: true            # false -> compute the FSM but do NOT command the thrusters (dry test)
     command_mode: "direct"   # "direct" -> /cmd/direct ThrusterOutput (default, self-enabling).
@@ -48,6 +52,10 @@ auto_target_generator:          # lifecycle node for the on-core path (core_auto
     yaw_rate_axis: "y"       # IMU axis carrying the vehicle yaw rate (x/y/z); sim uses y (up)
     yaw_rate_sign: 1.0
     # IMU サニティフィルタ (実機 BNO055 の化けサンプル対策)。
-    # ゼロクォータニオン / 角速度の int16 フルスケール張り付き / 姿勢の跳躍 を弾く。
-    imu_max_gyro: 10.0        # [rad/s] これを超えるサンプルは破棄 (フルスケールは 35.74)
+    # ゼロクォータニオン / 角速度の int16 フルスケール張り付き / 姿勢の跳躍 を検出する。
+    # **既定は検出とログだけで、値は破棄しない** — 実機で該当は 0.44% しかなく、一方で
+    # フィルタ自身の誤爆のほうが被害が大きかったため (docs/known_issues.md A-1)。
+    # データが貯まって閾値を決めたら true にする。
+    imu_sanity_enforce: false
+    imu_max_gyro: 10.0        # [rad/s] 検出の閾値 (フルスケールは 35.74)
     imu_max_step_deg: 30.0    # 1 サンプルの姿勢跳躍上限 [deg]。50Hz なら 1500 deg/s 相当
