@@ -1,27 +1,24 @@
-# UMIUSI 固有の rosdep ルール。公開データベース (rosdistro) に無い依存をここで定義する。
+# UMIUSI 固有の rosdep ルール (**任意**)。
 #
-# 使い方 (機体で一度だけ):
+# 通常は `tools/setup_robot.sh` を使えばよく、これは不要。
+# 素の `rosdep install` だけで torch まで入れたい場合にのみ登録する:
+#
 #   sudo tee /etc/ros/rosdep/sources.list.d/50-umiusi.list <<< \
 #     "yaml https://raw.githubusercontent.com/rogy-AquaLab/sinsei_UMIUSI_autonomy/main/rosdep/umiusi.yaml"
 #   rosdep update
 #
-# あわせて pip の設定も要る (下の注記と docs/robot_setup.md を参照)。
+# ただしこの経路には**システム側を書き換える必要がある**という難点がある:
+#   * rosdep の pip インストーラは sudo で system-wide に入れるため、PEP 668 を外す設定
+#     (`/etc/pip.conf` の `break-system-packages`) をシステムに置く必要がある
+#   * torch の CPU 版を取らせる `--index-url` も rosdep のルールには書けないので、
+#     同じく `/etc/pip.conf` に `index-url` を書くことになる
+#
+# `setup_robot.sh` は Python の依存を `--user` (~/.local) に入れるので、
+# **システムのファイルを一切書き換えずに済む**。そちらを既定とする。
+#
+# なお package.xml からは python3-torch-cpu を**参照していない**。参照すると、この
+# ルールを登録していない機体で `rosdep install` 自体が失敗してしまうため。
 
-# ----------------------------------------------------------------------------
-# torch (CPU 版)
-#
-# Ubuntu 24.04 には python3-torch という apt パッケージが**存在しない**ため pip で入れる。
-# ただし PyPI 既定の torch は aarch64 でも CUDA 版を引き、nvidia-* で 4.5 GB を無駄にする。
-# CPU 版を取らせるには pip 側でインデックスを指定する必要がある (rosdep のルールには
-# --index-url を書けない)。機体の /etc/pip.conf に次を置くこと:
-#
-#   [global]
-#   break-system-packages = true
-#   index-url = https://download.pytorch.org/whl/cpu
-#   extra-index-url = https://pypi.org/simple
-#
-# break-system-packages は PEP 668 対応。rosdep の pip インストーラは、これが無いと
-# 「externally managed」として実行を拒否する (PIP_BREAK_SYSTEM_PACKAGES=1 でも可)。
 python3-torch-cpu:
   ubuntu:
     pip:

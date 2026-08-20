@@ -2,6 +2,12 @@
 
 実機の立ち上げ・動作確認・記録に使うスクリプト。ROS 2 環境を source してから実行する。
 
+## セットアップ
+
+| スクリプト | 用途 |
+|---|---|
+| `setup_robot.sh` | **clone 直後から動く状態まで 1 コマンド**。依存解決 → torch(CPU版) → `umiusi_perception` → ビルド → 確認。**システムのファイルは書き換えず、Python の依存は `--user` (~/.local) に入る**。`--check` で現状確認のみ、`--perception <dir>` でローカルから perception を入れる |
+
 ## 起動と確認
 
 | スクリプト | 用途 |
