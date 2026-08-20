@@ -1,17 +1,12 @@
 #!/usr/bin/env bash
-# 機体を clone 直後の状態から autonomy が動く状態にする。
+# clone 直後の機体を autonomy が動く状態にする。
 #
-#   ./tools/setup_robot.sh                    # 全部やる
-#   ./tools/setup_robot.sh --perception <dir> # umiusi_perception をローカルから入れる
-#   ./tools/setup_robot.sh --check            # 何もせず現状だけ確認する
+#   ./tools/setup_robot.sh                    # 全部
+#   ./tools/setup_robot.sh --check            # 現状確認のみ
+#   ./tools/setup_robot.sh --perception <dir> # perception をローカルから入れる
 #
-# **システムのファイルは書き換えない。** Python の依存は全て `--user` (~/.local) に入れる。
-# apt が要るもの (ROS のパッケージ等) だけ rosdep が sudo apt を使う。
-#
-# なぜ pip 設定ファイル (/etc/pip.conf) を使わないか:
-#   rosdep の pip インストーラは sudo で system-wide に入れようとするため、PEP 668 の
-#   ブロックを外す設定を **システム側に** 置く必要が出てしまう。ここで先に `--user` で
-#   入れておけば rosdep は「充足済み」と見なすので、システムを触らずに済む。
+# Python の依存は --user (~/.local) に入れる。システムのファイルは書き換えない。
+# apt が要るものだけ rosdep が sudo apt を使う。
 set -o pipefail
 
 WS="${UMIUSI_WS:-$HOME/ros2-ws}"
@@ -35,7 +30,7 @@ inf(){ printf "  --     %s\n" "$*"; }
 hdr(){ printf "\n\033[1m== %s ==\033[0m\n" "$*"; }
 
 PIP="python3 -m pip"
-PIPFLAGS="--user --break-system-packages"   # ~/.local に閉じる。システムは触らない
+PIPFLAGS="--user --break-system-packages"   # ~/.local に閉じる
 
 have_py(){ python3 -c "import $1" 2>/dev/null; }
 
@@ -60,14 +55,13 @@ hdr "1. pip"
 if $PIP --version >/dev/null 2>&1; then
   ok "pip あり ($($PIP --version 2>/dev/null | awk '{print $2}'))"
 else
-  inf "pip が無いので --user で入れる"
+  inf "pip を --user で入れる"
   curl -sSL -o /tmp/get-pip.py https://bootstrap.pypa.io/get-pip.py \
     && python3 /tmp/get-pip.py --user --break-system-packages >/dev/null 2>&1 \
     && ok "pip を ~/.local に導入" || { ng "pip の導入に失敗"; exit 1; }
 fi
 
 hdr "2. apt / ROS の依存 (rosdep)"
-# ここは apt なので sudo が要る。ROS の標準手順どおり。
 if rosdep install -i --from-paths "$WS/src" -y --rosdistro jazzy 2>&1 | tail -3; then
   ok "rosdep install 完了"
 else
@@ -78,12 +72,13 @@ hdr "3. torch (CPU 版, ~/.local)"
 if have_py torch && python3 -c "import torch,sys; sys.exit(0 if 'cpu' in torch.__version__ else 1)" 2>/dev/null; then
   ok "CPU 版 torch は導入済み ($(python3 -c 'import torch;print(torch.__version__)'))"
 else
-  inf "CPU 版を ~/.local に入れる (PyPI 既定だと aarch64 でも CUDA 版を引き 4.5GB 無駄になる)"
+  # PyPI 既定は aarch64 でも CUDA 版を引き、nvidia-* で 4.5GB を無駄にする
+  inf "CPU 版を ~/.local に入れる"
   # shellcheck disable=SC2086
   $PIP install $PIPFLAGS --no-cache-dir --index-url "$TORCH_INDEX" torch 2>&1 | tail -2
   have_py torch && ok "torch $(python3 -c 'import torch;print(torch.__version__)')" || ng "torch の導入に失敗"
 fi
-# colcon は setuptools<80 を要求する。torch 導入で上がってしまうことがあるので戻す
+# torch 導入で setuptools が上がると colcon (<80 を要求) が壊れる
 if python3 -c "import setuptools,sys; from packaging.version import Version; sys.exit(0 if Version(setuptools.__version__) < Version('80') else 1)" 2>/dev/null; then
   ok "setuptools $(python3 -c 'import setuptools;print(setuptools.__version__)') (colcon 互換)"
 else
@@ -93,7 +88,7 @@ else
   ok "setuptools $(python3 -c 'import setuptools;print(setuptools.__version__)')"
 fi
 
-hdr "4. umiusi_perception (検出器 + 風船割り FSM)"
+hdr "4. umiusi_perception (検出器 + FSM)"
 if have_py umiusi_perception; then
   ok "導入済み"
 elif [ -n "$PERCEPTION_SRC" ]; then
@@ -101,13 +96,13 @@ elif [ -n "$PERCEPTION_SRC" ]; then
   $PIP install $PIPFLAGS --no-deps "$PERCEPTION_SRC" 2>&1 | tail -2
   have_py umiusi_perception && ok "ローカルから導入: $PERCEPTION_SRC" || ng "導入に失敗"
 else
-  inf "git から取得する (Umiusi_sim は public)"
+  inf "git から取得"
   # shellcheck disable=SC2086
   if $PIP install $PIPFLAGS --no-deps "$PERCEPTION_GIT" 2>&1 | tail -2 && have_py umiusi_perception; then
     ok "git から導入"
   else
-    ng "取得に失敗 (ネットワークは繋がっているか?)"
-    inf "手元にソースがあるなら --perception <その場所> で入れられる"
+    ng "取得に失敗 (ネットワークは?)"
+    inf "手元にソースがあれば --perception <dir>"
   fi
 fi
 
@@ -123,6 +118,6 @@ python3 -c "import umiusi_autonomy.perception_node, umiusi_rl_control.rl_attitud
   && ok "ノードの import" || ng "ノードの import に失敗"
 
 hdr "次にやること"
-echo "  * 検出器は同梱のものが既定で使われる (models/detector/camp_mix.pt)。"
-echo "    実際の水中は camp_real.pt のほうが強いので、競技では model_path で切り替える。"
+echo "  * 検出器は同梱の camp_mix.pt が既定。競技は camp_real.pt のほうが強い"
+echo "    (models/detector/README.md)"
 echo "  * 受け入れ試験: $WS/src/sinsei_UMIUSI_autonomy/tools/acceptance_test.sh"
