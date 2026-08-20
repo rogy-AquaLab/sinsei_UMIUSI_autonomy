@@ -252,7 +252,7 @@ PC で素形式に書き出したものを使う:
 rsync -az .../cruise_policy/export/ pi@<Pi>:~/models/cruise_policy_export/
 ```
 
-実機側は **torch だけ**で推論できる (`tools/policy_infer.py`)。SB3・gymnasium は不要。
+実機側は **torch だけ**で推論できる (`umiusi_rl_control/policy_infer.py`)。SB3・gymnasium は不要。
 
 ---
 
