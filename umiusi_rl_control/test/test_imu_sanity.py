@@ -193,3 +193,32 @@ def test_describe_は破棄したかどうかを言い分ける():
     assert "破棄していません" in off.describe("角速度が上限超過 (35.5 rad/s)")
     assert "破棄" in on.describe("角速度が上限超過 (35.5 rad/s)")
     assert "破棄していません" not in on.describe("角速度が上限超過 (35.5 rad/s)")
+
+
+def test_UNUSABLE_は_check_が返す理由と対応している():
+    """「必ず捨てる」判定を理由の文言に依存させない、を守るための回帰テスト。
+
+    `_check` のメッセージを変えたときに UNUSABLE との対応が切れると、捨てるはずの
+    サンプルが黙って通るようになる。
+    """
+    s = ImuSanity()
+    cases = [
+        ((0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),          # 正規化できない
+        ((1.0, 0.0, 0.0, 0.0), (float("nan"), 0.0, 0.0)),  # NaN/Inf
+        (("x", 0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),           # float にできない
+    ]
+    for quat, gyro in cases:
+        reason = s._check(quat, gyro)
+        assert reason is not None, f"{quat} {gyro} が検出されない"
+        assert reason.split(" (")[0] in ImuSanity.UNUSABLE, \
+            f"'{reason}' が UNUSABLE に載っていない"
+    # 逆に、閾値で決まる判定は UNUSABLE に入っていないこと (enforce=False で通すため)
+    s2 = ImuSanity()
+    s2.update((1.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    for quat, gyro in (((1.0, 0.0, 0.0, 0.0), (GYRO_FULL_SCALE,) * 3),
+                       ((0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0)),
+                       ((2.230613, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0))):
+        reason = s2._check(quat, gyro)
+        assert reason is not None
+        assert reason.split(" (")[0] not in ImuSanity.UNUSABLE, \
+            f"'{reason}' は閾値の判定なので UNUSABLE に入れてはいけない"

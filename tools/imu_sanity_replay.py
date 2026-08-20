@@ -30,7 +30,7 @@ from rosidl_runtime_py.utilities import get_message
 
 import rosbag2_py
 
-from umiusi_rl_control.imu_sanity import ImuSanity, _angle_between
+from umiusi_rl_control.imu_sanity import ImuSanity, angle_between
 
 MOVING_GYRO = 0.15   # これを超えたら「動かしている」とみなす [rad/s]
 
@@ -88,7 +88,7 @@ def run(samples, max_gyro: float, max_step_deg: float):
         if prev is not None:
             n = math.sqrt(sum(v * v for v in quat))
             if n > 1e-9:
-                step_deg = math.degrees(_angle_between(prev.quat, tuple(v / n for v in quat)))
+                step_deg = math.degrees(angle_between(prev.quat, tuple(v / n for v in quat)))
         before = san.resyncs
         _, reason = san.update(quat, gyro)
         resynced = san.resyncs > before

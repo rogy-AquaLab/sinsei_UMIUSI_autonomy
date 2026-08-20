@@ -33,7 +33,7 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Imu
 
-from umiusi_rl_control.imu_sanity import ImuSanity, _angle_between
+from umiusi_rl_control.imu_sanity import ImuSanity, angle_between
 
 MOVING_GYRO = 0.15   # これを超えたら「動かしている」とみなす [rad/s] (≒ 8.6 deg/s)
 
@@ -91,7 +91,7 @@ class Checker(Node):
             n = math.sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z)
             if n > 1e-9:
                 step_deg = math.degrees(
-                    _angle_between(prev.quat, (q.w / n, q.x / n, q.y / n, q.z / n)))
+                    angle_between(prev.quat, (q.w / n, q.x / n, q.y / n, q.z / n)))
 
         before = self.san.resyncs
         _, reason = self.san.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))

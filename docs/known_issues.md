@@ -39,8 +39,8 @@
 | `imu_max_gyro` | 10.0 rad/s | 検出の閾値 (フルスケールは 35.74) |
 | `imu_max_step_deg` | 30.0 deg | 1 サンプルの姿勢跳躍上限。50 Hz なら 1500 deg/s 相当 |
 
-ROS 非依存の純関数なので単体テストできる。**実機で観測した実際の化け値を使った
-テスト 10 件が通っている** (`umiusi_rl_control/test/test_imu_sanity.py`)。
+ROS 非依存の純関数なので単体テストできる。**実機で観測した実際の化け値を使ったテスト**が
+`umiusi_rl_control/test/test_imu_sanity.py` にある。
 符号反転 (q と −q) を急変と誤判定しないこと、正常な運動 (1 サンプル 30° まで) を
 通すことも確認済み。
 

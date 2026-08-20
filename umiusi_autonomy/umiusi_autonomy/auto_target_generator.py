@@ -132,7 +132,8 @@ class AutoTargetGenerator(LifecycleNode):
     def _on_imu(self, msg) -> None:
         # 実機の BNO055 は物理的にありえないサンプルを混ぜてくる (ゼロクォータニオン、
         # 角速度の int16 フルスケール張り付き、姿勢の跳躍)。ヨーレートをそのまま制御に
-        # 使うので、1 発のスパイクで制御が跳ねる。ここで弾く。
+        # 使うので、1 発のスパイクで制御が跳ねる。ただし **既定では検出するだけで弾かない**
+        # (`imu_sanity_enforce`)。理由は imu_sanity.py 冒頭。
         q, g = msg.orientation, msg.angular_velocity
         sample, reason = self._imu_sanity.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
         if reason is not None:

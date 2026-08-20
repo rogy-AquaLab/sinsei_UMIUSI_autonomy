@@ -73,6 +73,10 @@ class ImuSanity:
     # 正規化が定義できないノルムの下限。閾値ではなく数値上の限界なので設定にしない。
     MIN_NORM = 1e-6
 
+    # `enforce` によらず必ず捨てる理由。閾値を緩めても救えない — 値そのものが
+    # 数値として使えない (正規化が 0 除算になる、NaN/Inf が混じる) ものだけを入れる。
+    UNUSABLE = ("正規化できない", "NaN/Inf が含まれる", "値を float にできない")
+
     def __init__(self, max_gyro: float = 10.0, max_step_deg: float = 30.0,
                  quat_tol: float = 0.01, stale_after: int = 5,
                  enforce: bool = False) -> None:
@@ -119,13 +123,12 @@ class ImuSanity:
         """
         reason = self._check(quat_wxyz, gyro_xyz)
         if reason is not None:
+            key = reason.split(" (")[0]
             self.flagged += 1
-            self.reasons[reason.split(" (")[0]] = \
-                self.reasons.get(reason.split(" (")[0], 0) + 1
-            # 正規化できない値だけは enforce によらず捨てる (数値上の限界)
-            unusable = reason.startswith("正規化できない") or reason.startswith("NaN/Inf") \
-                or reason.startswith("値を float")
-            if self.enforce or unusable:
+            self.reasons[key] = self.reasons.get(key, 0) + 1
+            # 値として使えないものだけは enforce によらず捨てる。判定は理由の文言では
+            # なく UNUSABLE との一致で行う (文言を変えたら挙動が変わる、を避ける)
+            if self.enforce or key in self.UNUSABLE:
                 self.rejected += 1
                 self._consecutive += 1
                 return self.last, reason
@@ -183,7 +186,13 @@ class ImuSanity:
         return None
 
 
-def _angle_between(qa, qb) -> float:
-    """2 つの単位クォータニオン間の回転角 [rad]。符号の曖昧さ (q と -q) を吸収する。"""
+def angle_between(qa, qb) -> float:
+    """2 つの単位クォータニオン間の回転角 [rad]。符号の曖昧さ (q と -q) を吸収する。
+
+    診断ツール (`tools/imu_sanity_*.py`) が同じ計算を再現するために公開している。
+    """
     dot = sum(a * b for a, b in zip(qa, qb))
     return 2.0 * math.acos(min(1.0, abs(dot)))
+
+
+_angle_between = angle_between      # 旧名 (内部で使っていた) を残す
