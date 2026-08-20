@@ -57,6 +57,8 @@ python3 tools/set_attitude.py --yaw 45 --attitude-only --hold   # 速度は無�
 ```
 
 **`--hold` を使うこと。** QoS の depth が 1 なので、1 発だけだと取りこぼす。
+`--vel` を付けなければ**速度指令は変更しない**（launch の `vel_cmd` のまま）。
+止めたいときは `--level` か `--vel 0`。
 
 launch 時に既定を変えることもできる:
 
@@ -77,12 +79,29 @@ ros2 topic echo /cmd/direct/thruster_controller/output_lf       # duty_cycle / a
 
 ### 1-4. 実際に回す
 
-モータを繋いで `publish:=true`。**必ず e-stop を手元に**:
+モータを繋いで `publish:=true` で起動する。**必ず e-stop を手元に**:
 
 ```bash
-ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: false}"   # 武装解除
-ros2 topic pub --once /rl_attitude_node/estop std_msgs/msg/Bool "{data: true}"
+ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=true
 ```
+
+```bash
+# 緊急停止（別端末に先に用意しておく）
+ros2 topic pub --once /rl_attitude_node/estop std_msgs/msg/Bool "{data: true}"
+
+# 復帰（止めたあと再開するとき）
+ros2 topic pub --once /rl_attitude_node/estop std_msgs/msg/Bool "{data: false}"
+
+ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: false}"   # 武装解除
+ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"    # 再武装
+```
+
+どちらも同じ武装フラグを操作するだけで**インターロックは無い**（`estop true` のあとでも
+`arm true` を呼べば武装する）。混乱を避けるため、**止めた経路と同じ経路で戻す**こと。
+
+`estop` は latched (transient_local) だが、`ros2 topic pub --once` は送信後に終了するため
+**latch は残らない**。その状態でノードを再起動すると ARMED で立ち上がる（`start_armed:=false`
+で起動すれば DISARMED から始められる）。
 
 ---
 
@@ -129,12 +148,14 @@ python3 tools/view_detections.py
 バウンディングボックスに色・確信度・距離が重なる。`q` で終了。
 
 ```bash
-python3 tools/view_detections.py --save run.mp4    # 表示せず録画
-python3 tools/view_detections.py --no-window       # 統計だけ (ヘッドレス)
+python3 tools/view_detections.py --save run.mp4               # 表示しつつ録画
+python3 tools/view_detections.py --save run.mp4 --no-window   # 録画だけ (表示しない)
+python3 tools/view_detections.py --no-window                  # 統計だけ (ヘッドレス)
 ```
 
 > **Pi では動かさないこと。** CPU が飽和して認識周期が落ちる。
-> 画像と検出は別トピックなので、**検出が画像より遅く、同じ枠が数フレーム続く**のは正常。
+> 画像と検出は別トピックで、その時点で**最後に届いた検出**を重ねる（時刻照合はしない）。
+> 検出は画像より遅いので、同じ枠が数フレーム続くのは正常。
 
 UI (WebRTC) 側でも映像は見えるが、そちらは MediaMTX 経由の生映像で**検出枠は重ならない**。
 枠を見たいときはこのツールを使う。

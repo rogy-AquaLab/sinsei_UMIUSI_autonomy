@@ -26,8 +26,8 @@
 
 | スクリプト | 用途 |
 |---|---|
-| `set_attitude.py` | **rl_attitude の目標姿勢を roll/pitch/yaw [deg] で与える**。素だと `~/setpoint` にクォータニオンを publish する必要があるので、その代わり。`--hold` で押し続ける（QoS depth=1 なので 1 発だと取りこぼす）、`--level` で水平・停止 |
-| `view_detections.py` | **検出結果を画像に重ねて表示**。**PC 側で動かす**こと（Pi でやると CPU が飽和して認識周期が落ちる）。`--save` で mp4 保存、`--no-window` でヘッドレス |
+| `set_attitude.py` | **rl_attitude の目標姿勢を roll/pitch/yaw [deg] で与える**。素だと `~/setpoint` にクォータニオンを publish する必要があるので、その代わり。`--hold` で押し続ける（QoS depth=1 なので 1 発だと取りこぼす）、`--level` で水平・停止。`--vel` 未指定なら速度指令は変更しない |
+| `view_detections.py` | **検出結果を画像に重ねて表示**（時刻照合はせず、最後に届いた検出を重ねる）。**PC 側で動かす**こと（Pi でやると CPU が飽和して認識周期が落ちる）。`--save` で mp4 保存（表示も続く。録画だけなら `--no-window` を併用）|
 
 ## センサ確認
 

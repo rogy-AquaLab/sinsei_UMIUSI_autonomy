@@ -11,6 +11,10 @@
 
 `--hold` は 10 Hz で publish し続ける (Ctrl-C で停止)。QoS の depth が 1 なので、
 起動直後などは 1 発だと届かないことがある。**実験では --hold を推奨**。
+
+`--vel` を指定しないときは速度指令に触らない (IGNORE_VELOCITY)。姿勢だけ変えたつもりで
+launch の `vel_cmd` (既定 0.4 m/s) が 0 に落ちるのを避けるため。止めたいときは `--level`
+か `--vel 0`。
 """
 from __future__ import annotations
 
@@ -38,7 +42,7 @@ def main():
     ap.add_argument("--roll", type=float, default=0.0, help="[deg]")
     ap.add_argument("--pitch", type=float, default=0.0, help="[deg]")
     ap.add_argument("--yaw", type=float, default=0.0, help="[deg]")
-    ap.add_argument("--vel", type=float, default=None, help="前進速度 [m/s] (既定: 変更しない=0)")
+    ap.add_argument("--vel", type=float, default=None, help="前進速度 [m/s] (未指定なら変更しない)")
     ap.add_argument("--level", action="store_true", help="水平・停止に戻す")
     ap.add_argument("--attitude-only", action="store_true", help="速度指令は無視させる")
     ap.add_argument("--topic", default="/rl_attitude_node/setpoint")
@@ -52,15 +56,19 @@ def main():
     msg = AttitudeTarget()
     x, y, z, w = rpy_to_quat(a.roll, a.pitch, a.yaw)
     msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w = x, y, z, w
+    # --vel 未指定は「速度を変更しない」= IGNORE_VELOCITY。0 を送ると last-wins で
+    # launch の vel_cmd を黙って止めてしまう。--level は vel=0 を明示するので送る側。
+    keep_vel = a.vel is None or a.attitude_only
     msg.velocity.x = float(a.vel) if a.vel is not None else 0.0
-    msg.type_mask = AttitudeTarget.IGNORE_VELOCITY if a.attitude_only else 0
+    msg.type_mask = AttitudeTarget.IGNORE_VELOCITY if keep_vel else 0
 
     rclpy.init()
     node = Node("set_attitude")
     pub = node.create_publisher(AttitudeTarget, a.topic, 1)
 
+    vel_txt = "前進=変更しない" if keep_vel else f"前進={msg.velocity.x:.2f} m/s"
     print(f"目標: roll={a.roll:+.1f} pitch={a.pitch:+.1f} yaw={a.yaw:+.1f} deg"
-          f"  前進={msg.velocity.x:.2f} m/s"
+          f"  {vel_txt}"
           f"{' (姿勢のみ)' if a.attitude_only else ''}  -> {a.topic}")
 
     try:

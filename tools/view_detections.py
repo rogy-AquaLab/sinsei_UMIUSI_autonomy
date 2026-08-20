@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """検出結果を画像に重ねて表示する。**PC 側で動かす**ことを想定。
 
 Pi 側の負荷は「既に publish している画像を 1 つ多く購読される」分だけで、描画も
@@ -6,10 +7,11 @@ Pi 側の負荷は「既に publish している画像を 1 つ多く購読さ�
     # [PC] Pi と DDS が通っている状態で
     python3 view_detections.py
 
-    python3 view_detections.py --save out.mp4   # 表示せずに録画だけ
-    python3 view_detections.py --no-window      # ヘッドレス。統計だけ出す
+    python3 view_detections.py --save out.mp4               # 表示しつつ録画
+    python3 view_detections.py --save out.mp4 --no-window   # 録画だけ (表示しない)
+    python3 view_detections.py --no-window                  # ヘッドレス。統計だけ出す
 
-画像と検出は別トピックなので、**タイムスタンプが最も近い検出を重ねる**。
+画像と検出は別トピックなので、**その時点で最後に届いた検出**を重ねる (時刻照合はしない)。
 検出は画像より遅いので、同じ検出が数フレームにまたがって表示されるのは正常。
 """
 from __future__ import annotations
@@ -66,7 +68,8 @@ class Viewer(Node):
             if self.writer is None:
                 h, w = img.shape[:2]
                 self.writer = cv2.VideoWriter(self.args.save,
-                                              cv2.VideoWriter_fourcc(*"mp4v"), 15.0, (w, h))
+                                              cv2.VideoWriter_fourcc(*"mp4v"),
+                                              self.args.save_fps, (w, h))
             self.writer.write(img)
         if not self.args.no_window:
             cv2.imshow("umiusi detections", img)
@@ -107,6 +110,8 @@ def main():
     ap.add_argument("--image-topic", default="/front_cam/image_raw")
     ap.add_argument("--det-topic", default="/perception_node/detections")
     ap.add_argument("--save", default="", help="mp4 に保存する")
+    ap.add_argument("--save-fps", type=float, default=15.0,
+                    help="保存動画のフレームレート (実測の供給レートに合わせる)")
     ap.add_argument("--no-window", action="store_true", help="ウィンドウを出さない")
     a = ap.parse_args()
 
