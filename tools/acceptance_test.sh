@@ -18,6 +18,16 @@ source /opt/ros/jazzy/setup.bash
 [ -f "$WS/install/setup.bash" ] && source "$WS/install/setup.bash"
 [ -n "${UMIUSI_PERCEPTION_SRC:-}" ] && export PYTHONPATH="$UMIUSI_PERCEPTION_SRC:${PYTHONPATH:-}"
 
+# 前カメラ (CSI) 用の環境変数。公式手順で ~/.bashrc に書かれているが、**非対話シェルでは
+# .bashrc が即 return するため効かない**。このスクリプトが非対話で走っても正しく判定できるよう
+# ここで補う (実機に無ければ何もしない)。
+for d in /usr/local/lib/aarch64-linux-gnu/gstreamer-1.0 /usr/local/lib/gstreamer-1.0; do
+  [ -f "$d/libgstlibcamera.so" ] && export GST_PLUGIN_PATH="$d:${GST_PLUGIN_PATH:-}"
+done
+[ -d /usr/local/libexec/libcamera ] && export LIBCAMERA_IPA_PROXY_PATH=/usr/local/libexec/libcamera
+[ -d /usr/local/share/libcamera/ipa ] && export LIBCAMERA_IPA_CONFIG_PATH=/usr/local/share/libcamera/ipa
+[ -d /usr/local/lib/aarch64-linux-gnu ] && export LD_LIBRARY_PATH="/usr/local/lib/aarch64-linux-gnu:/usr/local/lib:${LD_LIBRARY_PATH:-}"
+
 [ "${1:-}" = "--start" ] && { "$(dirname "$0")/umiusi_stack.sh" start; sleep 5; }
 
 hdr "1. ハードウェア"
@@ -47,8 +57,20 @@ if command -v v4l2-ctl >/dev/null; then
   h264=$(for d in /dev/video*; do v4l2-ctl --device=$d --list-formats 2>/dev/null | grep -q H264 && echo $d; done | tr '\n' ' ')
   [ -n "$h264" ] && ok "H264 対応デバイス: $h264" || ng "H264 を出せるデバイスが無い (usb_camera が動かない)"
 fi
-gst-inspect-1.0 libcamerasrc >/dev/null 2>&1 && ok "libcamerasrc あり (前方 CSI カメラ可)" \
-  || ng "libcamerasrc なし -> pi_camera は起動しない (apt install gstreamer1.0-libcamera)"
+if gst-inspect-1.0 libcamerasrc >/dev/null 2>&1; then
+  src=$(gst-inspect-1.0 libcamerasrc 2>/dev/null | grep -m1 Filename | awk '{print $2}')
+  case "$src" in
+    /usr/local/*) ok "libcamerasrc あり (/usr/local のソースビルド版 — 正しい)" ;;
+    *) ng "libcamerasrc が apt 版 ($src)。Camera Module V3 非対応なので purge し、/usr/local 版を使うこと" ;;
+  esac
+else
+  ng "libcamerasrc が見つからない。raspberrypi/libcamera を /usr/local にビルドし、公式手順の環境変数を通すこと (apt では入れない)"
+fi
+if [ -n "${GST_PLUGIN_PATH:-}" ]; then
+  ok "GST_PLUGIN_PATH 設定済み"
+else
+  skip "GST_PLUGIN_PATH 未設定 — 対話シェルなら .bashrc で入る"
+fi
 
 hdr "2. ソフトウェア環境"
 python3 -c "import torch" 2>/dev/null && {

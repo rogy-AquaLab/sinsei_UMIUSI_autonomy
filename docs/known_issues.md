@@ -122,13 +122,15 @@ torch を必要としない**。実機に入れるのは `pip install --no-deps`
 > デバイス番号は USB の挿し順で変わりうる。恒久的には udev ルールで
 > `by-id` の固定名を作り、それを pipeline に書くのが安全。
 
-### B-2. 【解決済み】前カメラ (CSI) が `libcamerasrc` 無しで起動しない
+### B-2. 【解決済み】前カメラ (CSI) と libcamera — apt 版を入れてはいけない
 
-前方カメラは **Raspberry Pi Camera Module 3 NoIR (`imx708_noir`)** で、unicam (`/dev/media1`) と
-ISP (`/dev/media0`) に正しく認識されている。起動しなかったのは GStreamer プラグインの問題。
+前方カメラは **Raspberry Pi Camera Module 3 NoIR (`imx708_noir`)**。unicam (`/dev/media1`) と
+ISP (`/dev/media0`) には最初から正しく認識されている。
 
-**apt の `gstreamer1.0-libcamera` を入れてはいけない。** Ubuntu 24.04 の版 (0.2.0) は
-Raspberry Pi 用 IPA を持たず、次で失敗する:
+**公式 Wiki (raspi-setup-3) のとおり、apt の libcamera は Camera Module V3 に対応しておらず、
+チームは `raspberrypi/libcamera` を `/usr/local` にソースビルドしている。**
+`apt install gstreamer1.0-libcamera` を入れるとそちらが優先され、Pi 用 IPA を持たないため
+次で失敗する:
 
 ```
 WARN  IPAManager  No IPA found in '/usr/lib/aarch64-linux-gnu/libcamera'
@@ -136,17 +138,27 @@ ERROR RPI  Failed to load a suitable IPA library
 ERROR RPI  Failed to register camera imx708_noir: -22
 ```
 
-実機には既に **Raspberry Pi 版 libcamera 0.7.1 が `/usr/local`** に入っており、
-動作する IPA (`ipa_rpi_vc4.so`) と専用の GStreamer プラグインを持っている。
-ただし `/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0` は gst の既定探索パスに
-**入っていない**ため、明示が要る:
+**対処: apt 版を入れない (入れてしまったら purge する)。** `/usr/local` 版を使うための
+環境変数は公式手順で `~/.bashrc` に設定済み:
 
 ```bash
-export GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
+export LIBCAMERA_IPA_PROXY_PATH=/usr/local/libexec/libcamera
+export LIBCAMERA_IPA_CONFIG_PATH=/usr/local/share/libcamera/ipa
+export LD_LIBRARY_PATH=/usr/local/lib/aarch64-linux-gnu:/usr/local/lib:$LD_LIBRARY_PATH
+export GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0:$GST_PLUGIN_PATH
 ```
 
-`tools/umiusi_stack.sh` と `config/deploy.env` に設定済み。これで前カメラのパイプラインが
-`PLAYING` に到達し、**CPU 14.8%** で動く (ISP がハードウェアで色変換するため軽い)。
+### B-2b. 【中】`.bashrc` の環境変数は非対話シェルに効かない
+
+上記は `~/.bashrc` にあるが、`.bashrc` の先頭に
+`case $- in *i*) ;; *) return;; esac` という**非対話なら即 return するガード**があるため、
+systemd・スクリプト・非対話 SSH からの起動では**設定されない**。
+
+人間が対話 SSH して `ros2 launch` する分には効くが、自動起動では効かない。
+`tools/umiusi_stack.sh` と `tools/acceptance_test.sh` は自前で設定して補っている。
+
+> この挙動を知らずに「`libcamerasrc` が無い」と誤診したことがある。非対話で確認するときは
+> 環境変数の有無を先に疑うこと。
 
 ### B-3. 【中】カメラ 1 本の失敗でノードが落ちる
 
@@ -154,15 +166,34 @@ export GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0
 使えないと、そのノードが丸ごと消える。再試行かデグレード起動があると運用が楽になる
 (`sinsei_UMIUSI_control` 側の変更)。
 
-### B-4. 【高】有線直結では DHCP サーバと ufw の両方が必要
+### B-4. 【仕様】有線接続はインターネット共有 + mDNS が正規手順
 
-Pi は DHCP クライアントなので、PC 側で配らないと双方アドレスを取れない。さらに
-**`ufw` が DDS を落とす**ため、開けないとトピックが一切見えない。
+公式 Wiki (raspi-setup-2) の「ネットワーク設定」がこの構成の根拠:
+
+> `/etc/netplan/99-umiusi.yaml` … **PC からのインターネット共有の有無に関わらず、mDNS が
+> 動くようにしたいという意図。**
+> ```yaml
+> eth0: { dhcp4: true, link-local: [ipv4], optional: true }
+> ```
+
+つまり:
+
+* **接続は IP ではなく `ssh pi@<機体名>.local` (mDNS)** で行う。固定 IP は使わない
+* **PC からのインターネット共有が正規のワークフロー** (Pi が apt / pip / git を使えるようにする)。
+  Linux の PC なら `sudo nmcli con mod "<有線接続名>" ipv4.method shared`
+* 共有が無くても `link-local: [ipv4]` により `169.254.x.x` を自己割り当てするので mDNS は効く。
+  ただし**インターネットは使えない**
+* **共有をオンオフした直後は、Pi が経路変更に適応するまで数分かかる** (Wiki に明記あり)
+
+**ファイアウォールに注意。** Wiki も「接続できない場合はファイアウォールをオフにして試す」と
+書いている。Linux の PC で `ufw` が有効だと **ROS 2 の DDS が通らず、トピックが一切見えない**:
 
 ```bash
-sudo nmcli con mod "Wired connection 1" ipv4.method shared
-sudo ufw allow in on eno1 from 10.42.0.0/24
+sudo ufw allow in on <有線IF> from 10.42.0.0/24
 ```
+
+SSH だけなら PC 側の ufw は関係ない (PC からの outbound のため)。**PC でも ROS 2 を動かして
+Pi と通信する場合にのみ必要。**
 
 ### B-5. 【高】`pip install torch` は aarch64 でも CUDA 版を引く
 
