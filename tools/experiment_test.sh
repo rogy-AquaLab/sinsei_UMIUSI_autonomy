@@ -6,6 +6,11 @@
 #   ./experiment_test.sh --attitude       # 姿勢制御だけ
 #   ./experiment_test.sh --logging        # ロギングだけ
 #   ./experiment_test.sh --duration 30    # 各フェーズの計測秒数 (既定 20)
+#   ./experiment_test.sh --rec-sec 60     # 録画秒数 (既定 45)
+#
+# 録画は短くできない。record_run.sh は起動に 10 秒以上かかり (ros2 topic list と
+# カメラの立ち上げ)、rosbag2 の discovery も数秒かかるため。短すぎると
+# bag に /tf しか入らない (実機で確認済み)。
 #
 # **スラスタは回さない。** RL は publish=false でしか起動しないので、モータには何も出ない。
 # 実際に回す確認は docs/experiment_guide.md 1-4 を手順どおりに (e-stop を手元に置いて) 行うこと。
@@ -24,7 +29,7 @@ WS="${UMIUSI_WS:-$HOME/ros2-ws}"
 LOGDIR="${UMIUSI_LOGDIR:-/tmp/umiusi_logs}"
 RUNROOT="${UMIUSI_RUN_DIR:-$HOME/runs}"
 DURATION=20
-REC_SEC=15
+REC_SEC=45
 DO_PERCEPTION=false; DO_ATTITUDE=false; DO_LOGGING=false
 
 PASS=0; FAIL=0; SKIP=0
@@ -207,8 +212,31 @@ phase_logging() {
   local d; d=$(ls -1dt "$RUNROOT"/*smoke-test 2>/dev/null | head -1)
   if [ -n "$d" ]; then
     ok "記録ディレクトリ: $d"
-    [ -f "$d/bag/metadata.yaml" ] && ok "bag の metadata あり (そのまま開ける)" \
-      || ng "bag の metadata が無い (record_run.sh --fix で復元できるか確認)"
+    if [ -f "$d/bag/metadata.yaml" ]; then
+      ok "bag の metadata あり (そのまま開ける)"
+    else
+      ng "bag の metadata が無い (record_run.sh --fix で復元できるか確認)"
+    fi
+    # metadata があるだけでは意味がない。中身が入っているかまで見る
+    # (実機で「metadata はあるが /tf しか入っていない」を踏んだ)
+    local info msgs
+    info=$(ros2 bag info "$d/bag" 2>/dev/null)
+    msgs=$(echo "$info" | awk '/^Messages:/{print $2}')
+    if [ "${msgs:-0}" -gt 0 ]; then
+      ok "bag に $msgs 件のメッセージ"
+    else
+      ng "bag が空 (rosbag2 が購読する前に止めた? --rec-sec を伸ばす)"
+    fi
+    local t line c
+    for t in /state/imu /perception_node/detections; do
+      line=$(echo "$info" | grep -F "Topic: $t ")
+      c=$(echo "$line" | sed -n 's/.*Count: \([0-9]*\).*/\1/p')
+      if [ "${c:-0}" -gt 0 ]; then
+        ok "$t: $c 件"
+      else
+        ng "$t が bag に入っていない (record_run.sh のトピック選定と discovery を確認)"
+      fi
+    done
     if ls "$d"/video/* > /dev/null 2>&1; then
       ok "映像ファイルあり: $(du -sh "$d"/video 2>/dev/null | awk '{print $1}')"
     else
