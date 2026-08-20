@@ -43,15 +43,18 @@ class AutoTargetGenerator(LifecycleNode):
         self.declare_parameter("yaw_rate_axis", "y")      # IMU axis carrying the vehicle yaw rate
         self.declare_parameter("yaw_rate_sign", 1.0)
         # IMU のサニティフィルタ (実機の化けサンプル対策)。0 以下で無効化できる。
-        self.declare_parameter("imu_max_gyro", 10.0)        # [rad/s] これを超えたら破棄
+        self.declare_parameter("imu_max_gyro", 10.0)        # [rad/s] 検出の閾値
         self.declare_parameter("imu_max_step_deg", 30.0)    # 1 サンプルの姿勢跳躍上限 [deg]
+        # 既定は「検出するが破棄しない」(rl_attitude_node と同じ理由)
+        self.declare_parameter("imu_sanity_enforce", False)
 
         self._dt = 1.0 / float(self.get_parameter("control_hz").value)
         self._yaw_axis = _AXIS.get(str(self.get_parameter("yaw_rate_axis").value).lower(), 1)
         self._yaw_sign = float(self.get_parameter("yaw_rate_sign").value)
         self._imu_sanity = ImuSanity(
             max_gyro=float(self.get_parameter("imu_max_gyro").value),
-            max_step_deg=float(self.get_parameter("imu_max_step_deg").value))
+            max_step_deg=float(self.get_parameter("imu_max_step_deg").value),
+            enforce=bool(self.get_parameter("imu_sanity_enforce").value))
 
         self._behavior = None          # lazily built (defer the umiusi_perception import off the build path)
         self._Detection = None
@@ -134,7 +137,7 @@ class AutoTargetGenerator(LifecycleNode):
         sample, reason = self._imu_sanity.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
         if reason is not None:
             self.get_logger().warning(
-                f"IMU サンプルを破棄: {reason} (棄却率 {self._imu_sanity.reject_ratio:.1%})",
+                self._imu_sanity.describe(reason),
                 throttle_duration_sec=5.0)
             if sample is None:
                 return          # まだ 1 つも有効値が無い

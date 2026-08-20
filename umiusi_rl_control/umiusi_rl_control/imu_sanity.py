@@ -11,7 +11,15 @@
 ヨーレートとして、姿勢をそのまま制御に使うため、**1 発のスパイクで制御が跳ねる**。
 受信側でここを通してから使う。
 
-判定は「疑わしきは捨てる」。捨てたときは直前の有効値を返し、連続して捨て続けた場合は
+既定では **捨てない (`enforce=False`)**。判定と統計・ログだけを行い、値はそのまま通す。
+実機で 150 秒測ったところ、棄却対象は 0.44% しかないうえ、**フィルタ自身が誤爆したときの
+被害のほうが大きい**ことが分かったため (下記)。閾値を決めるにはまずデータが要るので、
+今は「観測するが介入しない」に倒している。`enforce=True` で従来どおり捨てるようになる。
+
+唯一の例外は **ノルムが 0 のクォータニオン**。これは閾値の問題ではなく
+正規化そのものが定義できない (0 除算) ので、`enforce` に関係なく直前の有効値を返す。
+
+捨てるときは直前の有効値を返し、連続して捨て続けた場合は
 `stale` が True になるので、呼び出し側でフェイルセーフに落とせる。
 
 ただし **姿勢の跳躍だけは「捨て続ける」ことができない**。実機で、BNO055 の姿勢基準が
@@ -42,7 +50,7 @@ class ImuSample:
 
 
 class ImuSanity:
-    """IMU サンプルの妥当性を検査し、化けを弾いて直前の有効値を保持する。
+    """IMU サンプルの妥当性を検査する。`enforce=True` なら化けを弾いて直前の有効値を保持する。
 
     Parameters
     ----------
@@ -56,19 +64,30 @@ class ImuSanity:
         クォータニオンのノルムの許容誤差。
     stale_after:
         連続して捨てた回数がこれを超えたら `stale` を True にする。
+    enforce:
+        True なら判定に引っかかったサンプルを捨てる。False (既定) なら**捨てずに通し**、
+        判定結果は `rejected` / `reasons` と戻り値の `reason` にだけ残す。閾値を決める
+        ためのデータ収集期間はこちら。ノルムが 0 のときだけは `enforce` によらず捨てる。
     """
 
+    # 正規化が定義できないノルムの下限。閾値ではなく数値上の限界なので設定にしない。
+    MIN_NORM = 1e-6
+
     def __init__(self, max_gyro: float = 10.0, max_step_deg: float = 30.0,
-                 quat_tol: float = 0.01, stale_after: int = 5) -> None:
+                 quat_tol: float = 0.01, stale_after: int = 5,
+                 enforce: bool = False) -> None:
         self.max_gyro = float(max_gyro)
         self.max_step = math.radians(float(max_step_deg))
         self.quat_tol = float(quat_tol)
         self.stale_after = int(stale_after)
+        self.enforce = bool(enforce)
 
         self.last: ImuSample | None = None
         self.rejected = 0          # 累計の棄却数 (診断用)
         self.accepted = 0
         self.resyncs = 0           # 跳躍チェックを解除して再同期した回数 (診断用)
+        self.flagged = 0           # 判定に引っかかった回数 (捨てたかどうかに関わらず)
+        self.reasons: dict[str, int] = {}   # 理由ごとの件数 (診断用)
         self._consecutive = 0
 
     @property
@@ -81,6 +100,12 @@ class ImuSanity:
         total = self.accepted + self.rejected
         return self.rejected / total if total else 0.0
 
+    @property
+    def flag_ratio(self) -> float:
+        """判定に引っかかった割合。`enforce=False` でも増える (観測用)。"""
+        total = self.accepted + self.rejected
+        return self.flagged / total if total else 0.0
+
     def update(self, quat_wxyz, gyro_xyz) -> tuple[ImuSample | None, str | None]:
         """1 サンプルを検査する。
 
@@ -88,13 +113,22 @@ class ImuSanity:
         -------
         (sample, reason)
             `sample` は採用された値、または直前の有効値 (まだ 1 つも無ければ None)。
-            `reason` は棄却した理由の文字列、採用時は None。
+            `reason` は判定に引っかかった理由の文字列、問題なしなら None。
+            **`enforce=False` のときは `reason` が付いていても `sample` は捨てられていない**
+            (通した値がそのまま返る)。
         """
         reason = self._check(quat_wxyz, gyro_xyz)
         if reason is not None:
-            self.rejected += 1
-            self._consecutive += 1
-            return self.last, reason
+            self.flagged += 1
+            self.reasons[reason.split(" (")[0]] = \
+                self.reasons.get(reason.split(" (")[0], 0) + 1
+            # 正規化できない値だけは enforce によらず捨てる (数値上の限界)
+            unusable = reason.startswith("正規化できない") or reason.startswith("NaN/Inf") \
+                or reason.startswith("値を float")
+            if self.enforce or unusable:
+                self.rejected += 1
+                self._consecutive += 1
+                return self.last, reason
 
         if self.stale:
             self.resyncs += 1
@@ -104,7 +138,16 @@ class ImuSanity:
                               gyro=tuple(float(v) for v in gyro_xyz))
         self.accepted += 1
         self._consecutive = 0
-        return self.last, None
+        # enforce=False のときは reason を付けたまま値を通す。呼び出し側が
+        # 「検出したが通した」ことをログに出せるようにするため
+        return self.last, reason
+
+    def describe(self, reason: str) -> str:
+        """ログ 1 行。`enforce` の有無で「破棄した」のか「通した」のかが変わる。"""
+        if self.enforce:
+            return f"IMU サンプルを破棄: {reason} (棄却率 {self.reject_ratio:.1%})"
+        return (f"IMU の異常サンプルを検出 (**破棄していません**): {reason}"
+                f" (検出率 {self.flag_ratio:.1%})")
 
     # ------------------------------------------------------------------ 検査
     def _check(self, quat_wxyz, gyro_xyz) -> str | None:
@@ -119,6 +162,8 @@ class ImuSanity:
                 return "NaN/Inf が含まれる"
 
         n = math.sqrt(w * w + x * x + y * y + z * z)
+        if n < self.MIN_NORM:
+            return f"正規化できない (|q|={n:.6f})"
         if abs(n - 1.0) > self.quat_tol:
             return f"クォータニオンのノルムが不正 (|q|={n:.4f})"
 

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """記録した bag の /state/imu に IMU サニティフィルタをかけ直して評価する。
 
+ノードの既定は「検出するが破棄しない」(`imu_sanity_enforce: false`) だが、**このツールは
+破棄する側で回す** — 「その閾値で弾いたら何をどれだけ失うか」を見るためのもの。
+
 実機で測り直さずに、**手元の PC で閾値を振って**棄却の出かたを比べるためのもの。
 `rl_attitude_node` と同じ `ImuSanity` をそのまま通すので、実機の挙動と一致する。
 
@@ -69,7 +72,9 @@ def read_imu(bag: str, topic: str):
 
 def run(samples, max_gyro: float, max_step_deg: float):
     """フィルタを通し、統計を返す。samples は read_imu の結果を list にしたもの。"""
-    san = ImuSanity(max_gyro=max_gyro, max_step_deg=max_step_deg)
+    # 評価が目的なので **棄却する側** で回す (ノードの既定は enforce=False)。
+    # 「この閾値で弾いたらどれだけ失うか」を見るためのツール
+    san = ImuSanity(max_gyro=max_gyro, max_step_deg=max_step_deg, enforce=True)
     gyro_all, gyro_mov, step_all, step_mov = [], [], [], []
     reasons: dict[str, int] = {}
     detail: list[str] = []

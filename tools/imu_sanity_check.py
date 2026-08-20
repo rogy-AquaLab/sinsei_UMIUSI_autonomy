@@ -53,7 +53,9 @@ class Checker(Node):
         qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
                          history=HistoryPolicy.KEEP_LAST, depth=1)
         self.create_subscription(Imu, a.topic, self._on_imu, qos)
-        self.san = ImuSanity(max_gyro=a.max_gyro, max_step_deg=a.max_step_deg)
+        # 既定はノードと同じ「検出するが破棄しない」。--enforce で破棄する側も試せる
+        self.san = ImuSanity(max_gyro=a.max_gyro, max_step_deg=a.max_step_deg,
+                             enforce=a.enforce)
         self.a = a
         self.t0 = None
         self.n = 0
@@ -70,7 +72,8 @@ class Checker(Node):
         self._win_gyro = 0.0
         self._win_step = 0.0
         print(f"'{a.topic}' を {a.duration:.0f} 秒みます。"
-              f"閾値 gyro {a.max_gyro} rad/s / step {a.max_step_deg} deg")
+              f"閾値 gyro {a.max_gyro} rad/s / step {a.max_step_deg} deg"
+              f" / {'破棄する' if a.enforce else '破棄しない (検出のみ)'}")
         print("**機体を手で動かしてください** (ゆっくり → 速く、傾け・ヨー振り)\n")
 
     def _on_imu(self, msg):
@@ -187,6 +190,8 @@ def main():
     ap.add_argument("--duration", type=float, default=60.0, help="計測秒数")
     ap.add_argument("--max-gyro", type=float, default=10.0, help="imu_max_gyro と同じ値 [rad/s]")
     ap.add_argument("--max-step-deg", type=float, default=30.0, help="imu_max_step_deg と同じ値")
+    ap.add_argument("--enforce", action="store_true",
+                    help="検出したサンプルを破棄する (既定はノードと同じく破棄しない)")
     a = ap.parse_args()
 
     rclpy.init()
