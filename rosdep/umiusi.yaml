@@ -27,10 +27,10 @@ python3-torch-cpu:
 # ----------------------------------------------------------------------------
 # umiusi_perception — 検出器と風船割り FSM の実体
 #
-# **まだ package.xml から参照していない。** 供給元の Umiusi_sim が private なため、
-# このルールを有効にすると認証の無い機体で `rosdep install` が失敗するため。
-# Umiusi_sim を public にすれば、そのまま使えるようになる。
-# それまでは docs/robot_setup.md のとおり PC から転送して pip install する。
+# Umiusi_sim は public なので、この URL は認証なしで取得できる (公開 URL からの導入を実証済み)。
+# ただし **package.xml からは参照していない**。参照すると、このカスタムルールを登録して
+# いない機体で `rosdep install` 自体が失敗してしまうため。
+# 通常は tools/setup_robot.sh が同じ URL から --user で入れる。
 umiusi_perception:
   ubuntu:
     pip:

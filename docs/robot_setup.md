@@ -70,17 +70,19 @@ Python の依存はすべて `--user` (`~/.local`) に入る。apt が要るも�
 
 ### `umiusi_perception` について
 
-`navigator_node` と `auto_target_generator` も FSM のために必要とする
-(`perception_node` だけではない)。
+検出器と風船割り FSM の実体。`navigator_node` と `auto_target_generator` も FSM のために
+必要とする (`perception_node` だけではない)。
 
-**供給元の `Umiusi_sim` が private のあいだは git から取れない。** その場合は
-PC から `packages/perception` を持ってきて渡す:
+`Umiusi_sim` は public なので、**スクリプトが git から自動で入れる**。手動の転送は要らない。
+手元にソースがある場合はそちらからも入れられる:
 
 ```bash
 ./tools/setup_robot.sh --perception ~/perception
 ```
 
-**`Umiusi_sim` を public にすれば、この引数なしで git から入る** (スクリプトが自動で試す)。
+> autonomy 側に取り込まず別リポジトリのままにしているのは、**これが sim と実機で共有される
+> 唯一のライブラリ**だから。検出器と FSM の挙動が sim と実機で一致していることが設計上の要で、
+> 複製すると必ず drift する。
 
 ### 検出器 (同梱済み)
 

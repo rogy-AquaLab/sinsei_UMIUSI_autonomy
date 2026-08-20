@@ -18,7 +18,7 @@ WS="${UMIUSI_WS:-$HOME/ros2-ws}"
 PERCEPTION_SRC=""
 CHECK_ONLY=false
 TORCH_INDEX="https://download.pytorch.org/whl/cpu"
-PERCEPTION_GIT="git+https://github.com/rogy-AquaLab/Umiusi_sim.git#subdirectory=packages/perception"
+PERCEPTION_GIT="umiusi_perception @ git+https://github.com/rogy-AquaLab/Umiusi_sim.git#subdirectory=packages/perception"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -101,13 +101,13 @@ elif [ -n "$PERCEPTION_SRC" ]; then
   $PIP install $PIPFLAGS --no-deps "$PERCEPTION_SRC" 2>&1 | tail -2
   have_py umiusi_perception && ok "ローカルから導入: $PERCEPTION_SRC" || ng "導入に失敗"
 else
-  inf "git から取得を試みる"
+  inf "git から取得する (Umiusi_sim は public)"
   # shellcheck disable=SC2086
-  if $PIP install $PIPFLAGS --no-deps "$PERCEPTION_SRC$PERCEPTION_GIT" >/dev/null 2>&1 && have_py umiusi_perception; then
+  if $PIP install $PIPFLAGS --no-deps "$PERCEPTION_GIT" 2>&1 | tail -2 && have_py umiusi_perception; then
     ok "git から導入"
   else
-    ng "取得できない。Umiusi_sim が private の可能性が高い"
-    inf "回避: PC から packages/perception を持ってきて --perception <その場所> を付けて再実行"
+    ng "取得に失敗 (ネットワークは繋がっているか?)"
+    inf "手元にソースがあるなら --perception <その場所> で入れられる"
   fi
 fi
 
