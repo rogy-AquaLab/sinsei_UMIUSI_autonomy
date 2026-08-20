@@ -4,18 +4,26 @@
 # ad-hoc に `timeout N ros2 launch ... &` で起動すると、計測の途中で寿命が切れて
 # 「入力より認識周期が高い」といった辻褄の合わない結果になる。起動と停止をここに寄せる。
 #
-#   ./umiusi_stack.sh start            # 実機構成 (control + core + autonomy)
-#   ./umiusi_stack.sh start --no-ui    # UI(rosbridge) を止めて CPU を空ける
-#   ./umiusi_stack.sh start --with-rl  # RL 姿勢制御も動かす
+#   ./umiusi_stack.sh start              # 実機構成 (control + core + autonomy)
+#   ./umiusi_stack.sh start --no-ui      # UI(rosbridge) を止めて CPU を空ける
+#   ./umiusi_stack.sh start --with-rl    # RL 姿勢制御も動かす
 #   ./umiusi_stack.sh status
 #   ./umiusi_stack.sh stop
+#
+# 単体実験 (docs/experiment_guide.md):
+#   ./umiusi_stack.sh start --attitude     # 姿勢制御だけ (カメラは上げない。既定は publish しない)
+#   ./umiusi_stack.sh start --attitude --publish   # 実際にスラスタへ出す
+#   ./umiusi_stack.sh start --perception   # カメラブリッジ + perception だけ (BT / UI なし)
 # ROS の setup.bash は未定義変数を参照するため set -u は使えない
 set -o pipefail
 
 WS="${UMIUSI_WS:-$HOME/ros2-ws}"
-MODEL="${UMIUSI_MODEL:-$HOME/models/camp_mix.pt}"
+# 空 = launch の既定 (同梱の models/detector/camp_mix.pt)。以前は $HOME/models を既定に
+# していたが、検出器を同梱した今は新しい機体に存在せず model_path が空振りする。
+MODEL="${UMIUSI_MODEL:-}"
 # umiusi_perception は pip で入れるのが正 (下記は入っていない場合の暫定フォールバック)
 PERCEPTION_SRC="${UMIUSI_PERCEPTION_SRC:-}"
+# 空なら同梱の cameras_deploy.yaml を使う (下の start() で解決)
 CAMERAS_PARAM="${UMIUSI_CAMERAS_PARAM:-}"
 RTSP_URL="${UMIUSI_RTSP_URL:-rtsp://localhost:8554/cam1}"
 BRIDGE_RATE="${UMIUSI_BRIDGE_RATE:-10.0}"   # perception が捌ける値に合わせる (供給過多は逆効果)
@@ -47,38 +55,82 @@ setup_env() {
 }
 
 start() {
-  local ui=true rl=false
+  local ui=true rl=false mode=full publish=false
   for a in "$@"; do
     case "$a" in
-      --no-ui)   ui=false ;;
-      --with-rl) rl=true ;;
+      --no-ui)      ui=false ;;
+      --with-rl)    rl=true ;;
+      --attitude)   mode=attitude; rl=true ;;
+      --perception) mode=perception ;;
+      --publish)    publish=true ;;
+      *) echo "不明な引数: $a"; usage; exit 1 ;;
     esac
   done
   setup_env
   : > "$PIDFILE"
 
-  local camargs=(enable_cameras:=true)
-  [ -n "$CAMERAS_PARAM" ] && camargs+=("cameras_param_file:=$CAMERAS_PARAM")
-  echo "[1/3] control (ハードウェア: CAN / IMU / カメラ)"
+  # 実機の既定 params/cameras.yaml は usb_camera が /dev/video2 (unicam = H264 非対応) を
+  # 指しており、pipeline が開けず RTSP に映像が来ない (known_issues B-1)。同梱の
+  # cameras_deploy.yaml (/dev/video4) を既定で渡す。UMIUSI_CAMERAS_PARAM で上書きできる。
+  local share
+  share="$(ros2 pkg prefix umiusi_autonomy 2>/dev/null)/share/umiusi_autonomy"
+  if [ -z "$CAMERAS_PARAM" ] && [ -f "$share/config/cameras_deploy.yaml" ]; then
+    CAMERAS_PARAM="$share/config/cameras_deploy.yaml"
+  fi
+
+  # 姿勢制御だけ見るときはカメラを上げない (CPU を空ける)
+  local cams=true
+  [ "$mode" = attitude ] && cams=false
+  local camargs=(enable_cameras:=$cams)
+  if [ "$cams" = true ]; then
+    if [ -n "$CAMERAS_PARAM" ]; then
+      camargs+=("cameras_param_file:=$CAMERAS_PARAM")
+      echo "[control] CAN / IMU / カメラ (cameras: $CAMERAS_PARAM)"
+    else
+      echo "[control] CAN / IMU / カメラ"
+      echo "  警告: cameras 設定を渡していません。実機既定の /dev/video2 は H264 非対応で"
+      echo "        カメラが開けません (known_issues B-1)。UMIUSI_CAMERAS_PARAM で指定してください"
+    fi
+  else
+    echo "[control] CAN / IMU (カメラは上げない)"
+  fi
   setsid nohup ros2 launch sinsei_umiusi_control main.yaml "${camargs[@]}" \
     > "$LOGDIR/control.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
   sleep 20
 
-  echo "[2/3] core + autonomy (BT / perception / カメラブリッジ${ui:+ / UI})"
-  setsid nohup ros2 launch umiusi_autonomy core_autonomy.launch.py \
-    model_path:="$MODEL" use_rosbridge:=$ui \
-    use_camera_bridge:=true rtsp_url:="$RTSP_URL" \
-    > "$LOGDIR/core.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
-  sleep 35
+  local modelargs=()
+  [ -n "$MODEL" ] && modelargs+=("model_path:=$MODEL")
+
+  case "$mode" in
+    attitude)
+      echo "[autonomy] 起動しない (--attitude)"
+      ;;
+    perception)
+      echo "[autonomy] カメラブリッジ + perception のみ (BT / UI なし)"
+      setsid nohup ros2 launch umiusi_autonomy core_autonomy.launch.py \
+        "${modelargs[@]}" use_core:=false use_rosbridge:=false \
+        use_camera_bridge:=true rtsp_url:="$RTSP_URL" \
+        > "$LOGDIR/core.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
+      sleep 35
+      ;;
+    *)
+      echo "[autonomy] core + autonomy (BT / perception / カメラブリッジ$([ "$ui" = true ] && echo " / UI"))"
+      setsid nohup ros2 launch umiusi_autonomy core_autonomy.launch.py \
+        "${modelargs[@]}" use_rosbridge:=$ui \
+        use_camera_bridge:=true rtsp_url:="$RTSP_URL" \
+        > "$LOGDIR/core.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
+      sleep 35
+      ;;
+  esac
 
   if [ "$rl" = true ]; then
-    echo "[3/3] RL 姿勢制御"
+    echo "[rl] RL 姿勢制御 (publish=$publish)"
     setsid nohup ros2 run umiusi_rl_control rl_attitude_node --ros-args \
-      -p control_hz:=50.0 -p publish:=false \
+      -p control_hz:=50.0 -p publish:=$publish \
       > "$LOGDIR/rl.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
     sleep 10
   else
-    echo "[3/3] RL 姿勢制御: 起動しない (--with-rl で有効)"
+    echo "[rl] 起動しない (--with-rl / --attitude で有効)"
   fi
   echo "起動完了。ログ: $LOGDIR"
   status
@@ -130,10 +182,24 @@ status() {
   command -v vcgencmd >/dev/null && echo "  $(vcgencmd get_throttled)"
 }
 
+usage() {
+  cat <<'EOS'
+使い方: umiusi_stack.sh {start|stop|restart|status} [オプション]
+
+  --no-ui        UI (rosbridge) を起動しない (CPU を空ける)
+  --with-rl      RL 姿勢制御も起動する (publish はしない)
+  --attitude     姿勢制御の単体実験。カメラを上げず、RL だけ起動する
+  --perception   認識の単体実験。カメラブリッジ + perception だけ (BT / UI なし)
+  --publish      RL の指令を実際にスラスタへ出す (既定は出さない)
+
+環境変数: UMIUSI_WS / UMIUSI_MODEL / UMIUSI_CAMERAS_PARAM / UMIUSI_RTSP_URL / UMIUSI_LOGDIR
+EOS
+}
+
 case "${1:-}" in
   start)  shift; start "$@" ;;
   stop)   stop ;;
   status) status ;;
   restart) stop; shift; start "$@" ;;
-  *) echo "使い方: $0 {start|stop|restart|status} [--no-ui] [--with-rl]"; exit 1 ;;
+  *) usage; exit 1 ;;
 esac

@@ -145,6 +145,15 @@ torch を必要としない**。実機に入れるのは `pip install --no-deps`
 > デバイス番号は USB の挿し順で変わりうる。恒久的には udev ルールで
 > `by-id` の固定名を作り、それを pipeline に書くのが安全。
 
+**autonomy 側の回避策 (2026-08-21)**: `tools/umiusi_stack.sh` が同梱の
+`umiusi_autonomy/config/cameras_deploy.yaml` (`/dev/video4`) を `cameras_param_file:=` で
+自動的に渡すようにした。**手で `ros2 launch sinsei_umiusi_control main.yaml` する場合は
+自分で渡す必要がある**。上流の `params/cameras.yaml` 自体は未修正なので、この項目は残す。
+
+渡し忘れると `camera_bridge_node` が RTSP を開けず、
+`ハードウェア経路 ... software に落とします` → `接続できません` を再接続間隔ごとに出し続ける
+(警告自体は 10 秒 throttle 済み)。
+
 ### B-2. 【解決済み】前カメラ (CSI) と libcamera — apt 版を入れてはいけない
 
 前方カメラは **Raspberry Pi Camera Module 3 NoIR (`imx708_noir`)**。unicam (`/dev/media1`) と

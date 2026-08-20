@@ -29,6 +29,7 @@ def generate_launch_description():
     image_topic = LaunchConfiguration("image_topic")
     use_rosbridge = LaunchConfiguration("use_rosbridge")
     use_camera_bridge = LaunchConfiguration("use_camera_bridge")
+    use_core = LaunchConfiguration("use_core")
     rtsp_url = LaunchConfiguration("rtsp_url")
 
     return LaunchDescription([
@@ -43,6 +44,12 @@ def generate_launch_description():
                               description="RTSP -> ROS Image のブリッジを起動する。実機カメラは "
                                           "gst_camera_node が RTSP に流すだけで ROS トピックを "
                                           "出さないため、perception にはこれが必要"),
+        DeclareLaunchArgument("use_core", default_value="true",
+                              description="core の BT スタック (robot_strategy / manual_target_generator "
+                                          "/ low_power_health_check) も起動する。**perception を単体で"
+                                          "見るときは false** — BT が無いぶん CPU が空き、"
+                                          "`/cmd/target` も出ない (auto_target_generator は "
+                                          "unconfigured のまま)"),
         DeclareLaunchArgument("rtsp_url", default_value="rtsp://localhost:8554/cam1",
                               description="ブリッジが読む RTSP URL (前方カメラ = cam1)"),
 
@@ -83,13 +90,16 @@ def generate_launch_description():
         ),
 
         # --- core strategy stack (sinsei_umiusi_core), minus its auto_target_generator ---
-        Node(package="sinsei_umiusi_core", executable="low_power_health_check", output="screen"),
-        Node(package="sinsei_umiusi_core", executable="manual_target_generator", output="screen"),
+        Node(package="sinsei_umiusi_core", executable="low_power_health_check", output="screen",
+             condition=IfCondition(use_core)),
+        Node(package="sinsei_umiusi_core", executable="manual_target_generator", output="screen",
+             condition=IfCondition(use_core)),
         Node(
             package="sinsei_umiusi_core",
             executable="robot_strategy",
             namespace="robot_strategy",
             output="screen",
+            condition=IfCondition(use_core),
             parameters=[{"behavior_tree_file": behavior_tree_file}],
         ),
         Node(

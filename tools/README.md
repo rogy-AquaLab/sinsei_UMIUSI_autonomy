@@ -12,7 +12,7 @@
 
 | スクリプト | 用途 |
 |---|---|
-| `umiusi_stack.sh` | **実機スタックの起動/停止/状態確認**。`start` / `stop` / `restart` / `status`、`--no-ui` で rosbridge を止めて CPU を空ける、`--with-rl` で RL 姿勢制御も起動。`timeout N ros2 launch &` で起動すると計測の途中で寿命が切れて結果が壊れるので、起動はここに寄せること |
+| `umiusi_stack.sh` | **実機スタックの起動/停止/状態確認**。`start` / `stop` / `restart` / `status`、`--no-ui` で rosbridge を止めて CPU を空ける、`--with-rl` で RL 姿勢制御も起動。**単体実験は `--attitude`（姿勢制御だけ・カメラを上げない）/ `--perception`（カメラブリッジ + perception だけ）**、`--publish` で RL の指令を実際に出す。カメラ設定は同梱の `cameras_deploy.yaml` を自動で渡す（`UMIUSI_CAMERAS_PARAM` で上書き）。`timeout N ros2 launch &` で起動すると計測の途中で寿命が切れて結果が壊れるので、起動はここに寄せること |
 | `acceptance_test.sh` | **受け入れ試験**。CAN / VESC 4 台の ping / カメラ / torch / 周期 / IMU 健全性 を一気に確認して OK/NG を出す。`--start` でスタック起動から行う |
 | `bench_rates.py` | 指定トピックの周期と CPU/温度を確実に測る。**publisher 数も報告する**ので「0 Hz なのは publisher が居ないからか、遅いだけか」を取り違えない |
 
@@ -55,6 +55,10 @@
 
 # 2. 受け入れ試験
 ./acceptance_test.sh
+
+# 2-2. 単体実験 (姿勢制御 / 認識をそれぞれ単体で。見かたは docs/experiment_guide.md)
+./umiusi_stack.sh restart --attitude
+./umiusi_stack.sh restart --perception
 
 # 3. 記録しながら走行
 ./record_camera.sh --raw &

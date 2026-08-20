@@ -140,9 +140,11 @@ class CameraBridge(Node):
         want_hw = bool(self.get_parameter("hw_decode").value)
         cap = cv2.VideoCapture(self._pipeline(want_hw), cv2.CAP_GSTREAMER)
         if not cap.isOpened() and want_hw:
+            # RTSP が落ちている間は _reconnect 秒ごとにここを通るので、throttle しないと
+            # 本当のエラーがログから流れてしまう (他の 2 つと同じ 10 秒に揃える)
             self.get_logger().warning(
                 "ハードウェア経路 (v4l2h264dec/v4l2convert) を開けません; software に落とします "
-                "(CPU 消費が 5 倍程度になります)")
+                "(CPU 消費が 5 倍程度になります)", throttle_duration_sec=10.0)
             cap = cv2.VideoCapture(self._pipeline(False), cv2.CAP_GSTREAMER)
         if not cap.isOpened():
             self.get_logger().warning(

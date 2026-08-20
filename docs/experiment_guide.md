@@ -30,6 +30,12 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
 ### 1-1. まず指令を出さずに見る
 
 ```bash
+./tools/umiusi_stack.sh start --attitude    # control + RL。カメラは上げない
+```
+
+手で組む場合はこちら（内容は同じ）:
+
+```bash
 ros2 launch sinsei_umiusi_control main.yaml enable_cameras:=false
 ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=false
 ```
@@ -38,6 +44,7 @@ ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=false
 `policy loaded from .../export (SB3 非依存の素 torch 推論)` が出れば読めている。
 
 ```bash
+tail -f /tmp/umiusi_logs/rl.log                                # ポリシー読み込みと棄却率
 ros2 topic hz /state/imu                                       # 50 Hz
 python3 tools/imu_monitor.py                                   # 傾けて姿勢を目視
 ```
@@ -79,10 +86,12 @@ ros2 topic echo /cmd/direct/thruster_controller/output_lf       # duty_cycle / a
 
 ### 1-4. 実際に回す
 
-モータを繋いで `publish:=true` で起動する。**必ず e-stop を手元に**:
+モータを繋いで publish を有効にして起動する。**必ず e-stop を手元に**:
 
 ```bash
-ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=true
+./tools/umiusi_stack.sh stop
+./tools/umiusi_stack.sh start --attitude --publish
+# 手で組む場合: ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=true
 ```
 
 ```bash
@@ -108,12 +117,27 @@ ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"    #
 ## 2. `perception` を単独で
 
 ```bash
-ros2 launch sinsei_umiusi_control main.yaml enable_cameras:=true
-ros2 launch umiusi_autonomy core_autonomy.launch.py use_rosbridge:=false
+./tools/umiusi_stack.sh stop
+./tools/umiusi_stack.sh start --perception   # カメラブリッジ + perception だけ
+```
+
+手で組む場合はこちら:
+
+```bash
+ros2 launch sinsei_umiusi_control main.yaml enable_cameras:=true \
+    cameras_param_file:=$(ros2 pkg prefix umiusi_autonomy)/share/umiusi_autonomy/config/cameras_deploy.yaml
+ros2 launch umiusi_autonomy core_autonomy.launch.py use_core:=false use_rosbridge:=false
 ```
 
 `core_autonomy` はカメラブリッジと perception も起動する。認識だけ見たいので
-`use_rosbridge:=false` にして CPU を空ける。
+`use_core:=false`（BT を起動しない）と `use_rosbridge:=false`（UI を起動しない）で CPU を空ける。
+
+> **`cameras_param_file` を渡さないとカメラが開かない。** 実機既定の `params/cameras.yaml` は
+> `usb_camera` が `/dev/video2`（unicam = H264 非対応）を指しており、pipeline が開けず RTSP に
+> 映像が来ない（`known_issues.md` の B-1）。その状態だと `camera_bridge_node` が
+> `ハードウェア経路 ... software に落とします` / `接続できません` を出し続ける。
+> `umiusi_stack.sh` は同梱の `cameras_deploy.yaml`（`/dev/video4`）を自動で渡す。
+> デバイス番号は挿し順で変わるので `v4l2-ctl --device=/dev/video4 --list-formats` で確認すること。
 
 ```bash
 ros2 topic hz /front_cam/image_raw            # ブリッジが画像を流しているか
@@ -122,7 +146,8 @@ ros2 topic echo --once /perception_node/detections
 ```
 
 `/cmd/target` が出ないのは**正常** (core の BT が AUTO に入るまで
-`auto_target_generator` は activate されない)。単体で見るなら手動で遷移させる。
+`auto_target_generator` は activate されない。`--perception` では BT 自体を起動しない)。
+単体で見るなら手動で遷移させる (README「`/cmd/target` が出ないとき」)。
 
 ### 検出器の切り替え
 
