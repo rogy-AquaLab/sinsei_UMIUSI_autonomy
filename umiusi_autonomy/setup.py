@@ -13,6 +13,8 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
+        # 同梱の検出器。clone しただけで動かせるようにするため
+        ("share/" + package_name + "/models/detector", glob("models/detector/*")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
