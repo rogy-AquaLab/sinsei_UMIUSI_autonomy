@@ -126,7 +126,7 @@ trap cleanup INT TERM
 echo "記録先: $OUT"
 
 if [ "$BAG_ONLY" != true ]; then
-  "$HERE/record_camera.sh" --both --raw --dir "$OUT/video" > "$OUT/camera.log" 2>&1 &
+  "$HERE/record_camera.sh" --both --raw --dir "$OUT/video" > "$OUT/camera.log" 2>&1 < /dev/null &
   PIDS="$PIDS $!"
   echo "  映像   : 前後カメラ (H264 そのまま) -> $OUT/video/"
 fi
@@ -140,7 +140,12 @@ if [ "$CAM_ONLY" != true ]; then
     echo "  ⚠ 記録対象のトピックが 1 つも見つかりません (スタックは起動していますか?)"
   else
     # shellcheck disable=SC2086
-    ros2 bag record -o "$OUT/bag" $rec > "$OUT/bag.log" 2>&1 &
+    # `< /dev/null` は必須。`set -m` でジョブ制御が有効なので、この子は別プロセスグループに
+    # なる。`ros2 bag record` は「Press SPACE で一時停止」のため **stdin を読みにいく**ので、
+    # 端末を継いだままだと **SIGTTIN で停止**する。停止すると wait が返って cleanup が走り、
+    # SIGINT は停止中のプロセスに届かないので最後は kill -9 になる (対話シェルで実行すると
+    # 必ず踏む。ログには最初の warning 1 行しか残らない)。
+    ros2 bag record -o "$OUT/bag" $rec > "$OUT/bag.log" 2>&1 < /dev/null &
     PIDS="$PIDS $!"
     echo "  データ : $(echo $rec | wc -w) トピック -> $OUT/bag/"
   fi

@@ -97,6 +97,25 @@ python3 tools/imu_sanity_replay.py <bag> --sweep       # PC で閾値を振っ�
 > **速度指令に触らない**のが正しい（`set_attitude.py` は `--vel` 未指定でそうなる）。
 > 「0 を送る」と「触らない」は別物。
 
+### A-10. 【解決済み】`record_run.sh` を対話シェルで叩くと bag が起動直後に殺される
+
+`set -m` (ジョブ制御) を有効にしているので、`&` で起こした子は**別プロセスグループ**になる。
+`ros2 bag record` は「Press SPACE で一時停止」のため **stdin を読みにいく**ため、端末を
+継いだままだと **SIGTTIN で停止**する。停止すると `wait` が返って `cleanup` が走り、
+SIGINT は停止中のプロセスに届かないので最後は `kill -9` になる。
+
+症状は分かりにくい:
+
+- `bag.log` に **最初の warning 1 行しか残らない**（`Starting recording` すら出ない）
+- `bag/` ディレクトリすら作られない
+- シェルには `Killed` とだけ出るので OOM と紛らわしい
+
+**`< /dev/null` を付けて解決** (2026-08-21)。`stdin is not a terminal device.
+Keyboard handling disabled.` がログに出ていれば正しく起動している。
+
+> 非対話実行 (`ssh host 'record_run.sh ...'` や `umiusi_stack.sh` 経由) では stdin が
+> 端末でないので**踏まない**。対話シェルで手打ちしたときだけ出るので、テストをすり抜けた。
+
 ### A-7. 【中】e-stop は `ros2 topic pub` の既定 QoS では届かない
 
 `~/estop` の購読側は **TRANSIENT_LOCAL**（再起動時に e-stop 状態を継承するため latch する）。
