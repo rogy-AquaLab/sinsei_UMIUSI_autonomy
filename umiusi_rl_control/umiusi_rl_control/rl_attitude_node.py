@@ -126,8 +126,9 @@ class RlAttitudeNode(Node):
         # 実行中に `ros2 param set /rl_attitude_node hold_yaw false` で切り替えられる。
         self.declare_parameter("hold_yaw", True)
         self.declare_parameter("yaw_axis", "y")            # 姿勢誤差のどの成分が yaw か (x/y/z)
-        # duty_cycle の絶対値上限。1.0 = 制限なし。**まず小さい値で試すためのもの**
-        self.declare_parameter("max_duty", 1.0)
+        # duty_cycle の絶対値上限。1.0 = 制限なし。**既定は 0.4 に絞ってある** —
+        # 空中では水の減衰が無く発振しやすく、HFI で発熱もするため。詰めるときに上げる。
+        self.declare_parameter("max_duty", 0.4)
         # **既定は disarmed**。起動と同時にスラスタへ指令が出るのを避ける。
         # `~/arm` サービス (data:true) で武装してから動かす。
         self.declare_parameter("start_armed", False)       # True = 起動と同時に武装する

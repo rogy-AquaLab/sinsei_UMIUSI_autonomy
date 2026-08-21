@@ -45,8 +45,9 @@ def generate_launch_description():
                               description="yaw も保持する。false で roll/pitch だけ保つ "
                                           "(手で回したときに戻そうとして回り続けるのを避ける)。"
                                           "実行中も `ros2 param set` で切り替えられる"),
-        DeclareLaunchArgument("max_duty", default_value="1.0",
-                              description="duty_cycle の絶対値上限。**まず小さい値で試す**"),
+        DeclareLaunchArgument("max_duty", default_value="0.4",
+                              description="duty_cycle の絶対値上限 (1.0 = 制限なし)。"
+                                          "空中では発振しやすく発熱もするので既定は絞ってある"),
         DeclareLaunchArgument("start_armed", default_value="false",
                               description="起動と同時に武装する。**既定 false** — 起動しただけで "
                                           "スラスタへ指令が出るのを避けるため。`~/arm` で武装する"),

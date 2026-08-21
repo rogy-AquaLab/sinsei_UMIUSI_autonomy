@@ -61,7 +61,7 @@ python3 tools/set_attitude.py --vel 0.4 --hold    # 前進もさせるなら
 | パラメータ | 既定 | 用途 |
 |---|---|---|
 | `hold_yaw` | `true` | `false` で **yaw を保持しない**（roll/pitch のみ）。手で回したとき戻そうとして回り続けるのを避ける |
-| `max_duty` | `1.0` | `duty_cycle` の絶対値上限。**まず 0.2 くらいから試す** |
+| `max_duty` | `0.4` | `duty_cycle` の絶対値上限（`1.0` = 制限なし）|
 | `vel_cmd` | `0.0` | 前進速度 [m/s] |
 
 ```bash
