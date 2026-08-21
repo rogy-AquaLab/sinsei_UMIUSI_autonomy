@@ -1,7 +1,7 @@
 # 既知の問題と修正方針
 
-2026-08-19 の実機 bring-up (`docs/bringup_experiment_2026-08-19.md`) で判明したもの。
-根拠となる実測値は全て実験記録側にある。優先度は **実機を動かすのにどれだけ効くか**で付けた。
+**いま残っている問題だけを書く。** 解決したものは項目ごと削除しているので、番号は飛ぶ
+(識別子として安定させるため振り直さない)。優先度は **実機を動かすのにどれだけ効くか**。
 
 ---
 
@@ -84,75 +84,6 @@ t=6.04s に **姿勢基準そのものが 169° 飛び、飛んだ先で正常�
 python3 tools/imu_sanity_replay.py <bag> --sweep       # PC で閾値を振って評価
 ```
 
-### A-2. 【解決済み】`max_rate_hz` のキャップがエイリアシングを起こす
-
-`perception_node` の間引きが「前回**処理した時刻**から一定時間空ける」方式だったため、
-入力が上限より少しでも速いと**必ず 1 フレームおきに落ち、目標の半分近くまで下がって**いた。
-
-| 入力 | 上限 | 修正前の実測 | 修正後 |
-|---:|---:|---:|---:|
-| 15 Hz | 10 Hz | **7.91 Hz** | **10.00 Hz** |
-| 13.4 Hz | 10 Hz | **7.78 Hz** | 約 10 Hz |
-
-**実装済み**: `umiusi_autonomy/rate_limiter.py` の `RateLimiter`。期限を「実際に通した時刻」
-ではなく「前回の期限」から進めることで位相が入力に追従し、目標レートに最も近いフレームを
-選ぶ。処理が詰まって期限を大きく過ぎた場合は、溜まった期限を消化せずその時点から張り直す
-(詰まりが解けた瞬間のバースト防止)。
-
-ROS 非依存なので単体テストできる。**実機で観測したレートの組み合わせを使ったテスト 11 件が
-通っている** (`umiusi_autonomy/test/test_rate_limiter.py`)。修正前の挙動も再現テストとして
-残してあるので、同じ退行を検知できる。
-
-あわせて、**画像の `header.stamp` が設定されていない publisher だと stamp が 0 のまま進まず
-全フレームが落ちて perception が沈黙する**という既存の弱点も塞いだ (その場合はノードの
-時計に切り替え、一度だけ警告する)。
-
-> **実機では未検証** (実装時に機体が停止していたため)。次回の実機作業で、
-> `max_rate_hz` を 10 に戻したときに認識周期が 10 Hz 付近に張り付くことを確認すること。
-
-### A-3. 【解決済み】実機カメラ映像を perception に渡す経路が無い
-
-`gst_camera_node` は GStreamer パイプラインを起動するだけで **ROS トピックに画像を出さない**。
-一方 `perception_node` は `sensor_msgs/Image` を購読するため、両者が繋がっていなかった。
-
-**`umiusi_autonomy/camera_bridge_node.py` を追加して解決** (2026-08-20)。
-UI が既に見ている RTSP ストリームをそのまま tap するので、`sinsei_UMIUSI_control` は無改変、
-カメラを二重に開くこともない。
-
-```bash
-ros2 run umiusi_autonomy camera_bridge_node --ros-args \
-    -p rtsp_url:=rtsp://localhost:8554/cam1 -p width:=320 -p height:=240
-```
-
-**デコードと色変換/縮小はハードウェアに逃がすこと**が性能上の要点。実測:
-
-| パイプライン | CPU |
-|---|---:|
-| `videoconvert ! videoscale` (software) | **102%** (CPU 律速でレートも 15→11.6 Hz に低下) |
-| **`v4l2h264dec ! v4l2convert`** (hardware) | **33〜43%** |
-
-既定は HW 経路で、開けない環境では software に自動フォールバックする。
-publish サイズは `autonomy.yaml` の `frame_w/h` に合わせて 320x240 が既定
-(640x480 の生 Image は 921 kB/frame あり、RELIABLE QoS では転送だけで頭打ちになる)。
-
-### A-4. 【解決済み】バンドル済み RL ポリシーが実機で読めない
-
-`models/cruise_policy/final.zip` は **numpy 2.5.0** で保存されており、Pi (ROS Jazzy 標準の
-**numpy 1.26.4**) では `ModuleNotFoundError: No module named 'numpy._core.numeric'` で失敗する。
-`custom_objects` でも `numpy._core` のシムでも回避できない。
-
-**修正**: 重み + 正規化統計を素形式へ書き出し、SB3/cloudpickle 非依存の torch 推論に切り替える。
-検証済みの実装が `umiusi_rl_control/policy_infer.py` にあり、**SB3 との出力差は 200 サンプルで 0.000e+00**。
-
-- 書き出し: `umiusi_sim/export_policy.py` → `weights.pt` + `obs_norm.npz` + `meta.json`
-- 実機側は **torch だけ**でよくなる (SB3・gymnasium・cloudpickle が不要になる)
-- 副次効果として実機の依存が大幅に減る
-
-**実装済み** — `rl_attitude_node._ensure_model()` が `export/` を自動採用する
-(`_try_export_model()`)。実機で外部シム無しに動作することを確認済み。
-`model_path` を明示した場合は**その隣の `export/` だけ**を見る (バンドル済みポリシーへ
-黙って落ちると、新しいポリシーを試しているつもりで巡航ポリシーが動く事故になるため)。
-
 ### A-5. 【中】FSM が `umiusi_perception` に依存していることが分かりにくい
 
 `navigator_node` と `auto_target_generator` も (perception だけでなく) `umiusi_perception` を
@@ -203,32 +134,6 @@ torch を必要としない**。実機に入れるのは `pip install --no-deps`
 `ハードウェア経路 ... software に落とします` → `接続できません` を再接続間隔ごとに出し続ける
 (警告自体は 10 秒 throttle 済み)。
 
-### B-2. 【解決済み】前カメラ (CSI) と libcamera — apt 版を入れてはいけない
-
-前方カメラは **Raspberry Pi Camera Module 3 NoIR (`imx708_noir`)**。unicam (`/dev/media1`) と
-ISP (`/dev/media0`) には最初から正しく認識されている。
-
-**公式 Wiki (raspi-setup-3) のとおり、apt の libcamera は Camera Module V3 に対応しておらず、
-チームは `raspberrypi/libcamera` を `/usr/local` にソースビルドしている。**
-`apt install gstreamer1.0-libcamera` を入れるとそちらが優先され、Pi 用 IPA を持たないため
-次で失敗する:
-
-```
-WARN  IPAManager  No IPA found in '/usr/lib/aarch64-linux-gnu/libcamera'
-ERROR RPI  Failed to load a suitable IPA library
-ERROR RPI  Failed to register camera imx708_noir: -22
-```
-
-**対処: apt 版を入れない (入れてしまったら purge する)。** `/usr/local` 版を使うための
-環境変数は公式手順で `~/.bashrc` に設定済み:
-
-```bash
-export LIBCAMERA_IPA_PROXY_PATH=/usr/local/libexec/libcamera
-export LIBCAMERA_IPA_CONFIG_PATH=/usr/local/share/libcamera/ipa
-export LD_LIBRARY_PATH=/usr/local/lib/aarch64-linux-gnu:/usr/local/lib:$LD_LIBRARY_PATH
-export GST_PLUGIN_PATH=/usr/local/lib/aarch64-linux-gnu/gstreamer-1.0:$GST_PLUGIN_PATH
-```
-
 ### B-2b. 【中】`.bashrc` の環境変数は非対話シェルに効かない
 
 上記は `~/.bashrc` にあるが、`.bashrc` の先頭に
@@ -276,39 +181,6 @@ sudo ufw allow in on <有線IF> from 10.42.0.0/24
 SSH だけなら PC 側の ufw は関係ない (PC からの outbound のため)。**PC でも ROS 2 を動かして
 Pi と通信する場合にのみ必要。**
 
-### B-5. 【解決済み】`pip install torch` は aarch64 でも CUDA 版を引く
-
-PyPI 既定の `torch` は aarch64 でも `+cu130` を取得し、`nvidia-*` 一式で **4.5 GB** を
-消費する (GPU は無いので全て無駄)。さらに `setuptools` が 84 に上がり
-`colcon-core` の制約 `<80` に違反してビルドが壊れる。
-
-**対処**: 機体の `/etc/pip.conf` で CPU インデックスを既定にする。
-
-```ini
-[global]
-break-system-packages = true
-index-url = https://download.pytorch.org/whl/cpu
-extra-index-url = https://pypi.org/simple
-```
-
-これで `pip install torch` も `rosdep install` 経由の pip も CPU 版を取る。
-`torch` は rosdep のカスタムルール (`rosdep/umiusi.yaml` の `python3-torch-cpu`) から
-`package.xml` に宣言済みなので、**`rosdep install` だけで入る**。
-
-> Ubuntu 24.04 に `python3-torch` という apt パッケージは**存在しない** (universe を
-> 有効にしても無い) ため、pip 経由になる。
-
-### B-6. 【解決済み】実機に `pip` が入っていない + rosdep の PEP 668 拒否
-
-Ubuntu 24.04 の Pi イメージには `python3-pip` も `ensurepip` も無い。加えて
-**rosdep の pip インストーラは PEP 668 環境で実行自体を拒否する**
-(`externally managed` として `InstallFailed` を投げる)。
-
-**対処**: `/etc/pip.conf` に `break-system-packages = true` を書く
-(`PIP_BREAK_SYSTEM_PACKAGES=1` でも可 — rosdep 自身が推奨している方法)。
-pip 本体は `apt install python3-pip`、無ければ `get-pip.py` で入れる。
-手順は `robot_setup.md` の 2-1。
-
 ### B-7. 【中】`ros2_control` がリアルタイム優先度を取れていない
 
 起動のたびに出る:
@@ -348,8 +220,14 @@ pi  -  memlock unlimited
 
 ## C. 対応の優先順
 
-1. **B-8** — CAN テレメトリ。ハードが繋がらないので最優先
-   (A-1 / A-2 / A-3 / A-4 / B-1 / B-2 は解決済み)
-3. **B-9** — セットアップの再現性 (B-4/B-5/B-6 は解決済み)
-4. **B-7** — 性能
-5. **A-5 / A-6 / B-3** — 運用性・分かりやすさ
+水に入れる前に必須:
+
+1. **B-8** — CAN テレメトリが取れず**浸水検知が効かない**。上流の未実装
+2. **B-9** — `sinsei_umiusi_control` が古く、ESC の推力符号が逆。姿勢制御が発散する
+3. **B-1** — `cameras.yaml` のデバイス指定。`umiusi_stack.sh` は回避するが上流は未修正
+
+そのあと:
+
+4. **A-1** — IMU の化けと姿勢基準の飛び。データを集めて閾値と運用を決める
+5. **B-7** — `ros2_control` のリアルタイム優先度
+6. **A-5 / A-6 / B-2b / B-3** — 運用性・分かりやすさ

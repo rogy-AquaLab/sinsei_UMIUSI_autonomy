@@ -191,7 +191,7 @@ ModuleNotFoundError: No module named 'numpy._core.numeric'
   **【後日訂正】これは誤診断だった。** libcamera は公式手順どおり `/usr/local` にソースビルド
   済みで、環境変数も `~/.bashrc` に設定されていた。**非対話 SSH では `.bashrc` が即 return する**
   ため `GST_PLUGIN_PATH` が効かず、プラグインが見つからなかっただけ。対話 SSH からなら
-  最初から動いていた。詳細は `known_issues.md` B-2 / B-2b。
+  最初から動いていた。詳細は `known_issues.md` B-2b。
 - RTSP サーバ (`localhost:8554`) は稼働している。
 - パイプラインエラー時に `rclcpp::shutdown()` を呼ぶため、**カメラ1本の失敗でノードが丸ごと落ちる**。
 

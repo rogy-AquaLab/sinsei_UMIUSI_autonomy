@@ -140,7 +140,7 @@ UI では `cam1` = 前、`cam2` = 下 に対応する。
 `libcamerasrc` の出力がそのままエンコーダに渡せて軽い (パイプライン単体で **CPU 14.8%**)。
 perception には前カメラを使うこと (下カメラは位置制御用)。
 
-> 前カメラを動かすには `GST_PLUGIN_PATH` の設定が要る (`known_issues.md` B-2)。
+> 前カメラを動かすには `GST_PLUGIN_PATH` の設定が要る (`known_issues.md` B-2b)。
 
 ## 8. ロガーを動かしたときの性能低下 — ほぼゼロ
 

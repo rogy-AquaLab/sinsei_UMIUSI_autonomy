@@ -20,13 +20,6 @@ colcon build --packages-up-to umiusi_rl_control
 colcon build --packages-up-to umiusi_autonomy
 ```
 
-`umiusi_rl_control` is intentionally a **separate, experiment-friendly** package that drives
-`sinsei_umiusi_control`'s direct-override interface (it does NOT reimplement that stack); it can later
-fold into `sinsei_umiusi_control` as an alternative controller, or be pulled in as a dependency.
-
-See each package's README for details. Requires the vendored `sinsei_UMIUSI_*` packages + the
-`umiusi_perception` wheel (for `umiusi_autonomy`) — see the workspace `ros2_ws/README.md`.
-
 ## 実機で動かす — 導入から単体実験・記録まで
 
 環境構築済みの Pi（公式手順を終え、ROS 2 Jazzy / `can0` / MediaMTX が動いている状態）に
@@ -40,19 +33,18 @@ autonomy を載せて、**姿勢制御と認識をそれぞれ単体で**確か�
 | 4. 記録 | `./tools/record_run.sh --name <走行名>` → 走行後に `--fix` | [`docs/logging.md`](docs/logging.md) |
 | 5. 通し | `./tools/umiusi_stack.sh start`（本番構成） | 下記「launch ファイルの使い分け」 |
 
-検出器も RL ポリシーも**リポジトリに同梱**しているので、転送するファイルはありません。
+検出器も RL ポリシーもリポジトリに同梱しています。
 ログは既定で `/tmp/umiusi_logs/{control,core,rl}.log`（`UMIUSI_LOGDIR` で変更可）。
 
-**まとめて確認したいとき**は `./tools/experiment_test.sh` — 事前確認（cameras 設定と H264 デバイスの
-一致など）→ perception 単体 → 姿勢制御単体 → ロギング を、起動から判定・停止まで自動で通します。
-**スラスタは回しません**（RL は `publish=false` 固定）。実際に回す確認は
-[`docs/experiment_guide.md`](docs/experiment_guide.md) の 1-4 を e-stop を用意して手順どおりに。
+`experiment_test.sh` は起動から判定・停止まで自動で通し、**スラスタは回しません**。
+実際に回す確認は [`docs/experiment_guide.md`](docs/experiment_guide.md) の 1-4 を、
+e-stop を用意して手順どおりに。
 
 ### 姿勢制御 (`rl_attitude`) の単体実験
 
 ```bash
-./tools/umiusi_stack.sh start --attitude            # control + RL。指令は出さない (publish=false)
-./tools/umiusi_stack.sh start --attitude --publish  # 実際にスラスタへ出す
+./tools/umiusi_stack.sh start --attitude               # control + RL。スラスタへ出す
+./tools/umiusi_stack.sh start --attitude --no-publish  # 計算だけ (ドライ試験)
 ./tools/umiusi_stack.sh stop
 ```
 
@@ -63,12 +55,12 @@ autonomy を載せて、**姿勢制御と認識をそれぞれ単体で**確か�
 | ポリシーが読めたか | `tail -f /tmp/umiusi_logs/rl.log` | `policy loaded from .../export` |
 | IMU が来ているか | `ros2 topic hz /state/imu` | 50 Hz |
 | 姿勢が正しいか | `python3 tools/imu_monitor.py` | 傾けた向きと表示が一致 |
-| 目標姿勢を与える | `python3 tools/set_attitude.py --yaw 90 --hold` | `--hold` 必須（QoS depth=1）|
+| 目標姿勢を与える | `python3 tools/set_attitude.py --yaw 90 --hold` | `--hold` 必須（QoS depth=1）。Pi でも PC でも動く |
 | 出力が出ているか | `ros2 topic hz /cmd/direct/thruster_controller/output_lf` | 50 Hz |
 | 復元するか | `ros2 topic echo /cmd/direct/thruster_controller/output_lf` | **傾けたら戻す向きに duty**。発散しない |
 | IMU の棄却率 | `rl.log` の `IMU サンプルを破棄` | 静止時はほぼ 0（多すぎるなら閾値を緩める）|
 
-`--publish` で回すときは **e-stop を別端末に用意してから**:
+スラスタへ出すときは **e-stop を別端末に用意してから**:
 `ros2 topic pub --once /rl_attitude_node/estop std_msgs/msg/Bool "{data: true}"`
 
 ### `perception` の単体実験

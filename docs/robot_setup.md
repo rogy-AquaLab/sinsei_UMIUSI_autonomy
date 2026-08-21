@@ -73,21 +73,15 @@ Python の依存はすべて `--user` (`~/.local`) に入る。apt が要るも�
 検出器と風船割り FSM の実体。`navigator_node` と `auto_target_generator` も FSM のために
 必要とする (`perception_node` だけではない)。
 
-`Umiusi_sim` は public なので、**スクリプトが git から自動で入れる**。手動の転送は要らない。
-手元にソースがある場合はそちらからも入れられる:
+スクリプトが git から自動で入れる。手元にソースがある場合はそちらからも入れられる:
 
 ```bash
 ./tools/setup_robot.sh --perception ~/perception
 ```
 
-> autonomy 側に取り込まず別リポジトリのままにしているのは、**これが sim と実機で共有される
-> 唯一のライブラリ**だから。検出器と FSM の挙動が sim と実機で一致していることが設計上の要で、
-> 複製すると必ず drift する。
-
 ### 検出器 (同梱済み)
 
-風船検出器の重みは**リポジトリに同梱してある**ので、転送は要らない。
-未指定なら `models/detector/camp_mix.pt` が使われる。
+風船検出器の重みはリポジトリに同梱してある。未指定なら `models/detector/camp_mix.pt`。
 
 | ファイル | real_val の F1 | 用途 |
 |---|---:|---|
@@ -103,11 +97,6 @@ ros2 launch umiusi_autonomy core_autonomy.launch.py \
 
 詳細は `umiusi_autonomy/models/detector/README.md`。
 RL 姿勢制御のポリシーも `umiusi_rl_control/models/cruise_policy/` に同梱済み。
-
-> **`rosdep install` だけで完結させたい場合** — `rosdep/umiusi.yaml` を登録すれば
-> torch も rosdep で入るが、**システム側に `/etc/pip.conf` を置く必要がある**
-> (rosdep の pip は sudo で system-wide に入れるため PEP 668 に阻まれる。
-> CPU インデックスの指定もルールには書けない)。詳細はそのファイルのコメント。
 
 ## 3. ビルド
 

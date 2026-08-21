@@ -11,8 +11,8 @@
 #   ./umiusi_stack.sh stop
 #
 # 単体実験 (docs/experiment_guide.md):
-#   ./umiusi_stack.sh start --attitude     # 姿勢制御だけ (カメラは上げない。既定は publish しない)
-#   ./umiusi_stack.sh start --attitude --publish   # 実際にスラスタへ出す
+#   ./umiusi_stack.sh start --attitude               # 姿勢制御だけ (カメラは上げない)
+#   ./umiusi_stack.sh start --attitude --no-publish  # スラスタへ出さず計算だけ (ドライ試験)
 #   ./umiusi_stack.sh start --perception   # カメラブリッジ + perception だけ (BT / UI なし)
 # ROS の setup.bash は未定義変数を参照するため set -u は使えない
 set -o pipefail
@@ -55,14 +55,14 @@ setup_env() {
 }
 
 start() {
-  local ui=true rl=false mode=full publish=false
+  local ui=true rl=false mode=full publish=true
   for a in "$@"; do
     case "$a" in
       --no-ui)      ui=false ;;
       --with-rl)    rl=true ;;
       --attitude)   mode=attitude; rl=true ;;
       --perception) mode=perception ;;
-      --publish)    publish=true ;;
+      --no-publish) publish=false ;;
       *) echo "不明な引数: $a"; usage; exit 1 ;;
     esac
   done
@@ -187,10 +187,10 @@ usage() {
 使い方: umiusi_stack.sh {start|stop|restart|status} [オプション]
 
   --no-ui        UI (rosbridge) を起動しない (CPU を空ける)
-  --with-rl      RL 姿勢制御も起動する (publish はしない)
+  --with-rl      RL 姿勢制御も起動する
   --attitude     姿勢制御の単体実験。カメラを上げず、RL だけ起動する
   --perception   認識の単体実験。カメラブリッジ + perception だけ (BT / UI なし)
-  --publish      RL の指令を実際にスラスタへ出す (既定は出さない)
+  --no-publish   RL の指令をスラスタへ出さず計算だけする (ドライ試験)
 
 環境変数: UMIUSI_WS / UMIUSI_MODEL / UMIUSI_CAMERAS_PARAM / UMIUSI_RTSP_URL / UMIUSI_LOGDIR
 EOS

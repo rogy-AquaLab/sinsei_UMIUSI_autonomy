@@ -30,7 +30,7 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
 ./tools/experiment_test.sh --perception   # 個別に
 ```
 
-起動から判定・停止までを自動で通す。**スラスタは回さない**（RL は `publish=false` 固定）。
+起動から判定・停止までを自動で通す。**スラスタは回さない**（RL は必ず `--no-publish`）。
 以下は同じことを手で、目で見ながらやる手順。
 
 ---
@@ -40,7 +40,7 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
 ### 1-1. まず指令を出さずに見る
 
 ```bash
-./tools/umiusi_stack.sh start --attitude    # control + RL。カメラは上げない
+./tools/umiusi_stack.sh start --attitude --no-publish   # 計算だけ。カメラも上げない
 ```
 
 手で組む場合はこちら（内容は同じ）:
@@ -74,6 +74,7 @@ python3 tools/set_attitude.py --yaw 45 --attitude-only --hold   # 速度は無�
 ```
 
 **`--hold` を使うこと。** QoS の depth が 1 なので、1 発だけだと取りこぼす。
+DDS が通っていれば **PC 側からでも打てる**（Pi に入り直さなくてよい）。
 `--vel` を付けなければ**速度指令は変更しない**（launch の `vel_cmd` のまま）。
 止めたいときは `--level` か `--vel 0`。
 
@@ -100,8 +101,8 @@ ros2 topic echo /cmd/direct/thruster_controller/output_lf       # duty_cycle / a
 
 ```bash
 ./tools/umiusi_stack.sh stop
-./tools/umiusi_stack.sh start --attitude --publish
-# 手で組む場合: ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=true
+./tools/umiusi_stack.sh start --attitude
+# 手で組む場合: ros2 launch umiusi_rl_control rl_attitude.launch.py
 ```
 
 ```bash

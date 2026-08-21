@@ -12,7 +12,7 @@
 # カメラの立ち上げ)、rosbag2 の discovery も数秒かかるため。短すぎると
 # bag に /tf しか入らない (実機で確認済み)。
 #
-# **スラスタは回さない。** RL は publish=false でしか起動しないので、モータには何も出ない。
+# **スラスタは回さない。** RL は必ず --no-publish で起動するので、モータには何も出ない。
 # 実際に回す確認は docs/experiment_guide.md 1-4 を手順どおりに (e-stop を手元に置いて) 行うこと。
 #
 # 判定できるのは「起動する / トピックが出る / ログにエラーが無い」まで。水中挙動・色判別・
@@ -163,9 +163,9 @@ phase_perception() {
 }
 
 phase_attitude() {
-  hdr "2. 姿勢制御 単体 (umiusi_stack.sh start --attitude) — publish はしない"
+  hdr "2. 姿勢制御 単体 (umiusi_stack.sh start --attitude --no-publish)"
   "$STACK" stop > /dev/null 2>&1
-  local out; out="$("$STACK" start --attitude 2>&1)"
+  local out; out="$("$STACK" start --attitude --no-publish 2>&1)"
   echo "$out" | sed 's/^/    | /'
 
   echo "$out" | grep -q "カメラは上げない" && ok "カメラを上げていない" || ng "カメラを上げてしまっている"
