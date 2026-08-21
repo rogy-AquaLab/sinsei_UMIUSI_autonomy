@@ -13,6 +13,7 @@
 # 単体実験 (docs/experiment_guide.md):
 #   ./umiusi_stack.sh start --attitude               # 姿勢制御だけ (カメラは上げない)
 #   ./umiusi_stack.sh start --attitude --no-publish  # スラスタへ出さず計算だけ (ドライ試験)
+#   ./umiusi_stack.sh start --attitude --attitude-policy  # 姿勢保持だけのポリシーで
 #   ./umiusi_stack.sh start --perception   # カメラブリッジ + perception だけ (BT / UI なし)
 # ROS の setup.bash は未定義変数を参照するため set -u は使えない
 set -o pipefail
@@ -55,7 +56,7 @@ setup_env() {
 }
 
 start() {
-  local ui=true rl=false mode=full publish=true
+  local ui=true rl=false mode=full publish=true rl_policy=cruise
   for a in "$@"; do
     case "$a" in
       --no-ui)      ui=false ;;
@@ -63,6 +64,7 @@ start() {
       --attitude)   mode=attitude; rl=true ;;
       --perception) mode=perception ;;
       --no-publish) publish=false ;;
+      --attitude-policy) rl_policy=attitude ;;
       *) echo "不明な引数: $a"; usage; exit 1 ;;
     esac
   done
@@ -127,8 +129,21 @@ start() {
     echo "[rl] RL 姿勢制御 (publish=$publish、**disarmed で起動**)"
     echo "     武装: ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool \"{data: true}\""
     echo "     前進させるなら -p vel_cmd:=0.4 (既定 0 = 姿勢保持のみ)"
+    # 既定は同梱の cruise_policy (前進 0.4 込みで学習)。--attitude-policy で
+    # 姿勢保持だけのポリシー (観測 22 次元、速度指令を持たない) に差し替える
+    local rlmodel=()
+    if [ "$rl_policy" = attitude ]; then
+      local rlshare
+      rlshare="$(ros2 pkg prefix umiusi_rl_control 2>/dev/null)/share/umiusi_rl_control"
+      if [ -d "$rlshare/models/attitude_policy/export" ]; then
+        rlmodel=(-p "model_path:=$rlshare/models/attitude_policy")
+        echo "     ポリシー: attitude_policy (姿勢保持のみ)"
+      else
+        echo "     警告: attitude_policy が見つかりません。cruise_policy で起動します"
+      fi
+    fi
     setsid nohup ros2 run umiusi_rl_control rl_attitude_node --ros-args \
-      -p control_hz:=50.0 -p publish:=$publish \
+      -p control_hz:=50.0 -p publish:=$publish "${rlmodel[@]}" \
       > "$LOGDIR/rl.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
     sleep 10
   else
@@ -193,6 +208,9 @@ usage() {
   --attitude     姿勢制御の単体実験。カメラを上げず、RL だけ起動する
   --perception   認識の単体実験。カメラブリッジ + perception だけ (BT / UI なし)
   --no-publish   RL の指令をスラスタへ出さず計算だけする (ドライ試験)
+  --attitude-policy
+                 姿勢保持だけのポリシーを使う (前進しない。観測 22 次元)。
+                 既定は cruise_policy (前進 0.4 m/s 込みで学習)
 
 環境変数: UMIUSI_WS / UMIUSI_MODEL / UMIUSI_CAMERAS_PARAM / UMIUSI_RTSP_URL / UMIUSI_LOGDIR
 EOS

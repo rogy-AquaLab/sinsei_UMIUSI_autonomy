@@ -73,9 +73,14 @@ ros2 param set /rl_attitude_node max_duty 0.2
 `vel_cmd` は無視されます）:
 
 ```bash
+./tools/umiusi_stack.sh start --attitude --attitude-policy
+# 手で組む場合
 ros2 launch umiusi_rl_control rl_attitude.launch.py \
     model_path:=$(ros2 pkg prefix umiusi_rl_control)/share/umiusi_rl_control/models/attitude_policy
 ```
+
+**`--attitude` だけでは `cruise_policy`（既定）が使われます。** 差し替えるには
+`--attitude-policy` か `model_path` の明示が要ります。
 
 既定の `cruise_policy` は前進 0.4 m/s 込みで学習しているので、**`vel_cmd` を 0 にしてはいけません**
 （学習分布の外に出て出力が飽和します。`docs/known_issues.md` A-9）。
