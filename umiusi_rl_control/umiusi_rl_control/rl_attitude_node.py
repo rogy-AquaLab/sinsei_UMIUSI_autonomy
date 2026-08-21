@@ -43,6 +43,7 @@ from pathlib import Path
 import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import Imu
@@ -119,6 +120,14 @@ class RlAttitudeNode(Node):
         self.declare_parameter("imu_sanity_enforce", False)
         self.declare_parameter("gyro_deg_per_sec", False)  # convert IMU gyro deg/s -> rad/s (see caveats)
         self.declare_parameter("publish", True)            # False = predict only, do not command
+        # 姿勢保持のうち **yaw だけを切れる**。実験中に機体を手で回すと、yaw の目標が
+        # 起動時のままなので戻そうとして回り続ける (実機で踏んだ)。水中では磁気の影響や
+        # ドリフトもあるので、roll/pitch だけ保ちたい場面が多い。
+        # 実行中に `ros2 param set /rl_attitude_node hold_yaw false` で切り替えられる。
+        self.declare_parameter("hold_yaw", True)
+        self.declare_parameter("yaw_axis", "y")            # 姿勢誤差のどの成分が yaw か (x/y/z)
+        # duty_cycle の絶対値上限。1.0 = 制限なし。**まず小さい値で試すためのもの**
+        self.declare_parameter("max_duty", 1.0)
         # **既定は disarmed**。起動と同時にスラスタへ指令が出るのを避ける。
         # `~/arm` サービス (data:true) で武装してから動かす。
         self.declare_parameter("start_armed", False)       # True = 起動と同時に武装する
@@ -132,6 +141,12 @@ class RlAttitudeNode(Node):
         self._servo_range_rad = math.radians(self._servo_range_deg)
         self._gyro_to_rad = bool(self.get_parameter("gyro_deg_per_sec").value)
         self._publish = bool(self.get_parameter("publish").value)
+        self._hold_yaw = bool(self.get_parameter("hold_yaw").value)
+        self._max_duty = abs(float(self.get_parameter("max_duty").value))
+        axis = str(self.get_parameter("yaw_axis").value).lower()
+        if axis not in ("x", "y", "z"):
+            raise ValueError(f"yaw_axis は x/y/z のいずれか (指定: {axis!r})")
+        self._yaw_idx = {"x": 0, "y": 1, "z": 2}[axis]
 
         self._target_quat = np.array([1.0, 0.0, 0.0, 0.0])   # identity = hold upright/level
         self._v_cmd = np.array([self._vel, 0.0, 0.0])         # cruise along body +X
@@ -161,11 +176,29 @@ class RlAttitudeNode(Node):
         self._arm = ArmState(self, self._detach_all,
                              start_armed=bool(self.get_parameter("start_armed").value))
         self._timer = self.create_timer(self._dt, self._tick)
+        self.add_on_set_parameters_callback(self._on_set_params)
         self._publish_current_setpoint()
         self.get_logger().info(
             f"rl_attitude_node: default target=upright v_cmd=[{self._vel:.3f},0,0] m/s @ {self._hz:.0f} Hz "
             f"(publish={self._publish}); live setpoint (AttitudeTarget) on '{sp_topic}'; "
             "loading policy on first state...")
+
+    def _on_set_params(self, params):
+        """`ros2 param set` を実行中に効かせる (hold_yaw / max_duty / vel_cmd)。"""
+        for p in params:
+            if p.name == "hold_yaw":
+                self._hold_yaw = bool(p.value)
+                self.get_logger().info(
+                    f"hold_yaw={self._hold_yaw}"
+                    f"{'' if self._hold_yaw else ' — yaw は保持しません (roll/pitch のみ)'}")
+            elif p.name == "max_duty":
+                self._max_duty = abs(float(p.value))
+                self.get_logger().info(f"max_duty={self._max_duty:.2f}")
+            elif p.name == "vel_cmd":
+                self._v_cmd = np.array([float(p.value), 0.0, 0.0])
+                self._publish_current_setpoint()
+                self.get_logger().info(f"vel_cmd={float(p.value):.2f} m/s")
+        return SetParametersResult(successful=True)
 
     def _on_imu(self, msg):
         # 実機の BNO055 は化けサンプルを混ぜてくる。姿勢と角速度を直接ポリシーの観測に
@@ -319,6 +352,10 @@ class RlAttitudeNode(Node):
         esc_applied = np.array([s.rpm for s in states], dtype=float) / 1000.0
 
         ori_err = mju_sub_quat(self._target_quat, cur_quat)      # current -> target rot-vec
+        if not self._hold_yaw:
+            # yaw 成分を落とす = その軸まわりの姿勢誤差を 0 として扱う。回転ベクトルの
+            # 成分を落とすだけなので特異点が無い (RPY に直すと pitch±90 で破綻する)
+            ori_err[self._yaw_idx] = 0.0
         servo_n = np.radians(servo_deg) / self._servo_range_rad
         thrust_n = esc_applied
         return np.concatenate([ori_err, gyro, self._v_cmd, servo_n, thrust_n, self._prev_action])
@@ -342,7 +379,7 @@ class RlAttitudeNode(Node):
         for k, p in enumerate(POSITIONS):
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=True, servo=True)
-            out.duty_cycle = float(action[4 + k])
+            out.duty_cycle = float(np.clip(action[4 + k], -self._max_duty, self._max_duty))
             out.angle = float(action[k]) * self._servo_range_deg   # degrees, matching ros_policy
             self._pubs[p].publish(out)
 

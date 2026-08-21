@@ -3,6 +3,8 @@
     ros2 launch umiusi_rl_control rl_attitude.launch.py                    # 姿勢保持のみ (disarmed で起動)
     ros2 launch umiusi_rl_control rl_attitude.launch.py vel_cmd:=0.4       # 巡航 (前進 0.4 m/s)
     ros2 launch umiusi_rl_control rl_attitude.launch.py start_armed:=true  # 起動と同時に武装
+    ros2 launch umiusi_rl_control rl_attitude.launch.py hold_yaw:=false    # roll/pitch だけ保つ
+    ros2 launch umiusi_rl_control rl_attitude.launch.py max_duty:=0.2      # 出力を絞って試す
     ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=false     # predict only (no thrusters)
     ros2 launch umiusi_rl_control rl_attitude.launch.py model_path:=/abs/final.zip
 
@@ -28,6 +30,8 @@ def generate_launch_description():
     vel_cmd = LaunchConfiguration("vel_cmd")
     publish = LaunchConfiguration("publish")
     start_armed = LaunchConfiguration("start_armed")
+    hold_yaw = LaunchConfiguration("hold_yaw")
+    max_duty = LaunchConfiguration("max_duty")
 
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
@@ -37,6 +41,12 @@ def generate_launch_description():
                                           "起動しただけで前進指令が出るのを避けるため。巡航は 0.4"),
         DeclareLaunchArgument("publish", default_value="true",
                               description="command the thrusters (false = predict only)"),
+        DeclareLaunchArgument("hold_yaw", default_value="true",
+                              description="yaw も保持する。false で roll/pitch だけ保つ "
+                                          "(手で回したときに戻そうとして回り続けるのを避ける)。"
+                                          "実行中も `ros2 param set` で切り替えられる"),
+        DeclareLaunchArgument("max_duty", default_value="1.0",
+                              description="duty_cycle の絶対値上限。**まず小さい値で試す**"),
         DeclareLaunchArgument("start_armed", default_value="false",
                               description="起動と同時に武装する。**既定 false** — 起動しただけで "
                                           "スラスタへ指令が出るのを避けるため。`~/arm` で武装する"),
@@ -47,6 +57,7 @@ def generate_launch_description():
             output="screen",
             # model_path="" -> the node falls back to the bundled models/cruise_policy/final.zip
             parameters=[{"model_path": model_path, "vel_cmd": vel_cmd, "publish": publish,
-                         "start_armed": start_armed}],
+                         "start_armed": start_armed, "hold_yaw": hold_yaw,
+                         "max_duty": max_duty}],
         ),
     ])

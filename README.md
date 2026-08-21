@@ -56,6 +56,19 @@ ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"
 python3 tools/set_attitude.py --vel 0.4 --hold    # 前進もさせるなら
 ```
 
+実行中に効く調整（`ros2 param set`。launch 引数でも指定できます）:
+
+| パラメータ | 既定 | 用途 |
+|---|---|---|
+| `hold_yaw` | `true` | `false` で **yaw を保持しない**（roll/pitch のみ）。手で回したとき戻そうとして回り続けるのを避ける |
+| `max_duty` | `1.0` | `duty_cycle` の絶対値上限。**まず 0.2 くらいから試す** |
+| `vel_cmd` | `0.0` | 前進速度 [m/s] |
+
+```bash
+ros2 param set /rl_attitude_node hold_yaw false
+ros2 param set /rl_attitude_node max_duty 0.2
+```
+
 カメラは上げないので CPU が空きます。**見るところ**:
 
 | 見るもの | コマンド | 期待 |
