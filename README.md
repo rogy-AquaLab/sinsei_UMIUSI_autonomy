@@ -69,6 +69,17 @@ ros2 param set /rl_attitude_node hold_yaw false
 ros2 param set /rl_attitude_node max_duty 0.2
 ```
 
+**姿勢保持だけ試したいとき**は、前進成分を持たないポリシーに差し替えます（観測 22 次元。
+`vel_cmd` は無視されます）:
+
+```bash
+ros2 launch umiusi_rl_control rl_attitude.launch.py \
+    model_path:=$(ros2 pkg prefix umiusi_rl_control)/share/umiusi_rl_control/models/attitude_policy
+```
+
+既定の `cruise_policy` は前進 0.4 m/s 込みで学習しているので、**`vel_cmd` を 0 にしてはいけません**
+（学習分布の外に出て出力が飽和します。`docs/known_issues.md` A-9）。
+
 カメラは上げないので CPU が空きます。**見るところ**:
 
 | 見るもの | コマンド | 期待 |

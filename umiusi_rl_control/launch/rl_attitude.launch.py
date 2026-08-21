@@ -5,6 +5,10 @@
     ros2 launch umiusi_rl_control rl_attitude.launch.py start_armed:=true  # 起動と同時に武装
     ros2 launch umiusi_rl_control rl_attitude.launch.py hold_yaw:=false    # roll/pitch だけ保つ
     ros2 launch umiusi_rl_control rl_attitude.launch.py max_duty:=0.2      # 出力を絞って試す
+
+    # 姿勢保持だけ (前進しない。観測 22 次元のポリシー)
+    ros2 launch umiusi_rl_control rl_attitude.launch.py \
+        model_path:=$(ros2 pkg prefix umiusi_rl_control)/share/umiusi_rl_control/models/attitude_policy
     ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=false     # predict only (no thrusters)
     ros2 launch umiusi_rl_control rl_attitude.launch.py model_path:=/abs/final.zip
 

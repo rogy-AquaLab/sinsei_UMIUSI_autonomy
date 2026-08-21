@@ -55,7 +55,12 @@ from umiusi_rl_control_msgs.msg import AttitudeTarget
 
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
+# 観測の次元は **ポリシーのタスクによって変わる**:
+#   attitude_velocity (巡航) = 25 … [ori_err 3, gyro 3, v_cmd 3, servo 4, thrust 4, prev_action 8]
+#   attitude          (姿勢のみ) = 22 … 上から v_cmd を除いたもの
+# 読み込んだポリシーの入力次元から判断して、観測の組み立てを合わせる。
 OBS_DIM = 25
+OBS_DIM_NO_VEL = 22
 ACT_DIM = 8
 
 
@@ -154,6 +159,7 @@ class RlAttitudeNode(Node):
         self._prev_action = np.zeros(ACT_DIM)
         self._model = None
         self._norm_obs = None
+        self._obs_dim = OBS_DIM        # ポリシー読み込み時に実際の次元で上書きする
         self._imu = None
         self._imu_sanity = ImuSanity(
             max_gyro=float(self.get_parameter("imu_max_gyro").value),
@@ -276,7 +282,9 @@ class RlAttitudeNode(Node):
             # model_path を明示したときは **その隣の export/ だけ** を見る。
             # ここで package share のバンドル済みポリシーに落ちると、新しいポリシーを
             # 試しているつもりで巡航ポリシーが動く事故になる。
-            cands = [Path(mp).parent / "export"]
+            # ディレクトリを指してもよい (export/ しか同梱していないポリシーがあるため)
+            _p = Path(mp)
+            cands = [(_p if _p.is_dir() else _p.parent) / "export"]
         else:
             cands = [Path(get_package_share_directory("umiusi_rl_control"))
                      / "models" / "cruise_policy" / "export"]
@@ -295,6 +303,8 @@ class RlAttitudeNode(Node):
 
             self._model = _M()
             self._norm_obs = runner.normalize
+            if not self._set_obs_dim(runner.obs_dim, d):
+                return False
             self.get_logger().info(f"policy loaded from {d} (SB3 非依存の素 torch 推論)")
             return True
         return False
@@ -326,9 +336,11 @@ class RlAttitudeNode(Node):
             self.get_logger().error(f"model not found: {model_path}", throttle_duration_sec=10.0)
             return False
         self._model = PPO.load(str(model_path), device="cpu")
+        if not self._set_obs_dim(int(self._model.observation_space.shape[0]), model_path):
+            return False
         stats = model_path.parent / "vecnormalize.pkl"
         if stats.exists():
-            dummy = DummyVecEnv([_make_stub_env])
+            dummy = DummyVecEnv([lambda: _make_stub_env(self._obs_dim)])
             vn = VecNormalize.load(str(stats), dummy)
             dummy.close()
             rms, clip, eps = vn.obs_rms, vn.clip_obs, vn.epsilon
@@ -340,6 +352,21 @@ class RlAttitudeNode(Node):
             self.get_logger().warning("no vecnormalize.pkl next to the model; using raw obs.")
             self._norm_obs = lambda o: o.astype(np.float32)
         self.get_logger().info(f"policy loaded from {model_path}")
+        return True
+
+    def _set_obs_dim(self, obs_dim: int, src) -> bool:
+        """ポリシーの入力次元から、観測に v_cmd を含めるかを決める。"""
+        if obs_dim not in (OBS_DIM, OBS_DIM_NO_VEL):
+            self.get_logger().error(
+                f"対応していない観測次元 {obs_dim} です ({src})。"
+                f"{OBS_DIM} (attitude_velocity) か {OBS_DIM_NO_VEL} (attitude) のみ対応します")
+            self._model = None
+            return False
+        self._obs_dim = obs_dim
+        if obs_dim == OBS_DIM_NO_VEL:
+            self.get_logger().info(
+                "attitude タスクのポリシーです (観測に速度指令を含まない)。"
+                "vel_cmd / AttitudeTarget.velocity は無視されます")
         return True
 
     def _build_obs(self):
@@ -359,7 +386,11 @@ class RlAttitudeNode(Node):
             ori_err[self._yaw_idx] = 0.0
         servo_n = np.radians(servo_deg) / self._servo_range_rad
         thrust_n = esc_applied
-        return np.concatenate([ori_err, gyro, self._v_cmd, servo_n, thrust_n, self._prev_action])
+        parts = [ori_err, gyro]
+        if self._obs_dim == OBS_DIM:          # attitude_velocity のみ速度指令を観測に持つ
+            parts.append(self._v_cmd)
+        parts += [servo_n, thrust_n, self._prev_action]
+        return np.concatenate(parts)
 
     def _tick(self):
         if not self._arm.armed:            # e-stopped / disarmed: keep asserting the detach
@@ -400,7 +431,7 @@ class RlAttitudeNode(Node):
         self._detach_all()
 
 
-def _make_stub_env():
+def _make_stub_env(obs_dim=OBS_DIM):
     """Minimal gymnasium.Env with the policy's obs/action spaces — only so VecNormalize.load has a
     venv to bind to (we read its running stats, never step it)."""
     import gymnasium as gym
@@ -408,7 +439,7 @@ def _make_stub_env():
 
     class _Stub(gym.Env):
         def __init__(self):
-            self.observation_space = spaces.Box(-np.inf, np.inf, (OBS_DIM,), dtype=np.float32)
+            self.observation_space = spaces.Box(-np.inf, np.inf, (obs_dim,), dtype=np.float32)
             self.action_space = spaces.Box(-1.0, 1.0, (ACT_DIM,), dtype=np.float32)
 
         def reset(self, *, seed=None, options=None):

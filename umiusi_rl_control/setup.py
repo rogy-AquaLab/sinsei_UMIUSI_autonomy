@@ -20,6 +20,11 @@ setup(
         # SB3 非依存の書き出し (実機の numpy 1.26 では policy zip が読めないため)
         ("share/" + package_name + "/models/cruise_policy/export",
          glob("models/cruise_policy/export/*")),
+        # 姿勢保持だけのポリシー (観測 22 次元、速度指令を持たない)
+        ("share/" + package_name + "/models/attitude_policy",
+         [f for f in glob("models/attitude_policy/*") if os.path.isfile(f)]),
+        ("share/" + package_name + "/models/attitude_policy/export",
+         glob("models/attitude_policy/export/*")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

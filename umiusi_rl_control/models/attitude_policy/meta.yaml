@@ -1,0 +1,7 @@
+algo: ppo
+config: configs/train_ppo.yaml
+obs_mode: imu
+seed: 0
+task: attitude
+total_timesteps: 600000
+vecnormalize: true
