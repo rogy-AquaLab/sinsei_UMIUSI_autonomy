@@ -107,14 +107,24 @@ ros2 topic echo /cmd/direct/thruster_controller/output_lf       # duty_cycle / a
 
 ```bash
 # 緊急停止（別端末に先に用意しておく）
-ros2 topic pub --once /rl_attitude_node/estop std_msgs/msg/Bool "{data: true}"
+ros2 topic pub --once --qos-durability transient_local \
+    /rl_attitude_node/estop std_msgs/msg/Bool "{data: true}"
 
 # 復帰（止めたあと再開するとき）
-ros2 topic pub --once /rl_attitude_node/estop std_msgs/msg/Bool "{data: false}"
+ros2 topic pub --once --qos-durability transient_local \
+    /rl_attitude_node/estop std_msgs/msg/Bool "{data: false}"
 
 ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: false}"   # 武装解除
 ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"    # 再武装
 ```
+
+> **`--qos-durability transient_local` は必須。** `estop` の購読側は latch するために
+> TRANSIENT_LOCAL で待っており、`ros2 topic pub` の既定 (VOLATILE) では **QoS が合わず
+> マッチしない**。`Waiting for at least 1 matching subscription(s)...` が出続けて
+> **緊急停止が届かない**。`ros2 topic info -v` で購読側の Durability を確認できる。
+>
+> 手打ちは間違えるので、**回すときは `teleop_keyboard` を開いておくほうが安全**:
+> `ros2 run umiusi_rl_control teleop_keyboard`（正しい QoS で e-stop を打てる）。
 
 どちらも同じ武装フラグを操作するだけで**インターロックは無い**（`estop true` のあとでも
 `arm true` を呼べば武装する）。混乱を避けるため、**止めた経路と同じ経路で戻す**こと。

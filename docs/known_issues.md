@@ -84,6 +84,28 @@ t=6.04s に **姿勢基準そのものが 169° 飛び、飛んだ先で正常�
 python3 tools/imu_sanity_replay.py <bag> --sweep       # PC で閾値を振って評価
 ```
 
+### A-7. 【中】e-stop は `ros2 topic pub` の既定 QoS では届かない
+
+`~/estop` の購読側は **TRANSIENT_LOCAL**（再起動時に e-stop 状態を継承するため latch する）。
+一方 `ros2 topic pub` の既定は **VOLATILE** で、**Durability が合わずマッチしない**。
+`Waiting for at least 1 matching subscription(s)...` が出続けて、**緊急停止が届かない**。
+購読側は `ros2 topic info -v` で確認できる（Subscription count は 1 なのに繋がらない）。
+
+```bash
+ros2 topic pub --once --qos-durability transient_local \
+    /rl_attitude_node/estop std_msgs/msg/Bool "{data: true}"
+```
+
+**回すときは手打ちに頼らず `teleop_keyboard` を開いておくこと**（`ESTOP_QOS` を使うので
+QoS が確実に合う）:
+
+```bash
+ros2 run umiusi_rl_control teleop_keyboard
+```
+
+> 実機で踏んだ (2026-08-21)。ドキュメント側が QoS 指定なしのコマンドを載せていたのが原因で、
+> 修正済み。**緊急停止の経路は、使う前に必ず「実際に止まるか」を確認すること。**
+
 ### A-5. 【中】FSM が `umiusi_perception` に依存していることが分かりにくい
 
 `navigator_node` と `auto_target_generator` も (perception だけでなく) `umiusi_perception` を

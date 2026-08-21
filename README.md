@@ -60,8 +60,15 @@ e-stop を用意して手順どおりに。
 | 復元するか | `ros2 topic echo /cmd/direct/thruster_controller/output_lf` | **傾けたら戻す向きに duty**。発散しない |
 | IMU の棄却率 | `rl.log` の `IMU サンプルを破棄` | 静止時はほぼ 0（多すぎるなら閾値を緩める）|
 
-スラスタへ出すときは **e-stop を別端末に用意してから**:
-`ros2 topic pub --once /rl_attitude_node/estop std_msgs/msg/Bool "{data: true}"`
+スラスタへ出すときは **e-stop を別端末に用意してから**。`teleop_keyboard` を開いておくのが
+確実です（正しい QoS で e-stop を打てる）:
+
+```bash
+ros2 run umiusi_rl_control teleop_keyboard
+# 手で打つなら --qos-durability transient_local が必須 (既定の VOLATILE では届かない)
+ros2 topic pub --once --qos-durability transient_local \
+    /rl_attitude_node/estop std_msgs/msg/Bool "{data: true}"
+```
 
 ### `perception` の単体実験
 
