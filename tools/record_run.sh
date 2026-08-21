@@ -118,7 +118,11 @@ cleanup() {
     ros2 bag reindex "$OUT/bag" > "$OUT/reindex.log" 2>&1 \
       && echo "  reindex 完了" || echo "  ⚠ reindex に失敗 (bag/reindex.log を確認)"
   fi
+  # 取り出しを楽にするため、最後の run へのリンクを張り直す
+  #   scp -r pi@<機体>:runs/latest/ .        (ディレクトリ名を調べなくてよい)
+  ln -sfn "$OUT" "$OUTROOT/latest"
   echo "保存しました: $OUT"
+  echo "  (最新へのリンク: $OUTROOT/latest)"
   du -sh "$OUT"/* 2>/dev/null | sed 's/^/  /'
 }
 trap cleanup INT TERM

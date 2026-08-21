@@ -10,6 +10,28 @@
 掴んでいる間、別プロセスが同じデバイスを開こうとすると `Device is busy` で失敗する
 (実測で確認済み)。したがって録画は **RTSP 側から** 行う必要がある。
 
+## PC に取り出す
+
+`record_run.sh` は最後の run へのリンク `~/runs/latest` を張るので、名前を調べる必要はない。
+
+```bash
+# 最新の 1 本だけ (WSL / Linux / Windows の scp どれでも)
+scp -r pi@<機体>.local:runs/latest/ .
+
+# 全部を差分同期する (2 回目以降が速い。WSL から叩けば ROS は要らない)
+rsync -avz pi@<機体>.local:~/runs/ ./runs/
+```
+
+> **WSL で ROS が繋がらなくても scp / rsync は普通に使える。** DDS が通らないのは
+> WSL2 が NAT だからで、SSH は outbound なので影響しない。解析だけ PC でやるならこれで足りる。
+
+取り出したら:
+
+```bash
+ros2 bag info runs/latest/bag
+ros2 bag play runs/latest/bag        # PC 側で再生して rqt / PlotJuggler で見る
+```
+
 ## 方針: 映像は H264 のまま、それ以外は rosbag
 
 | 対象 | 手段 | コスト |
