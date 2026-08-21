@@ -36,9 +36,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
                               description="policy .zip (empty = bundled models/cruise_policy/final.zip)"),
-        DeclareLaunchArgument("vel_cmd", default_value="0.0",
-                              description="forward (+X) commanded speed [m/s]。**既定 0** — "
-                                          "起動しただけで前進指令が出るのを避けるため。巡航は 0.4"),
+        DeclareLaunchArgument("vel_cmd", default_value="0.4",
+                              description="forward (+X) commanded speed [m/s]。**学習時の巡航速度**。"
+                                          "0 にすると観測が学習分布の外に出て出力が飽和する"),
         DeclareLaunchArgument("publish", default_value="true",
                               description="command the thrusters (false = predict only)"),
         DeclareLaunchArgument("hold_yaw", default_value="true",

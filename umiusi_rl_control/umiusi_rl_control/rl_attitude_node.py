@@ -107,10 +107,10 @@ class RlAttitudeNode(Node):
         self.declare_parameter("imu_topic", "/state/imu")
         self.declare_parameter("thruster_state_topic", "/state/thruster_state_all")
         self.declare_parameter("control_hz", 50.0)
-        # **既定は 0**。巡航ポリシー自体は 0.4 m/s の前進込みで学習しているが、既定を 0.4 に
-        # すると「起動しただけで前進指令が出る」ことになる。前進させたいときは vel_cmd で
-        # 明示するか、実行中に AttitudeTarget の velocity で与える。
-        self.declare_parameter("vel_cmd", 0.0)             # forward (+X) commanded speed [m/s]
+        # **既定は 0.4** — 学習時の巡航速度。`vel_cmd` は観測ベクトルにそのまま入るので、
+        # 0 にすると **学習分布の外**の入力になり、出力が飽和してサーボが ±90° に張り付く
+        # (実機で踏んだ)。安全性は start_armed=false 側で担保する。
+        self.declare_parameter("vel_cmd", 0.4)             # forward (+X) commanded speed [m/s]
         self.declare_parameter("servo_range_deg", 90.0)
         self.declare_parameter("imu_max_gyro", 10.0)       # IMU サニティ: 角速度上限 [rad/s]
         self.declare_parameter("imu_max_step_deg", 30.0)   # IMU サニティ: 姿勢跳躍上限 [deg]
