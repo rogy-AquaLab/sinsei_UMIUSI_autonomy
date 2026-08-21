@@ -106,6 +106,23 @@ ros2 run umiusi_rl_control teleop_keyboard
 > 実機で踏んだ (2026-08-21)。ドキュメント側が QoS 指定なしのコマンドを載せていたのが原因で、
 > 修正済み。**緊急停止の経路は、使う前に必ず「実際に止まるか」を確認すること。**
 
+### A-8. 【解決済みだが再発しやすい】`rclpy.Node` の属性をメソッド名で潰さない
+
+`teleop_keyboard` が `def handle(self, key)` を定義していて、`rclpy.Node.handle`
+(プロパティ) を隠していた。`Node.__init__` の中の `with self.handle:` が
+
+```
+TypeError: 'method' object does not support the context manager protocol
+```
+
+で落ち、**ノードが起動すらできない**。エラーは rclpy の内部で出るので原因が見えにくい。
+`handle_key` にリネームして解決 (2026-08-21、実機で踏んだ)。
+
+`destroy_node` のように **`super()` を呼ぶ意図的なオーバーライドは問題ない**。
+危ないのは Node の属性を「別の意味で」使ってしまうケース。新しいノードを書くときは
+`handle` / `context` / `executor` / `clock` / `parameters` / `publishers` /
+`subscriptions` / `timers` などを自分のメソッド名にしないこと。
+
 ### A-5. 【中】FSM が `umiusi_perception` に依存していることが分かりにくい
 
 `navigator_node` と `auto_target_generator` も (perception だけでなく) `umiusi_perception` を

@@ -94,7 +94,7 @@ class TeleopKeyboard(Node):
     def _clamp_v(self, i, d):
         self._v[i] = max(-self._vel_max, min(self._vel_max, self._v[i] + d))
 
-    def handle(self, key: str) -> bool:
+    def handle_key(self, key: str) -> bool:
         """Apply a keypress; return False to quit."""
         s, a = self._vel_step, self._ang_step
         if key in ("q", "\x03"):        # q or Ctrl-C
@@ -162,7 +162,7 @@ def main(args=None):
             r, _, _ = select.select([sys.stdin], [], [], 0.1)
             key = sys.stdin.read(1) if r else ""
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
-            if key and not node.handle(key):
+            if key and not node.handle_key(key):
                 break
     except KeyboardInterrupt:
         pass
