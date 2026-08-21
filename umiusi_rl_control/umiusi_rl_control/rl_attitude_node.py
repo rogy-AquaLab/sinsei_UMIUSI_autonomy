@@ -14,6 +14,9 @@ to run it. Loop:
 
 Command: defaults to hold UPRIGHT (target = identity) + CRUISE forward (body +X at ``vel_cmd`` m/s),
 and can be overridden in REAL TIME by publishing an ``umiusi_rl_control_msgs/AttitudeTarget`` on
+``~/current_setpoint`` に**いま適用されている目標値**を latch で出す (診断用):
+``ros2 topic echo --once /rl_attitude_node/current_setpoint``。
+
 ``setpoint_topic`` (target attitude quaternion + feed-forward velocity in the target-body frame;
 ``type_mask`` selects which fields apply). Last message wins; a teleop / joystick controller just
 publishes it.
@@ -40,6 +43,7 @@ import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import Imu
 from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable, ThrusterStateAll
 
@@ -51,6 +55,21 @@ POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
 OBS_DIM = 25
 ACT_DIM = 8
+
+
+# 現在の目標値は latch する。**後から `ros2 topic echo` しても最新値が読める**ように
+# するため (VOLATILE だと、実行中に繋いでも次の更新まで何も出ない)。
+CURRENT_SETPOINT_QOS = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+
+
+def _quat_to_rpy_deg(q):
+    """(w, x, y, z) -> roll/pitch/yaw [deg] (ZYX)。ログ表示用。"""
+    w, x, y, z = (float(v) for v in q)
+    roll = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+    sinp = 2.0 * (w * y - z * x)
+    pitch = math.copysign(math.pi / 2.0, sinp) if abs(sinp) >= 1.0 else math.asin(sinp)
+    yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    return tuple(math.degrees(v) for v in (roll, pitch, yaw))
 
 
 def _quat_mul(a, b):
@@ -128,9 +147,15 @@ class RlAttitudeNode(Node):
         sp_topic = self.get_parameter("setpoint_topic").value
         self._sub_sp = self.create_subscription(AttitudeTarget, sp_topic, self._on_setpoint, 1)
         self._pubs = {p: self.create_publisher(ThrusterOutput, CMD_PREFIX + p, 10) for p in POSITIONS}
+        # いま何を目標にして動いているかを外から確認できるようにする。setpoint (購読側) は
+        # 「送る」ためのもので、type_mask で一部だけ更新されることもあるため、
+        # **実際に適用されている値**をこちらに出す
+        self._pub_current_sp = self.create_publisher(
+            AttitudeTarget, "~/current_setpoint", CURRENT_SETPOINT_QOS)
         self._arm = ArmState(self, self._detach_all,
                              start_armed=bool(self.get_parameter("start_armed").value))
         self._timer = self.create_timer(self._dt, self._tick)
+        self._publish_current_setpoint()
         self.get_logger().info(
             f"rl_attitude_node: default target=upright v_cmd=[{self._vel:.3f},0,0] m/s @ {self._hz:.0f} Hz "
             f"(publish={self._publish}); live setpoint (AttitudeTarget) on '{sp_topic}'; "
@@ -169,6 +194,27 @@ class RlAttitudeNode(Node):
                 self._target_quat = q / n
         if not (msg.type_mask & AttitudeTarget.IGNORE_VELOCITY):
             self._v_cmd = np.array([msg.velocity.x, msg.velocity.y, msg.velocity.z], dtype=float)
+        self._publish_current_setpoint()
+        r, p, y = _quat_to_rpy_deg(self._target_quat)
+        self.get_logger().info(
+            f"目標を更新: roll={r:+.1f} pitch={p:+.1f} yaw={y:+.1f} deg"
+            f"  速度=[{self._v_cmd[0]:.2f},{self._v_cmd[1]:.2f},{self._v_cmd[2]:.2f}] m/s")
+
+    def _publish_current_setpoint(self):
+        """いま適用されている目標値を `~/current_setpoint` に出す (latch)。
+
+            ros2 topic echo --once /rl_attitude_node/current_setpoint
+        """
+        msg = AttitudeTarget()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        w, x, y, z = (float(v) for v in self._target_quat)
+        msg.orientation.w, msg.orientation.x = w, x
+        msg.orientation.y, msg.orientation.z = y, z
+        msg.velocity.x = float(self._v_cmd[0])
+        msg.velocity.y = float(self._v_cmd[1])
+        msg.velocity.z = float(self._v_cmd[2])
+        msg.type_mask = 0        # 現在値なので「両方が有効」
+        self._pub_current_sp.publish(msg)
 
     def _try_export_model(self) -> bool:
         """素 torch で export ディレクトリを読む。

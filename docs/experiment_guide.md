@@ -73,6 +73,14 @@ python3 tools/set_attitude.py --vel 0.3            # 前進速度だけ変える
 python3 tools/set_attitude.py --yaw 45 --attitude-only --hold   # 速度は無視させる
 ```
 
+いま何を目標にして動いているかは、こちらで確認できる（latch しているのでいつでも読める）:
+
+```bash
+ros2 topic echo --once /rl_attitude_node/current_setpoint
+```
+
+目標が更新されると、ノードのログにも `目標を更新: roll=... pitch=... yaw=... deg` と度で出る。
+
 **`--hold` を使うこと。** QoS の depth が 1 なので、1 発だけだと取りこぼす。
 DDS が通っていれば **PC 側からでも打てる**（Pi に入り直さなくてよい）。
 `--vel` を付けなければ**速度指令は変更しない**（launch の `vel_cmd` のまま）。

@@ -56,6 +56,7 @@ e-stop を用意して手順どおりに。
 | IMU が来ているか | `ros2 topic hz /state/imu` | 50 Hz |
 | 姿勢が正しいか | `python3 tools/imu_monitor.py` | 傾けた向きと表示が一致 |
 | 目標姿勢を与える | `python3 tools/set_attitude.py --yaw 90 --hold` | `--hold` 必須（QoS depth=1）。Pi でも PC でも動く |
+| **いまの目標値** | `ros2 topic echo --once /rl_attitude_node/current_setpoint` | latch しているのでいつ繋いでも読める。ログにも度で出る |
 | 出力が出ているか | `ros2 topic hz /cmd/direct/thruster_controller/output_lf` | 50 Hz |
 | 復元するか | `ros2 topic echo /cmd/direct/thruster_controller/output_lf` | **傾けたら戻す向きに duty**。発散しない |
 | IMU の棄却率 | `rl.log` の `IMU サンプルを破棄` | 静止時はほぼ 0（多すぎるなら閾値を緩める）|
