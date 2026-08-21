@@ -124,7 +124,9 @@ start() {
   esac
 
   if [ "$rl" = true ]; then
-    echo "[rl] RL 姿勢制御 (publish=$publish)"
+    echo "[rl] RL 姿勢制御 (publish=$publish、**disarmed で起動**)"
+    echo "     武装: ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool \"{data: true}\""
+    echo "     前進させるなら -p vel_cmd:=0.4 (既定 0 = 姿勢保持のみ)"
     setsid nohup ros2 run umiusi_rl_control rl_attitude_node --ros-args \
       -p control_hz:=50.0 -p publish:=$publish \
       > "$LOGDIR/rl.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"

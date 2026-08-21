@@ -43,9 +43,17 @@ e-stop を用意して手順どおりに。
 ### 姿勢制御 (`rl_attitude`) の単体実験
 
 ```bash
-./tools/umiusi_stack.sh start --attitude               # control + RL。スラスタへ出す
+./tools/umiusi_stack.sh start --attitude               # control + RL
 ./tools/umiusi_stack.sh start --attitude --no-publish  # 計算だけ (ドライ試験)
 ./tools/umiusi_stack.sh stop
+```
+
+**起動しただけではスラスタに何も出ません** — `start_armed` の既定が false、`vel_cmd` の既定が
+0（姿勢保持のみ）だからです。動かすには武装します:
+
+```bash
+ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"
+python3 tools/set_attitude.py --vel 0.4 --hold    # 前進もさせるなら
 ```
 
 カメラは上げないので CPU が空きます。**見るところ**:

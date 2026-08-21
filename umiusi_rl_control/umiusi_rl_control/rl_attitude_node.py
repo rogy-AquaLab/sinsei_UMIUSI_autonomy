@@ -12,7 +12,7 @@ to run it. Loop:
   * PUBLISH the four direct-override /cmd/direct/thruster_controller/output_{lf,lb,rb,rf}
     (ThrusterOutput, runnable=true), action [servo x4, esc x4] -> {angle, duty_cycle}.
 
-Command: defaults to hold UPRIGHT (target = identity) + CRUISE forward (body +X at ``vel_cmd`` m/s),
+Command: holds UPRIGHT (target = identity) + cruises forward (body +X at ``vel_cmd`` m/s, **既定 0**),
 and can be overridden in REAL TIME by publishing an ``umiusi_rl_control_msgs/AttitudeTarget`` on
 ``~/current_setpoint`` に**いま適用されている目標値**を latch で出す (診断用):
 ``ros2 topic echo --once /rl_attitude_node/current_setpoint``。
@@ -24,7 +24,8 @@ publishes it.
 SAFETY: ``~/estop`` (std_msgs/Bool, true) or ``~/arm`` (std_srvs/SetBool, data:false) DISARMs
 immediately — the loop stops predicting and asserts a DETACH every tick (ThrusterOutput runnable
 esc/servo = false, zero output), so the control stack releases the thrusters. Re-arm with the
-``~/arm`` service (data:true). ``start_armed:=false`` launches disarmed.
+``~/arm`` service (data:true)。**既定は disarmed で起動する** (``start_armed:=true`` で
+起動と同時に武装)。あわせて ``vel_cmd`` の既定も 0 なので、**武装しても勝手には前進しない**。
 
 UNIT CAVEATS (inherited from ros_policy; confirm on the live bridge — the spec's open
 "FF-frame reconcile" item):
@@ -105,7 +106,10 @@ class RlAttitudeNode(Node):
         self.declare_parameter("imu_topic", "/state/imu")
         self.declare_parameter("thruster_state_topic", "/state/thruster_state_all")
         self.declare_parameter("control_hz", 50.0)
-        self.declare_parameter("vel_cmd", 0.4)             # forward (+X) commanded speed [m/s]
+        # **既定は 0**。巡航ポリシー自体は 0.4 m/s の前進込みで学習しているが、既定を 0.4 に
+        # すると「起動しただけで前進指令が出る」ことになる。前進させたいときは vel_cmd で
+        # 明示するか、実行中に AttitudeTarget の velocity で与える。
+        self.declare_parameter("vel_cmd", 0.0)             # forward (+X) commanded speed [m/s]
         self.declare_parameter("servo_range_deg", 90.0)
         self.declare_parameter("imu_max_gyro", 10.0)       # IMU サニティ: 角速度上限 [rad/s]
         self.declare_parameter("imu_max_step_deg", 30.0)   # IMU サニティ: 姿勢跳躍上限 [deg]
@@ -115,7 +119,9 @@ class RlAttitudeNode(Node):
         self.declare_parameter("imu_sanity_enforce", False)
         self.declare_parameter("gyro_deg_per_sec", False)  # convert IMU gyro deg/s -> rad/s (see caveats)
         self.declare_parameter("publish", True)            # False = predict only, do not command
-        self.declare_parameter("start_armed", True)        # False = launch disarmed (safe); arm to run
+        # **既定は disarmed**。起動と同時にスラスタへ指令が出るのを避ける。
+        # `~/arm` サービス (data:true) で武装してから動かす。
+        self.declare_parameter("start_armed", False)       # True = 起動と同時に武装する
         # Real-time setpoint (hold last; until a message arrives, use the launch defaults below).
         self.declare_parameter("setpoint_topic", "~/setpoint")   # umiusi_rl_control_msgs/AttitudeTarget
 

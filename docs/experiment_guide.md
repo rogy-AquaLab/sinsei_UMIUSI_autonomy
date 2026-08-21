@@ -105,12 +105,19 @@ ros2 topic echo /cmd/direct/thruster_controller/output_lf       # duty_cycle / a
 
 ### 1-4. 実際に回す
 
-モータを繋いで publish を有効にして起動する。**必ず e-stop を手元に**:
+モータを繋いで起動する。**既定は disarmed + 前進 0 なので、起動しただけでは何も出ない。**
+武装して初めて姿勢保持が始まる。**必ず e-stop を手元に**:
 
 ```bash
 ./tools/umiusi_stack.sh stop
 ./tools/umiusi_stack.sh start --attitude
 # 手で組む場合: ros2 launch umiusi_rl_control rl_attitude.launch.py
+
+# 武装して初めて動き出す
+ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"
+
+# 前進もさせるなら (既定は 0 = 姿勢保持のみ)
+python3 tools/set_attitude.py --vel 0.4 --hold
 ```
 
 ```bash
