@@ -51,6 +51,7 @@ from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable, ThrusterSta
 
 from umiusi_rl_control.arm import ArmState
 from umiusi_rl_control.imu_sanity import ImuSanity
+from umiusi_rl_control.thruster_limits import slew
 from umiusi_rl_control_msgs.msg import AttitudeTarget
 
 POSITIONS = ("lf", "lb", "rb", "rf")
@@ -134,6 +135,12 @@ class RlAttitudeNode(Node):
         # duty_cycle の絶対値上限。1.0 = 制限なし。**既定は 0.4 に絞ってある** —
         # 空中では水の減衰が無く発振しやすく、HFI で発熱もするため。詰めるときに上げる。
         self.declare_parameter("max_duty", 0.4)
+        # **指令のレート制限。sim と同じ値を既定にする** (configs/umiusi.yaml の
+        # servo_slew_deg_per_s / thrust_slew_per_s)。sim はポリシーの指令をこれで
+        # 平滑化してから物理に入れており、実機側に無いと sim2real ギャップになる。
+        # 0 以下で無効。
+        self.declare_parameter("servo_slew_deg_per_s", 250.0)
+        self.declare_parameter("thrust_slew_per_s", 4.0)
         # **既定は disarmed**。起動と同時にスラスタへ指令が出るのを避ける。
         # `~/arm` サービス (data:true) で武装してから動かす。
         self.declare_parameter("start_armed", False)       # True = 起動と同時に武装する
@@ -149,6 +156,11 @@ class RlAttitudeNode(Node):
         self._publish = bool(self.get_parameter("publish").value)
         self._hold_yaw = bool(self.get_parameter("hold_yaw").value)
         self._max_duty = abs(float(self.get_parameter("max_duty").value))
+        self._servo_slew = float(self.get_parameter("servo_slew_deg_per_s").value)
+        self._thrust_slew = float(self.get_parameter("thrust_slew_per_s").value)
+        # レート制限を掛けた「いま出している指令」。sim の servo_ctrl / esc_current に相当
+        self._servo_cmd = np.zeros(len(POSITIONS))
+        self._duty_cmd = np.zeros(len(POSITIONS))
         axis = str(self.get_parameter("yaw_axis").value).lower()
         if axis not in ("x", "y", "z"):
             raise ValueError(f"yaw_axis は x/y/z のいずれか (指定: {axis!r})")
@@ -201,6 +213,12 @@ class RlAttitudeNode(Node):
             elif p.name == "max_duty":
                 self._max_duty = abs(float(p.value))
                 self.get_logger().info(f"max_duty={self._max_duty:.2f}")
+            elif p.name == "servo_slew_deg_per_s":
+                self._servo_slew = float(p.value)
+                self.get_logger().info(f"servo_slew={self._servo_slew:.1f} deg/s")
+            elif p.name == "thrust_slew_per_s":
+                self._thrust_slew = float(p.value)
+                self.get_logger().info(f"thrust_slew={self._thrust_slew:.2f} /s")
             elif p.name == "vel_cmd":
                 self._v_cmd = np.array([float(p.value), 0.0, 0.0])
                 self._publish_current_setpoint()
@@ -408,11 +426,17 @@ class RlAttitudeNode(Node):
         self._prev_action = action
 
     def _command(self, action):
+        # sim と同じレート制限を通してから出す。ポリシーは毎ステップ飽和した指令を出しうるが、
+        # sim ではここで平滑化されたものが物理に入り、観測にも返っていた
+        servo_target = np.asarray(action[:4], dtype=float) * self._servo_range_deg
+        duty_target = np.clip(np.asarray(action[4:], dtype=float), -self._max_duty, self._max_duty)
+        self._servo_cmd = slew(self._servo_cmd, servo_target, self._servo_slew, self._dt)
+        self._duty_cmd = slew(self._duty_cmd, duty_target, self._thrust_slew, self._dt)
         for k, p in enumerate(POSITIONS):
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=True, servo=True)
-            out.duty_cycle = float(np.clip(action[4 + k], -self._max_duty, self._max_duty))
-            out.angle = float(action[k]) * self._servo_range_deg   # degrees, matching ros_policy
+            out.duty_cycle = float(self._duty_cmd[k])
+            out.angle = float(self._servo_cmd[k])                  # degrees, matching ros_policy
             self._pubs[p].publish(out)
 
     def _detach_all(self):
@@ -420,6 +444,9 @@ class RlAttitudeNode(Node):
         esc/servo (hardware-level not-allowed). The e-stop / disarm path for the direct loop."""
         if not self._publish:      # compute-only node never commands /cmd, so nothing to detach
             return
+        # 停止はレート制限を通さない (安全側。次に武装したとき 0 から積み直す)
+        self._servo_cmd[:] = 0.0
+        self._duty_cmd[:] = 0.0
         for p in POSITIONS:
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=False, servo=False)

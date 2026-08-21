@@ -62,6 +62,8 @@ python3 tools/set_attitude.py --vel 0.4 --hold    # 前進もさせるなら
 |---|---|---|
 | `hold_yaw` | `true` | `false` で **yaw を保持しない**（roll/pitch のみ）。手で回したとき戻そうとして回り続けるのを避ける |
 | `max_duty` | `0.4` | `duty_cycle` の絶対値上限（`1.0` = 制限なし）|
+| `servo_slew_deg_per_s` | `250.0` | **サーボ指令のレート制限。sim と同じ値**。0 以下で無効（`known_issues.md` A-11）|
+| `thrust_slew_per_s` | `4.0` | ESC 指令のレート制限。同上 |
 | `vel_cmd` | `0.4` | 前進速度 [m/s]。**0 にしないこと** — 学習分布の外で出力が飽和する（`known_issues.md` A-9）|
 
 ```bash
