@@ -7,7 +7,7 @@ packages so the control layer builds independently of perception).
 |---|---|---|---|
 | [`umiusi_autonomy`](umiusi_autonomy/) | ament_python | perception + planner: `perception_node`, `camera_bridge_node`, `navigator_node`, on-core `auto_target_generator` | `umiusi_perception` wheel (pip), `umiusi_rl_control` (arm helper) |
 | [`umiusi_autonomy_msgs`](umiusi_autonomy_msgs/) | ament_cmake | `BalloonDetection` / `BalloonDetectionArray` (perception -> planner) |
-| [`umiusi_rl_control`](umiusi_rl_control/) | ament_python | low-level control: RL attitude controller, keyboard teleop, arm/e-stop | `stable-baselines3`/`torch`/`gymnasium` (pip) — **no perception** |
+| [`umiusi_rl_control`](umiusi_rl_control/) | ament_python | low-level control: RL attitude controller, keyboard teleop, arm/e-stop | `torch`/`numpy` (pip) — **no perception, no SB3** |
 | [`umiusi_rl_control_msgs`](umiusi_rl_control_msgs/) | ament_cmake | `AttitudeTarget` setpoint (attitude quaternion + feed-forward velocity + mask) | geometry_msgs |
 
 Dependency direction: `umiusi_autonomy` (planner) → `umiusi_rl_control` (controllers) → `umiusi_rl_control_msgs`.
