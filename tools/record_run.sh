@@ -85,6 +85,7 @@ TOPICS="
 /cmd/direct/thruster_controller/output_lb
 /cmd/direct/thruster_controller/output_rb
 /cmd/direct/thruster_controller/output_rf
+/rl_attitude_node/current_setpoint
 /joint_states
 /tf
 /tf_static
