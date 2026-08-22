@@ -3,7 +3,8 @@
 Self-contained low-level control for the UMIUSI vehicle: a trained **RL attitude(-velocity)
 controller**, a **keyboard teleop**, and a shared **arm/disarm (e-stop)**. It **builds independently of
 the perception / autonomy stack** — it does NOT depend on `umiusi_perception`; the RL policy needs only
-`stable-baselines3` + `torch` + `gymnasium` (pip) at runtime.
+`torch` + `numpy` (pip) at runtime — the bundled policies ship as a plain-torch `export/`
+(no SB3/gymnasium on the robot).
 
 ```
   setpoint (AttitudeTarget)                 low-level controller            thrusters
@@ -33,18 +34,24 @@ cd ros2_ws
 colcon build --packages-select umiusi_rl_control_msgs umiusi_rl_control
 source install/setup.bash
 # RL runtime deps (pip, not rosdep keys):
-pip install stable-baselines3 torch gymnasium
+pip install torch numpy
 ```
 
 ## Run
 ```bash
-# RL attitude controller with the bundled cruise policy (holds upright + cruises +X):
+# RL attitude controller with the bundled av_cal1_best_rep103 policy (holds upright; vel_cmd 0):
 ros2 launch umiusi_rl_control rl_attitude.launch.py
-ros2 launch umiusi_rl_control rl_attitude.launch.py vel_cmd:=0.3    # slower cruise
+ros2 launch umiusi_rl_control rl_attitude.launch.py vel_cmd:=0.4    # cruise +X
 ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=false  # predict only (no thrusters)
 ```
 Requires the controllers/bridge (`sinsei_umiusi_control` or `umiusi_sim_bridge`) providing
-`/state/imu` + `/state/thruster_state_all` and consuming `/cmd/direct/...`.
+`/state/imu` and consuming `/cmd/direct/...`.
+
+**Policy bundles** (`models/`): `av_cal1_best_rep103` (default, 17-D attitude+velocity),
+`att_cal1_best_rep103` (14-D attitude-only fallback), `av_sim2real2_rep103` (17-D, plan B).
+All consume **REP-103 body-frame** observations (`export/meta.json` `obs_frame: rep103` is
+enforced at load) and carry `golden.npz` sim-recorded obs→action vectors that the node replays
+at load — a mismatch refuses to run (deploy-time verification, issue #15 A-5).
 
 **Real-time setpoint** (last message wins; defaults = upright + `vel_cmd`):
 ```bash
@@ -69,8 +76,10 @@ exposes a latched safety interface: publish `~/estop` (`std_msgs/Bool` `true`) o
 with `~/arm` `data: true` (or `~/estop` `false`). `start_armed:=false` launches disarmed. (Core's
 power-off / Standby is the other, stack-wide stop.)
 
-## Unit caveats (inherited from `umiusi_sim/tools/ros_policy`; confirm on the live bridge)
-- IMU `angular_velocity` is used as-is as rad/s (sensor_msgs/Imu is rad/s by the ROS standard); set `gyro_deg_per_sec:=true` only if a bridge wrongly sends deg/s.
+## Unit / frame caveats
+- IMU quaternion + `angular_velocity` go into the observation **unconverted** — the frame contract
+  is "the IMU publishes REP-103 (x fwd / y left / z up), rad/s". Verify the mount before a test
+  (issue #15 A-4); if it is off, fix the IMU driver (AXIS_MAP), not this node.
 - servo output `ThrusterOutput.angle` is published in DEGREES (= action × `servo_range_deg`); msg documents rad.
 
 ## License

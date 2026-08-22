@@ -51,7 +51,8 @@ ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=false
 ```
 
 `publish:=false` なので**スラスタには何も出ない**。ログに
-`policy loaded from .../export (SB3 非依存の素 torch 推論)` が出れば読めている。
+`golden 検証 PASS` → `policy loaded from .../export (obs 17-D, rep103)` が出れば、
+ポリシーが読めて配備前検証 (sim の golden vectors と一致) も通っている。
 
 ```bash
 tail -f /tmp/umiusi_logs/rl.log                                # ポリシー読み込みと棄却率
@@ -61,7 +62,7 @@ python3 tools/imu_monitor.py                                   # 傾けて姿勢
 
 ### 1-2. 目標姿勢の与え方
 
-既定は **水平 (identity) + 前進 0.4 m/s**。実行中に変えるには
+既定は **水平 (identity) + 前進 0 (姿勢保持)**。実行中に変えるには
 `umiusi_rl_control_msgs/AttitudeTarget` を `~/setpoint` に publish する。
 クォータニオンを手で組むのは面倒なので、度で指定できるツールを用意した:
 

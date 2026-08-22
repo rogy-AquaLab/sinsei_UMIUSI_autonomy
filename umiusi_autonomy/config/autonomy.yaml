@@ -23,7 +23,7 @@ navigator_node:
     fovy_deg: 60.0
     servo_range_deg: 90.0    # ThrusterOutput.angle [rad] = servo_action * radians(servo_range_deg)
     # DEPLOY CALIBRATION — verify against the mounted IMU (sensor_msgs/Imu.angular_velocity is RAD/S):
-    yaw_rate_axis: "y"       # IMU axis carrying the vehicle yaw rate (x/y/z); sim uses y (up)
+    yaw_rate_axis: "z"       # IMU axis carrying the vehicle yaw rate (x/y/z); REP-103 body frame -> z (up)
     yaw_rate_sign: 1.0
     # IMU サニティフィルタ (実機 BNO055 の化けサンプル対策)。
     # ゼロクォータニオン / 角速度の int16 フルスケール張り付き / 姿勢の跳躍 を検出する。
@@ -49,7 +49,7 @@ auto_target_generator:          # lifecycle node for the on-core path (core_auto
     frame_w: 320
     fovy_deg: 60.0
     # DEPLOY CALIBRATION — verify against the mounted IMU (sensor_msgs/Imu.angular_velocity is RAD/S):
-    yaw_rate_axis: "y"       # IMU axis carrying the vehicle yaw rate (x/y/z); sim uses y (up)
+    yaw_rate_axis: "z"       # IMU axis carrying the vehicle yaw rate (x/y/z); REP-103 body frame -> z (up)
     yaw_rate_sign: 1.0
     # IMU サニティフィルタ (実機 BNO055 の化けサンプル対策)。
     # ゼロクォータニオン / 角速度の int16 フルスケール張り付き / 姿勢の跳躍 を検出する。

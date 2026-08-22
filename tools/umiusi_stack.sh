@@ -27,6 +27,8 @@ PERCEPTION_SRC="${UMIUSI_PERCEPTION_SRC:-}"
 # 空なら同梱の cameras_deploy.yaml を使う (下の start() で解決)
 CAMERAS_PARAM="${UMIUSI_CAMERAS_PARAM:-}"
 RTSP_URL="${UMIUSI_RTSP_URL:-rtsp://localhost:8554/cam1}"
+# RL ポリシーバンドルの上書き (空 = ノード既定の av_cal1_best_rep103)
+RL_MODEL="${UMIUSI_RL_MODEL:-}"
 BRIDGE_RATE="${UMIUSI_BRIDGE_RATE:-10.0}"   # perception が捌ける値に合わせる (供給過多は逆効果)
 PIDFILE=/tmp/umiusi_stack.pids
 LOGDIR="${UMIUSI_LOGDIR:-/tmp/umiusi_logs}"
@@ -128,18 +130,22 @@ start() {
   if [ "$rl" = true ]; then
     echo "[rl] RL 姿勢制御 (publish=$publish、**disarmed で起動**)"
     echo "     武装: ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool \"{data: true}\""
-    echo "     前進させるなら -p vel_cmd:=0.4 (既定 0 = 姿勢保持のみ)"
-    # 既定は同梱の cruise_policy (前進 0.4 込みで学習)。--attitude-policy で
-    # 姿勢保持だけのポリシー (観測 22 次元、速度指令を持たない) に差し替える
+    echo "     前進させるなら ros2 param set /rl_attitude_node vel_cmd 0.4 (既定 0 = 姿勢保持)"
+    # 既定は同梱の av_cal1_best_rep103 (本命 17 次元)。--attitude-policy で姿勢保持専用の
+    # att_cal1_best_rep103 (14 次元、フォールバック) に差し替える。
+    # UMIUSI_RL_MODEL でバンドルディレクトリを直接指定もできる (A/B 試験用: av_sim2real2_rep103)
     local rlmodel=()
-    if [ "$rl_policy" = attitude ]; then
+    if [ -n "$RL_MODEL" ]; then
+      rlmodel=(-p "model_path:=$RL_MODEL")
+      echo "     ポリシー: $RL_MODEL (UMIUSI_RL_MODEL)"
+    elif [ "$rl_policy" = attitude ]; then
       local rlshare
       rlshare="$(ros2 pkg prefix umiusi_rl_control 2>/dev/null)/share/umiusi_rl_control"
-      if [ -d "$rlshare/models/attitude_policy/export" ]; then
-        rlmodel=(-p "model_path:=$rlshare/models/attitude_policy")
-        echo "     ポリシー: attitude_policy (姿勢保持のみ)"
+      if [ -d "$rlshare/models/att_cal1_best_rep103/export" ]; then
+        rlmodel=(-p "model_path:=$rlshare/models/att_cal1_best_rep103")
+        echo "     ポリシー: att_cal1_best_rep103 (姿勢保持のみ)"
       else
-        echo "     警告: attitude_policy が見つかりません。cruise_policy で起動します"
+        echo "     警告: att_cal1_best_rep103 が見つかりません。既定ポリシーで起動します"
       fi
     fi
     setsid nohup ros2 run umiusi_rl_control rl_attitude_node --ros-args \
@@ -209,10 +215,11 @@ usage() {
   --perception   認識の単体実験。カメラブリッジ + perception だけ (BT / UI なし)
   --no-publish   RL の指令をスラスタへ出さず計算だけする (ドライ試験)
   --attitude-policy
-                 姿勢保持だけのポリシーを使う (前進しない。観測 22 次元)。
-                 既定は cruise_policy (前進 0.4 m/s 込みで学習)
+                 姿勢保持専用ポリシー att_cal1_best_rep103 (14 次元) を使う。
+                 既定は av_cal1_best_rep103 (姿勢+速度指令 17 次元、v_cmd 既定 0)
 
-環境変数: UMIUSI_WS / UMIUSI_MODEL / UMIUSI_CAMERAS_PARAM / UMIUSI_RTSP_URL / UMIUSI_LOGDIR
+環境変数: UMIUSI_WS / UMIUSI_MODEL / UMIUSI_RL_MODEL / UMIUSI_CAMERAS_PARAM /
+          UMIUSI_RTSP_URL / UMIUSI_LOGDIR
 EOS
 }
 

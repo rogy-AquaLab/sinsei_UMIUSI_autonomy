@@ -96,7 +96,7 @@ ros2 launch umiusi_autonomy core_autonomy.launch.py \
 ```
 
 詳細は `umiusi_autonomy/models/detector/README.md`。
-RL 姿勢制御のポリシーも `umiusi_rl_control/models/cruise_policy/` に同梱済み。
+RL 姿勢制御のポリシーも `umiusi_rl_control/models/` に同梱済み（既定 `av_cal1_best_rep103`）。
 
 ## 3. ビルド
 

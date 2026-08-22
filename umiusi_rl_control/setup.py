@@ -13,18 +13,17 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
-        ("share/" + package_name + "/config", glob("config/*.yaml")),
-        # ディレクトリを除外する (export/ サブディレクトリを含むため)
-        ("share/" + package_name + "/models/cruise_policy",
-         [f for f in glob("models/cruise_policy/*") if os.path.isfile(f)]),
-        # SB3 非依存の書き出し (実機の numpy 1.26 では policy zip が読めないため)
-        ("share/" + package_name + "/models/cruise_policy/export",
-         glob("models/cruise_policy/export/*")),
-        # 姿勢保持だけのポリシー (観測 22 次元、速度指令を持たない)
-        ("share/" + package_name + "/models/attitude_policy",
-         [f for f in glob("models/attitude_policy/*") if os.path.isfile(f)]),
-        ("share/" + package_name + "/models/attitude_policy/export",
-         glob("models/attitude_policy/export/*")),
+    ] + [
+        # REP-103 ポリシーバンドル: export/ (素 torch) + golden.npz + meta.yaml。
+        # SB3 の zip は同梱しない (実機の numpy 1.26 では読めず、export だけで動くため)
+        entry
+        for policy in ("av_cal1_best_rep103", "att_cal1_best_rep103", "av_sim2real2_rep103")
+        for entry in (
+            (f"share/{package_name}/models/{policy}",
+             [f for f in glob(f"models/{policy}/*") if os.path.isfile(f)]),
+            (f"share/{package_name}/models/{policy}/export",
+             glob(f"models/{policy}/export/*")),
+        )
     ],
     install_requires=["setuptools"],
     zip_safe=True,

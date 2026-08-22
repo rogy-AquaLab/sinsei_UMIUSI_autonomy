@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """SB3 非依存の PPO(MlpPolicy) 推論。torch と numpy だけで動く(numpy 1.x でも可)。"""
 from __future__ import annotations
+import json
 from pathlib import Path
 import numpy as np
 import torch
@@ -14,6 +15,9 @@ class PolicyRunner:
         z = np.load(d / "obs_norm.npz")
         self.mean, self.var = z["mean"], z["var"]
         self.clip, self.eps = float(z["clip"]), float(z["eps"])
+        # meta.json: obs_frame (frame 契約の検証用) / task など。無い旧 export は空 dict
+        mj = d / "meta.json"
+        self.meta = json.loads(mj.read_text()) if mj.exists() else {}
 
         # mlp_extractor.policy_net.{0,2,...} と action_net を取り出す
         layers, i = [], 0
