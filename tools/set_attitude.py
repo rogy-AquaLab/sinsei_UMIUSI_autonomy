@@ -8,6 +8,7 @@
     python3 set_attitude.py --roll 20 --hold    # 指定して押し続ける (1 発だと取りこぼす)
     python3 set_attitude.py --level             # 水平・停止に戻す
     python3 set_attitude.py --vel 0.3           # 前進速度だけ変える
+    python3 set_attitude.py --vel 0 0 -0.2 --hold   # 純下降 (3-D ポリシー限定。手動降下バースト)
 
 `--hold` は 10 Hz で publish し続ける (Ctrl-C で停止)。QoS の depth が 1 なので、
 起動直後などは 1 発だと届かないことがある。**実験では --hold を推奨**。
@@ -42,7 +43,11 @@ def main():
     ap.add_argument("--roll", type=float, default=0.0, help="[deg]")
     ap.add_argument("--pitch", type=float, default=0.0, help="[deg]")
     ap.add_argument("--yaw", type=float, default=0.0, help="[deg]")
-    ap.add_argument("--vel", type=float, default=None, help="前進速度 [m/s] (未指定なら変更しない)")
+    # 1 値 = 前進のみ (従来どおり)。3 値 = REP-103 body [x前, y左, z上] の速度指令 —
+    # 例: --vel 0 0 -0.2 は純下降 (深度センサなしで降下バーストを手動試験するときに使う。
+    # 3-D ポリシー av_cal5_3d_rep103 限定。水平ポリシーに鉛直を入れると姿勢が崩壊する)
+    ap.add_argument("--vel", type=float, nargs="+", default=None,
+                    help="速度指令 [m/s]: 1 値=前進のみ / 3 値=body [x y z] (未指定なら変更しない)")
     ap.add_argument("--level", action="store_true", help="水平・停止に戻す")
     ap.add_argument("--attitude-only", action="store_true", help="速度指令は無視させる")
     ap.add_argument("--topic", default="/rl_attitude_node/setpoint")
@@ -51,7 +56,9 @@ def main():
 
     if a.level:
         a.roll = a.pitch = a.yaw = 0.0
-        a.vel = 0.0
+        a.vel = [0.0]
+    if a.vel is not None and len(a.vel) not in (1, 3):
+        ap.error("--vel は 1 値 (前進) か 3 値 (body x y z)")
 
     msg = AttitudeTarget()
     x, y, z, w = rpy_to_quat(a.roll, a.pitch, a.yaw)
@@ -59,14 +66,17 @@ def main():
     # --vel 未指定は「速度を変更しない」= IGNORE_VELOCITY。0 を送ると last-wins で
     # launch の vel_cmd を黙って止めてしまう。--level は vel=0 を明示するので送る側。
     keep_vel = a.vel is None or a.attitude_only
-    msg.velocity.x = float(a.vel) if a.vel is not None else 0.0
+    if a.vel is not None:
+        v = a.vel if len(a.vel) == 3 else [a.vel[0], 0.0, 0.0]
+        msg.velocity.x, msg.velocity.y, msg.velocity.z = (float(c) for c in v)
     msg.type_mask = AttitudeTarget.IGNORE_VELOCITY if keep_vel else 0
 
     rclpy.init()
     node = Node("set_attitude")
     pub = node.create_publisher(AttitudeTarget, a.topic, 1)
 
-    vel_txt = "前進=変更しない" if keep_vel else f"前進={msg.velocity.x:.2f} m/s"
+    vel_txt = ("速度=変更しない" if keep_vel else
+               f"速度=[{msg.velocity.x:.2f},{msg.velocity.y:.2f},{msg.velocity.z:.2f}] m/s")
     print(f"目標: roll={a.roll:+.1f} pitch={a.pitch:+.1f} yaw={a.yaw:+.1f} deg"
           f"  {vel_txt}"
           f"{' (姿勢のみ)' if a.attitude_only else ''}  -> {a.topic}")

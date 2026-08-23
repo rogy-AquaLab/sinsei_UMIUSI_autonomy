@@ -161,6 +161,11 @@ class RlAttitudeNode(Node):
         self.declare_parameter("start_armed", False)       # True = 起動と同時に武装する
         # Real-time setpoint (hold last; until a message arrives, use the launch defaults below).
         self.declare_parameter("setpoint_topic", "~/setpoint")   # umiusi_rl_control_msgs/AttitudeTarget
+        # デッドマン: 速度指令が **vel_timeout 秒更新されなかったら 0 に戻す** (0 以下で無効、既定 off)。
+        # 狭いプールでの巡航試験向け — teleop が落ちた/操作者が手を離した/`set_attitude --hold` を
+        # Ctrl-C した後に、機体が壁まで巡航し続けるのを防ぐ。`--hold` (10 Hz) を使っていれば
+        # 通常運転では発動しない。姿勢目標は保持したまま (落とすのは速度だけ)
+        self.declare_parameter("vel_timeout", 0.0)
         # --- 深度モード切替 (水圧センサ搭載時のみ。冒頭 docstring と depth_supervisor.py 参照) ---
         self.declare_parameter("depth_supervisor", False)  # true で有効化。**max_duty 0.4 が前提**
         self.declare_parameter("depth_topic", "/state/pressure")   # sensor_msgs/FluidPressure [Pa]
@@ -189,6 +194,8 @@ class RlAttitudeNode(Node):
 
         self._target_quat = np.array([1.0, 0.0, 0.0, 0.0])   # identity = hold upright/level
         self._v_cmd = np.array([self._vel, 0.0, 0.0])         # cruise along body +X
+        self._vel_timeout = float(self.get_parameter("vel_timeout").value)
+        self._v_cmd_stamp = None       # 速度指令が最後に更新された時刻 [s] (デッドマン用)
         self._prev_action = np.zeros(ACT_DIM)
         self._model = None
         self._model_error = None       # 構造的な読み込み失敗 (リトライしても直らない)
@@ -266,8 +273,12 @@ class RlAttitudeNode(Node):
                 self.get_logger().info(f"thrust_slew={self._thrust_slew:.2f} /s")
             elif p.name == "vel_cmd":
                 self._v_cmd = np.array([float(p.value), 0.0, 0.0])
+                self._v_cmd_stamp = self.get_clock().now().nanoseconds * 1e-9
                 self._publish_current_setpoint()
                 self.get_logger().info(f"vel_cmd={float(p.value):.2f} m/s")
+            elif p.name == "vel_timeout":
+                self._vel_timeout = float(p.value)
+                self.get_logger().info(f"vel_timeout={self._vel_timeout:.1f} s (0 以下で無効)")
             elif p.name == "target_depth":
                 self._sup.target_depth = float(p.value)
                 self.get_logger().info(f"target_depth={float(p.value):.2f} m")
@@ -329,6 +340,7 @@ class RlAttitudeNode(Node):
                 self._target_quat = q / n
         if not (msg.type_mask & AttitudeTarget.IGNORE_VELOCITY):
             self._v_cmd = np.array([msg.velocity.x, msg.velocity.y, msg.velocity.z], dtype=float)
+            self._v_cmd_stamp = self.get_clock().now().nanoseconds * 1e-9
         self._publish_current_setpoint()
         r, p, y = _quat_to_rpy_deg(self._target_quat)
         self.get_logger().info(
@@ -502,6 +514,17 @@ class RlAttitudeNode(Node):
             return
         if not self._ensure_model():
             return
+        # デッドマン: 速度指令が更新されないまま vel_timeout を過ぎたら 0 に戻す (姿勢保持は継続)
+        if self._vel_timeout > 0.0 and np.any(self._v_cmd != 0.0):
+            now = self.get_clock().now().nanoseconds * 1e-9
+            if self._v_cmd_stamp is None:      # launch 指定の vel_cmd も対象 (初回 tick 起点)
+                self._v_cmd_stamp = now
+            if now - self._v_cmd_stamp > self._vel_timeout:
+                self._v_cmd = np.zeros(3)
+                self._v_cmd_stamp = None
+                self._publish_current_setpoint()
+                self.get_logger().warning(
+                    f"速度指令が {self._vel_timeout:.1f} s 更新されなかったので 0 に戻しました (デッドマン)")
         model, v_cmd = self._supervise()
         action = model.act(self._build_obs(v_cmd, model.obs_dim))
         action = np.clip(np.asarray(action, dtype=float).reshape(ACT_DIM), -1.0, 1.0)

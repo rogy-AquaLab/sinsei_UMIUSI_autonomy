@@ -27,7 +27,8 @@
 
 | スクリプト | 用途 |
 |---|---|
-| `set_attitude.py` | **rl_attitude の目標姿勢を roll/pitch/yaw [deg] で与える**（Pi でも PC でも動く）。素だと `~/setpoint` にクォータニオンを publish する必要があるので、その代わり。`--hold` で押し続ける（QoS depth=1 なので 1 発だと取りこぼす）、`--level` で水平・停止。`--vel` 未指定なら速度指令は変更しない |
+| `set_attitude.py` | **rl_attitude の目標姿勢を roll/pitch/yaw [deg] で与える**（Pi でも PC でも動く）。素だと `~/setpoint` にクォータニオンを publish する必要があるので、その代わり。`--hold` で押し続ける（QoS depth=1 なので 1 発だと取りこぼす）、`--level` で水平・停止。`--vel` 未指定なら速度指令は変更しない。`--vel X Y Z` の 3 値で body 速度指令（例 `--vel 0 0 -0.2` = 純下降。3-D ポリシー限定）|
+| `bag_check.py` | **実験直後に bag をその場で検品**。必須トピック/レート、前後静止 5 s、IMU 化け率、**衝突らしき gyro スパイクの時刻**（較正・world model から除外する区間）、`--profile teleop` で励起カバレッジ（duty 振幅帯・符号・サーボ可動域）。帰宅後に「使えない bag だった」を防ぐ |
 | `view_detections.py` | **検出結果を画像に重ねて表示**（時刻照合はせず、最後に届いた検出を重ねる）。**PC 側で動かす**こと（Pi でやると CPU が飽和して認識周期が落ちる）。`--save` で mp4 保存（表示も続く。録画だけなら `--no-window` を併用）|
 
 ## センサ確認
