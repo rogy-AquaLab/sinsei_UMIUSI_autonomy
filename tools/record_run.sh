@@ -86,6 +86,9 @@ TOPICS="
 /cmd/direct/thruster_controller/output_rb
 /cmd/direct/thruster_controller/output_rf
 /rl_attitude_node/current_setpoint
+/rl_attitude_node/depth
+/rl_attitude_node/depth_mode
+/state/pressure
 /joint_states
 /tf
 /tf_static

@@ -17,7 +17,8 @@ setup(
         # REP-103 ポリシーバンドル: export/ (素 torch) + golden.npz + meta.yaml。
         # SB3 の zip は同梱しない (実機の numpy 1.26 では読めず、export だけで動くため)
         entry
-        for policy in ("av_cal1_best_rep103", "att_cal1_best_rep103", "av_sim2real2_rep103")
+        for policy in ("av_cal1_best_rep103", "att_cal1_best_rep103", "av_sim2real2_rep103",
+                       "av_cal5_3d_rep103")
         for entry in (
             (f"share/{package_name}/models/{policy}",
              [f for f in glob(f"models/{policy}/*") if os.path.isfile(f)]),

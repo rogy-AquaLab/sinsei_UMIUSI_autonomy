@@ -48,10 +48,26 @@ Requires the controllers/bridge (`sinsei_umiusi_control` or `umiusi_sim_bridge`)
 `/state/imu` and consuming `/cmd/direct/...`.
 
 **Policy bundles** (`models/`): `av_cal1_best_rep103` (default, 17-D attitude+velocity),
-`att_cal1_best_rep103` (14-D attitude-only fallback), `av_sim2real2_rep103` (17-D, plan B).
+`att_cal1_best_rep103` (14-D attitude-only fallback), `av_sim2real2_rep103` (17-D, plan B),
+`av_cal5_3d_rep103` (17-D 3-D vectoring, **EXPERIMENTAL / 深度モードの降下バースト専用**).
 All consume **REP-103 body-frame** observations (`export/meta.json` `obs_frame: rep103` is
 enforced at load) and carry `golden.npz` sim-recorded obs→action vectors that the node replays
 at load — a mismatch refuses to run (deploy-time verification, issue #15 A-5).
+
+### 深度モード切替 (水圧センサ搭載時のみ)
+```bash
+# 水圧の外側ループで水平巡航 (av_cal1_best) と降下バースト (av_cal5_3d) を切り替える。
+# **max_duty 0.4 が前提** — sim 実測では 0.2 だと下向き推力が浮力に負けて降下できない
+ros2 launch umiusi_rl_control rl_attitude.launch.py depth_supervisor:=true max_duty:=0.4
+ros2 param set /rl_attitude_node target_depth 1.0     # 潜行 (m, 正=深い)
+ros2 service call /rl_attitude_node/zero_depth std_srvs/srv/Trigger   # 水面でゼロ点取り直し
+ros2 topic echo /rl_attitude_node/depth_mode          # horiz / brake / vert / ascend
+```
+降下 = ブレーキ 1 s → 3-D ポリシーの純下バースト、浮上 = ホールドして**弱正浮力に任せる**
+(受動)。斜め指令は作らない。状態機械・検証済みパラメータ・前提 (機体を弱正浮力にトリム
+しておく) は `umiusi_rl_control/depth_supervisor.py` 冒頭と issue #15 のコメント
+(sim リハーサル結果) を参照。深度ゼロ点は起動後の最初の水圧サンプルで自動キャプチャ
+(水面で起動する前提)。
 
 **Real-time setpoint** (last message wins; defaults = upright + `vel_cmd`):
 ```bash
