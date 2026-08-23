@@ -7,7 +7,7 @@ packages so the control layer builds independently of perception).
 |---|---|---|---|
 | [`umiusi_autonomy`](umiusi_autonomy/) | ament_python | perception + planner: `perception_node`, `camera_bridge_node`, `navigator_node`, on-core `auto_target_generator` | `umiusi_perception` wheel (pip), `umiusi_rl_control` (arm helper) |
 | [`umiusi_autonomy_msgs`](umiusi_autonomy_msgs/) | ament_cmake | `BalloonDetection` / `BalloonDetectionArray` (perception -> planner) |
-| [`umiusi_rl_control`](umiusi_rl_control/) | ament_python | low-level control: RL attitude controller, keyboard teleop, arm/e-stop | `stable-baselines3`/`torch`/`gymnasium` (pip) — **no perception** |
+| [`umiusi_rl_control`](umiusi_rl_control/) | ament_python | low-level control: RL attitude controller, keyboard teleop, arm/e-stop | `torch`/`numpy` (pip) — **no perception, no SB3** |
 | [`umiusi_rl_control_msgs`](umiusi_rl_control_msgs/) | ament_cmake | `AttitudeTarget` setpoint (attitude quaternion + feed-forward velocity + mask) | geometry_msgs |
 
 Dependency direction: `umiusi_autonomy` (planner) → `umiusi_rl_control` (controllers) → `umiusi_rl_control_msgs`.
@@ -61,31 +61,29 @@ python3 tools/set_attitude.py --vel 0.4 --hold    # 前進もさせるなら
 | パラメータ | 既定 | 用途 |
 |---|---|---|
 | `hold_yaw` | `true` | `false` で **yaw を保持しない**（roll/pitch のみ）。手で回したとき戻そうとして回り続けるのを避ける |
-| `max_duty` | `0.4` | `duty_cycle` の絶対値上限（`1.0` = 制限なし）|
+| `max_duty` | `0.2` | `duty_cycle` の絶対値上限（`1.0` = 制限なし）。**0.2 で開始 → 問題なければ 0.4**（issue #15 A-3）|
 | `servo_slew_deg_per_s` | `250.0` | **サーボ指令のレート制限。sim と同じ値**。0 以下で無効（`known_issues.md` A-11）|
 | `thrust_slew_per_s` | `4.0` | ESC 指令のレート制限。同上 |
-| `vel_cmd` | `0.4` | 前進速度 [m/s]。**0 にしないこと** — 学習分布の外で出力が飽和する（`known_issues.md` A-9）|
+| `vel_cmd` | `0.0` | 前進速度 [m/s]。新ポリシーは停止保持（0）も学習分布内。巡航試験で 0.4 に上げる |
 
 ```bash
 ros2 param set /rl_attitude_node hold_yaw false
-ros2 param set /rl_attitude_node max_duty 0.2
+ros2 param set /rl_attitude_node vel_cmd 0.4
 ```
 
-**姿勢保持だけ試したいとき**は、前進成分を持たないポリシーに差し替えます（観測 22 次元。
-`vel_cmd` は無視されます）:
+同梱ポリシーは 3 種（すべて REP-103 観測 + golden.npz 付き。読み込み時に自動検証）:
+
+| バンドル | 観測 | 用途 |
+|---|---|---|
+| `av_cal1_best_rep103`（既定） | 17 次元（姿勢+速度指令） | 本命 |
+| `att_cal1_best_rep103` | 14 次元（姿勢のみ） | フォールバック。巡航が死んでも姿勢試験が成立する |
+| `av_sim2real2_rep103` | 17 次元 | B 案（較正前物理で学習、指令が最も滑らか）。A/B 材料 |
 
 ```bash
-./tools/umiusi_stack.sh start --attitude --attitude-policy
-# 手で組む場合
-ros2 launch umiusi_rl_control rl_attitude.launch.py \
-    model_path:=$(ros2 pkg prefix umiusi_rl_control)/share/umiusi_rl_control/models/attitude_policy
+./tools/umiusi_stack.sh start --attitude --attitude-policy   # 姿勢保持専用に差し替え
+UMIUSI_RL_MODEL=$(ros2 pkg prefix umiusi_rl_control)/share/umiusi_rl_control/models/av_sim2real2_rep103 \
+  ./tools/umiusi_stack.sh start --attitude                   # B 案で A/B 試験
 ```
-
-**`--attitude` だけでは `cruise_policy`（既定）が使われます。** 差し替えるには
-`--attitude-policy` か `model_path` の明示が要ります。
-
-既定の `cruise_policy` は前進 0.4 m/s 込みで学習しているので、**`vel_cmd` を 0 にしてはいけません**
-（学習分布の外に出て出力が飽和します。`docs/known_issues.md` A-9）。
 
 カメラは上げないので CPU が空きます。**見るところ**:
 

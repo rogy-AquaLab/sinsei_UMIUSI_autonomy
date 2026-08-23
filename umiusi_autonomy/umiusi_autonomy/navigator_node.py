@@ -30,8 +30,9 @@ COMMAND MODES (``command_mode`` parameter):
 
 DEPLOY CALIBRATION (verify on hardware, cannot be inferred from the sim):
   * sensor_msgs/Imu.angular_velocity is RAD/S (ROS standard), matching the sim FSM's body yaw rate.
-    ``yaw_rate_axis`` / ``yaw_rate_sign`` select and orient that component (default y-up, +, matching
-    the sim). Confirm the axis/sign against the mounted IMU.
+    ``yaw_rate_axis`` / ``yaw_rate_sign`` select and orient that component (default z, +, REP-103
+    x-fwd/y-left/z-up — the whole stack's frame contract). Confirm the axis/sign against the
+    mounted IMU (issue #15 A-4).
   * ThrusterOutput.angle is documented in RAD; ``servo_range_deg`` sets the half-range used to map
     the normalised servo action to radians (default 90, matching configs/umiusi.yaml). NOTE:
     tools/ros_policy currently scales in degrees — reconcile the two against the live bridge during
@@ -72,7 +73,7 @@ class NavigatorNode(Node):
         self.declare_parameter("frame_w", 320)
         self.declare_parameter("fovy_deg", 60.0)
         self.declare_parameter("servo_range_deg", 90.0)
-        self.declare_parameter("yaw_rate_axis", "y")      # IMU axis carrying the vehicle yaw rate
+        self.declare_parameter("yaw_rate_axis", "z")      # IMU axis carrying the vehicle yaw rate (REP-103: z)
         self.declare_parameter("yaw_rate_sign", 1.0)
         # IMU のサニティフィルタ (実機の化けサンプル対策)。0 以下で無効化できる。
         self.declare_parameter("imu_max_gyro", 10.0)        # [rad/s] 検出の閾値

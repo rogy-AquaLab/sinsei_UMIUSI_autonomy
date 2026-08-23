@@ -1,38 +1,37 @@
 """rl_attitude_node — drive the thrusters with a trained RL attitude(-velocity) policy.
 
-A SELF-CONTAINED rclpy port of ``umiusi_sim/tools/ros_policy.py``: it needs NO umiusi_sim / umiusi_rl /
-mujoco — only the bundled policy (``models/cruise_policy``) and stable-baselines3 + torch + gymnasium
-to run it. Loop:
+SB3/mujoco 非依存: 同梱バンドルの ``export/`` (weights.pt + obs_norm.npz + meta.json) を
+素 torch で推論する (``policy_infer.PolicyRunner``)。ループ:
 
-  * SUBSCRIBE  /state/imu (sensor_msgs/Imu) + /state/thruster_state_all (ThrusterStateAll)
-  * rebuild the policy's 25-D observation for task=attitude_velocity / obs_mode=imu, EXACTLY as
-    ``UmiusiPoseEnv._get_obs`` does — layout [ori_err(3), gyro(3), v_cmd(3), servo_n(4), thrust_n(4),
-    prev_action(8)] — using a vendored ``mju_subQuat`` (verified bit-identical to MuJoCo), apply the
-    training-time VecNormalize, and ``policy.predict``.
+  * SUBSCRIBE  /state/imu (sensor_msgs/Imu)
+  * ポリシーの観測を組み立てる — layout [ori_err(3), gyro(3), v_cmd(3), prev_action(8)] の
+    17 次元 (attitude_velocity) / v_cmd を除いた 14 次元 (attitude)。
+    **サーボ角・推力は観測に入れない** (実機の /state/thruster_state_all は指令のエコーで、
+    正帰還に入る — known_issues A-11)。prev_action は自分が出した action をそのまま使う
+    (sim 側 ``proprio_mode: action`` と同じ)。
   * PUBLISH the four direct-override /cmd/direct/thruster_controller/output_{lf,lb,rb,rf}
     (ThrusterOutput, runnable=true), action [servo x4, esc x4] -> {angle, duty_cycle}.
 
-Command: holds UPRIGHT (target = identity) + cruises forward (body +X at ``vel_cmd`` m/s, **既定 0**),
-and can be overridden in REAL TIME by publishing an ``umiusi_rl_control_msgs/AttitudeTarget`` on
-``~/current_setpoint`` に**いま適用されている目標値**を latch で出す (診断用):
-``ros2 topic echo --once /rl_attitude_node/current_setpoint``。
+FRAME 契約: ポリシーは **REP-103 body-frame (x前/y左/z上) の観測を消費する**
+(``export/meta.json`` の ``obs_frame: rep103`` を起動時に検証する)。IMU の quat/gyro は
+**軸変換せずそのまま**観測に入れる。前提は「IMU が REP-103 で publish していること」 —
+実験前のドライ確認 (issue #15 A-4) でずれていたら **IMU ドライバ側** (AXIS_MAP) を直す。
 
-``setpoint_topic`` (target attitude quaternion + feed-forward velocity in the target-body frame;
-``type_mask`` selects which fields apply). Last message wins; a teleop / joystick controller just
-publishes it.
+配備前検証: バンドルに ``golden.npz`` (sim で記録した観測→行動ペア) があれば、読み込み時に
+全ベクトルを再生して一致確認する (issue #15 A-5)。**不一致ならポリシーを動かさない** —
+コピー・正規化統計・観測レイアウト・frame のどれかが壊れている。
+
+Command: holds UPRIGHT (target = identity)。前進は **既定 0** (新ポリシーは停止保持も学習
+分布内)。目標は ``umiusi_rl_control_msgs/AttitudeTarget`` を ``setpoint_topic`` に publish
+して REAL TIME に上書きできる (type_mask で姿勢/速度を選択、last wins)。
+いま適用されている目標値は ``~/current_setpoint`` に latch で出す (診断用):
+``ros2 topic echo --once /rl_attitude_node/current_setpoint``。
 
 SAFETY: ``~/estop`` (std_msgs/Bool, true) or ``~/arm`` (std_srvs/SetBool, data:false) DISARMs
 immediately — the loop stops predicting and asserts a DETACH every tick (ThrusterOutput runnable
 esc/servo = false, zero output), so the control stack releases the thrusters. Re-arm with the
 ``~/arm`` service (data:true)。**既定は disarmed で起動する** (``start_armed:=true`` で
-起動と同時に武装)。あわせて ``vel_cmd`` の既定も 0 なので、**武装しても勝手には前進しない**。
-
-UNIT CAVEATS (inherited from ros_policy; confirm on the live bridge — the spec's open
-"FF-frame reconcile" item):
-  * IMU ``angular_velocity`` is used as-is as rad/s (sensor_msgs/Imu is rad/s by the ROS standard, so
-    ``gyro_deg_per_sec`` stays False; set it true only if a bridge wrongly sends deg/s).
-  * servo output ``ThrusterOutput.angle`` is published in DEGREES (= action * servo_range_deg), as
-    ros_policy does; msg documents rad. Confirm what the plugin/hardware expects.
+起動と同時に武装)。
 """
 
 from __future__ import annotations
@@ -47,7 +46,7 @@ from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import Imu
-from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable, ThrusterStateAll
+from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable
 
 from umiusi_rl_control.arm import ArmState
 from umiusi_rl_control.imu_sanity import ImuSanity
@@ -57,12 +56,16 @@ from umiusi_rl_control_msgs.msg import AttitudeTarget
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
 # 観測の次元は **ポリシーのタスクによって変わる**:
-#   attitude_velocity (巡航) = 25 … [ori_err 3, gyro 3, v_cmd 3, servo 4, thrust 4, prev_action 8]
-#   attitude          (姿勢のみ) = 22 … 上から v_cmd を除いたもの
+#   attitude_velocity (巡航) = 17 … [ori_err 3, gyro 3, v_cmd 3, prev_action 8]
+#   attitude          (姿勢のみ) = 14 … 上から v_cmd を除いたもの
 # 読み込んだポリシーの入力次元から判断して、観測の組み立てを合わせる。
-OBS_DIM = 25
-OBS_DIM_NO_VEL = 22
+OBS_DIM = 17
+OBS_DIM_NO_VEL = 14
 ACT_DIM = 8
+DEFAULT_MODEL = "av_cal1_best_rep103"     # 本命 (issue #15 B 表)。同梱 models/ から選ぶ
+# REP-103 (x前/y左/z上) では yaw は z 軸まわり。姿勢誤差 rot-vec の z 成分を落とすと
+# yaw 保持だけ切れる (hold_yaw=false)
+YAW_IDX = 2
 
 
 # 現在の目標値は latch する。**後から `ros2 topic echo` しても最新値が読める**ように
@@ -109,14 +112,13 @@ def mju_sub_quat(qa, qb):
 class RlAttitudeNode(Node):
     def __init__(self):
         super().__init__("rl_attitude_node")
-        self.declare_parameter("model_path", "")   # "" -> bundled models/cruise_policy/final.zip
+        # "" -> 同梱の models/av_cal1_best_rep103。ディレクトリ (export/ を含む) を指す
+        self.declare_parameter("model_path", "")
         self.declare_parameter("imu_topic", "/state/imu")
-        self.declare_parameter("thruster_state_topic", "/state/thruster_state_all")
         self.declare_parameter("control_hz", 50.0)
-        # **既定は 0.4** — 学習時の巡航速度。`vel_cmd` は観測ベクトルにそのまま入るので、
-        # 0 にすると **学習分布の外**の入力になり、出力が飽和してサーボが ±90° に張り付く
-        # (実機で踏んだ)。安全性は start_armed=false 側で担保する。
-        self.declare_parameter("vel_cmd", 0.4)             # forward (+X) commanded speed [m/s]
+        # 前進速度の既定は 0。新ポリシーは停止保持 (v_cmd=0) も学習分布内なので、
+        # 旧 A-9 (0 が分布外で飽和する) は当てはまらない。武装しても勝手に前進しない。
+        self.declare_parameter("vel_cmd", 0.0)             # forward (+X) commanded speed [m/s]
         self.declare_parameter("servo_range_deg", 90.0)
         self.declare_parameter("imu_max_gyro", 10.0)       # IMU サニティ: 角速度上限 [rad/s]
         self.declare_parameter("imu_max_step_deg", 30.0)   # IMU サニティ: 姿勢跳躍上限 [deg]
@@ -124,21 +126,19 @@ class RlAttitudeNode(Node):
         # 誤爆 (姿勢基準が飛ぶと復帰できない) のほうが被害が大きかった。閾値を決めるための
         # データが貯まるまでは観測に徹する。true にすると従来どおり破棄する。
         self.declare_parameter("imu_sanity_enforce", False)
-        self.declare_parameter("gyro_deg_per_sec", False)  # convert IMU gyro deg/s -> rad/s (see caveats)
         self.declare_parameter("publish", True)            # False = predict only, do not command
         # 姿勢保持のうち **yaw だけを切れる**。実験中に機体を手で回すと、yaw の目標が
         # 起動時のままなので戻そうとして回り続ける (実機で踏んだ)。水中では磁気の影響や
         # ドリフトもあるので、roll/pitch だけ保ちたい場面が多い。
         # 実行中に `ros2 param set /rl_attitude_node hold_yaw false` で切り替えられる。
         self.declare_parameter("hold_yaw", True)
-        self.declare_parameter("yaw_axis", "y")            # 姿勢誤差のどの成分が yaw か (x/y/z)
-        # duty_cycle の絶対値上限。1.0 = 制限なし。**既定は 0.4 に絞ってある** —
-        # 空中では水の減衰が無く発振しやすく、HFI で発熱もするため。詰めるときに上げる。
-        self.declare_parameter("max_duty", 0.4)
+        # duty_cycle の絶対値上限。1.0 = 制限なし。**既定は 0.2** — sim の事前評価で
+        # 姿勢・巡航とも最良だった値 (issue #15 A-3)。問題なければ 0.4 へ上げる。
+        self.declare_parameter("max_duty", 0.2)
         # **指令のレート制限。sim と同じ値を既定にする** (configs/umiusi.yaml の
         # servo_slew_deg_per_s / thrust_slew_per_s)。sim はポリシーの指令をこれで
         # 平滑化してから物理に入れており、実機側に無いと sim2real ギャップになる。
-        # 0 以下で無効。
+        # 新ポリシーは servo slew 100–500 deg/s の DR で学習済み。0 以下で無効。
         self.declare_parameter("servo_slew_deg_per_s", 250.0)
         self.declare_parameter("thrust_slew_per_s", 4.0)
         # **既定は disarmed**。起動と同時にスラスタへ指令が出るのを避ける。
@@ -151,8 +151,6 @@ class RlAttitudeNode(Node):
         self._dt = 1.0 / self._hz
         self._vel = float(self.get_parameter("vel_cmd").value)
         self._servo_range_deg = float(self.get_parameter("servo_range_deg").value)
-        self._servo_range_rad = math.radians(self._servo_range_deg)
-        self._gyro_to_rad = bool(self.get_parameter("gyro_deg_per_sec").value)
         self._publish = bool(self.get_parameter("publish").value)
         self._hold_yaw = bool(self.get_parameter("hold_yaw").value)
         self._max_duty = abs(float(self.get_parameter("max_duty").value))
@@ -161,28 +159,21 @@ class RlAttitudeNode(Node):
         # レート制限を掛けた「いま出している指令」。sim の servo_ctrl / esc_current に相当
         self._servo_cmd = np.zeros(len(POSITIONS))
         self._duty_cmd = np.zeros(len(POSITIONS))
-        axis = str(self.get_parameter("yaw_axis").value).lower()
-        if axis not in ("x", "y", "z"):
-            raise ValueError(f"yaw_axis は x/y/z のいずれか (指定: {axis!r})")
-        self._yaw_idx = {"x": 0, "y": 1, "z": 2}[axis]
 
         self._target_quat = np.array([1.0, 0.0, 0.0, 0.0])   # identity = hold upright/level
         self._v_cmd = np.array([self._vel, 0.0, 0.0])         # cruise along body +X
         self._prev_action = np.zeros(ACT_DIM)
         self._model = None
-        self._norm_obs = None
+        self._model_error = None       # 構造的な読み込み失敗 (リトライしても直らない)
         self._obs_dim = OBS_DIM        # ポリシー読み込み時に実際の次元で上書きする
         self._imu = None
         self._imu_sanity = ImuSanity(
             max_gyro=float(self.get_parameter("imu_max_gyro").value),
             max_step_deg=float(self.get_parameter("imu_max_step_deg").value),
             enforce=bool(self.get_parameter("imu_sanity_enforce").value))
-        self._thr = None
 
         self._sub_imu = self.create_subscription(
             Imu, self.get_parameter("imu_topic").value, self._on_imu, 1)
-        self._sub_thr = self.create_subscription(
-            ThrusterStateAll, self.get_parameter("thruster_state_topic").value, self._on_thr, 1)
         # Real-time setpoint (optional): last message wins; absence keeps the defaults above.
         sp_topic = self.get_parameter("setpoint_topic").value
         self._sub_sp = self.create_subscription(AttitudeTarget, sp_topic, self._on_setpoint, 1)
@@ -203,7 +194,7 @@ class RlAttitudeNode(Node):
             "loading policy on first state...")
 
     def _on_set_params(self, params):
-        """`ros2 param set` を実行中に効かせる (hold_yaw / max_duty / vel_cmd)。"""
+        """`ros2 param set` を実行中に効かせる (hold_yaw / max_duty / vel_cmd / slew)。"""
         for p in params:
             if p.name == "hold_yaw":
                 self._hold_yaw = bool(p.value)
@@ -244,16 +235,13 @@ class RlAttitudeNode(Node):
                 f"(通算 {self._imu_sanity.resyncs} 回)。目標姿勢を与え直してください")
         self._imu = sample
 
-    def _on_thr(self, msg):
-        self._thr = msg
-
     def _on_setpoint(self, msg):
         # umiusi_rl_control_msgs/AttitudeTarget. type_mask selects which fields to apply (mavros-style):
         # a masked-out field keeps its previous value; default mask 0 = update both.
         if not (msg.type_mask & AttitudeTarget.IGNORE_ATTITUDE):
             q = np.array([msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z],
                          dtype=float)
-            n = np.linalg.norm(q)          # ROS xyzw -> MuJoCo wxyz, normalised; ignore a zero quat
+            n = np.linalg.norm(q)          # normalised; ignore a zero quat
             if n > 1e-9:
                 self._target_quat = q / n
         if not (msg.type_mask & AttitudeTarget.IGNORE_VELOCITY):
@@ -280,146 +268,104 @@ class RlAttitudeNode(Node):
         msg.type_mask = 0        # 現在値なので「両方が有効」
         self._pub_current_sp.publish(msg)
 
-    def _try_export_model(self) -> bool:
-        """素 torch で export ディレクトリを読む。
-
-        `model_path` を指定したときは `<model_path の親>/export/` **だけ**、
-        未指定のときは `models/cruise_policy/export/` だけを見る (C-1)。
-        見つからなければ False を返し、呼び出し元が従来の SB3 経路にフォールバックする。
-        """
-        try:
-            from umiusi_rl_control.policy_infer import PolicyRunner
-        except Exception as e:  # noqa: BLE001  (torch 未導入など)
-            self.get_logger().error(
-                f"素 torch 推論を読み込めません ({type(e).__name__}: {e}); "
-                "torch を入れるか SB3 経路を使ってください", throttle_duration_sec=10.0)
-            return False
-
+    def _model_dir(self) -> Path:
         mp = str(self.get_parameter("model_path").value).strip()
         if mp:
-            # model_path を明示したときは **その隣の export/ だけ** を見る。
-            # ここで package share のバンドル済みポリシーに落ちると、新しいポリシーを
-            # 試しているつもりで巡航ポリシーが動く事故になる。
-            # ディレクトリを指してもよい (export/ しか同梱していないポリシーがあるため)
-            _p = Path(mp)
-            cands = [(_p if _p.is_dir() else _p.parent) / "export"]
-        else:
-            cands = [Path(get_package_share_directory("umiusi_rl_control"))
-                     / "models" / "cruise_policy" / "export"]
-        for d in cands:
-            if not (d / "weights.pt").exists():
-                continue
-            try:
-                runner = PolicyRunner(d)
-            except Exception as e:  # noqa: BLE001
-                self.get_logger().warning(f"export の読み込みに失敗 ({d}): {type(e).__name__}: {e}")
-                continue
-
-            class _M:  # model.predict(obs, deterministic=) 互換の薄いラッパ
-                def predict(self, obs, deterministic=True):
-                    return runner.act(obs, already_normalized=True), None
-
-            self._model = _M()
-            self._norm_obs = runner.normalize
-            if not self._set_obs_dim(runner.obs_dim, d):
-                return False
-            self.get_logger().info(f"policy loaded from {d} (SB3 非依存の素 torch 推論)")
-            return True
-        return False
+            p = Path(mp)
+            return p if p.is_dir() else p.parent     # final.zip を指されてもディレクトリに直す
+        return (Path(get_package_share_directory("umiusi_rl_control"))
+                / "models" / DEFAULT_MODEL)
 
     def _ensure_model(self) -> bool:
+        """バンドルの export/ を素 torch で読み、frame 契約と golden を検証してから使う。
+
+        構造的な失敗 (export が無い / frame 不一致 / golden 不一致 / 未対応次元) は
+        リトライしても直らないので、一度だけエラーを出して以後は動かさない。
+        """
         if self._model is not None:
             return True
-        # 実機優先: SB3 非依存の書き出し (export/) があればそちらを使う。
-        # SB3 の policy zip は numpy 2.x で保存されており、ROS Jazzy 標準の numpy 1.26 では
-        # `ModuleNotFoundError: numpy._core.numeric` で読めない (custom_objects でもシムでも不可)。
-        # export/ 版は torch だけで動き、SB3 と出力が完全一致することを検証済み。
-        if self._try_export_model():
-            return True
+        if self._model_error is not None:
+            self.get_logger().error(self._model_error, throttle_duration_sec=30.0)
+            return False
         try:
-            from stable_baselines3 import PPO
-            from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+            self._load_model(self._model_dir())
+            return True
         except Exception as e:  # noqa: BLE001
-            self.get_logger().error(
-                f"cannot import stable-baselines3 ({type(e).__name__}: {e}); "
-                "install it (+ torch, gymnasium) in the ROS runtime environment.",
-                throttle_duration_sec=10.0)
+            self._model_error = f"ポリシーを読み込めません: {e}"
+            self.get_logger().error(self._model_error)
             return False
-        mp = str(self.get_parameter("model_path").value).strip()
-        if not mp:
-            mp = str(Path(get_package_share_directory("umiusi_rl_control"))
-                     / "models" / "cruise_policy" / "final.zip")
-        model_path = Path(mp)
-        if not model_path.exists():
-            self.get_logger().error(f"model not found: {model_path}", throttle_duration_sec=10.0)
-            return False
-        self._model = PPO.load(str(model_path), device="cpu")
-        if not self._set_obs_dim(int(self._model.observation_space.shape[0]), model_path):
-            return False
-        stats = model_path.parent / "vecnormalize.pkl"
-        if stats.exists():
-            dummy = DummyVecEnv([lambda: _make_stub_env(self._obs_dim)])
-            vn = VecNormalize.load(str(stats), dummy)
-            dummy.close()
-            rms, clip, eps = vn.obs_rms, vn.clip_obs, vn.epsilon
 
-            def _norm(o):
-                return np.clip((o - rms.mean) / np.sqrt(rms.var + eps), -clip, clip).astype(np.float32)
-            self._norm_obs = _norm
+    def _load_model(self, d: Path):
+        from umiusi_rl_control.policy_infer import PolicyRunner   # torch は遅延 import
+
+        export = d / "export"
+        if not (export / "weights.pt").exists():
+            raise FileNotFoundError(
+                f"{export}/weights.pt がありません。バンドルは export/ (weights.pt + obs_norm.npz "
+                "+ meta.json) を含むディレクトリを指定してください "
+                "(SB3 の final.zip 単体は実機の numpy では読めません)")
+        runner = PolicyRunner(export)
+
+        # frame 契約 (issue #15 A-2): rep103 の観測を消費するポリシーだけを許す
+        frame = runner.meta.get("obs_frame", "unknown")
+        if frame != "rep103":
+            raise ValueError(
+                f"obs_frame={frame!r} のポリシーです ({export}/meta.json)。このノードは IMU を "
+                "無変換 (REP-103) で観測に入れるので、rep103 変換済みバンドルだけを使えます")
+        if runner.obs_dim not in (OBS_DIM, OBS_DIM_NO_VEL):
+            raise ValueError(
+                f"対応していない観測次元 {runner.obs_dim} です ({export})。"
+                f"{OBS_DIM} (attitude_velocity) か {OBS_DIM_NO_VEL} (attitude) のみ対応します "
+                "(servo/thrust を観測に含む旧 25/22 次元ポリシーは廃止 — A-11 のエコー問題)")
+
+        # 配備前検証 (issue #15 A-5): sim で記録した golden vectors を実機の推論経路で再生
+        golden = d / "golden.npz"
+        if golden.exists():
+            g = np.load(golden)
+            worst = max(float(np.abs(runner.act(o) - a).max())
+                        for o, a in zip(g["obs"], g["act"]))
+            if worst > 1e-4:
+                raise ValueError(
+                    f"golden 検証 FAIL: max|action-golden|={worst:.2e} ({golden})。"
+                    "重み・正規化統計・観測レイアウトのどれかが sim と食い違っています")
+            self.get_logger().info(
+                f"golden 検証 PASS: {len(g['obs'])} vectors, max err {worst:.1e}")
         else:
-            self.get_logger().warning("no vecnormalize.pkl next to the model; using raw obs.")
-            self._norm_obs = lambda o: o.astype(np.float32)
-        self.get_logger().info(f"policy loaded from {model_path}")
-        return True
+            self.get_logger().warning(f"{golden} が無いので配備前検証をスキップします")
 
-    def _set_obs_dim(self, obs_dim: int, src) -> bool:
-        """ポリシーの入力次元から、観測に v_cmd を含めるかを決める。"""
-        if obs_dim not in (OBS_DIM, OBS_DIM_NO_VEL):
-            self.get_logger().error(
-                f"対応していない観測次元 {obs_dim} です ({src})。"
-                f"{OBS_DIM} (attitude_velocity) か {OBS_DIM_NO_VEL} (attitude) のみ対応します")
-            self._model = None
-            return False
-        self._obs_dim = obs_dim
-        if obs_dim == OBS_DIM_NO_VEL:
+        self._model = runner
+        self._obs_dim = runner.obs_dim
+        if self._obs_dim == OBS_DIM_NO_VEL:
             self.get_logger().info(
                 "attitude タスクのポリシーです (観測に速度指令を含まない)。"
                 "vel_cmd / AttitudeTarget.velocity は無視されます")
-        return True
+        self.get_logger().info(f"policy loaded from {export} (obs {self._obs_dim}-D, rep103)")
 
     def _build_obs(self):
-        imu, thr = self._imu, self._thr
+        imu = self._imu
         cur_quat = np.array(imu.quat, dtype=float)      # ImuSanity が (w,x,y,z) 正規化済みで返す
-        gyro = np.array(imu.gyro, dtype=float)
-        if self._gyro_to_rad:
-            gyro = np.radians(gyro)
-        states = [getattr(thr, p) for p in POSITIONS]
-        servo_deg = np.array([s.angle for s in states], dtype=float)
-        esc_applied = np.array([s.rpm for s in states], dtype=float) / 1000.0
+        gyro = np.array(imu.gyro, dtype=float)          # rad/s, REP-103 のまま (A-2)
 
         ori_err = mju_sub_quat(self._target_quat, cur_quat)      # current -> target rot-vec
         if not self._hold_yaw:
             # yaw 成分を落とす = その軸まわりの姿勢誤差を 0 として扱う。回転ベクトルの
             # 成分を落とすだけなので特異点が無い (RPY に直すと pitch±90 で破綻する)
-            ori_err[self._yaw_idx] = 0.0
-        servo_n = np.radians(servo_deg) / self._servo_range_rad
-        thrust_n = esc_applied
+            ori_err[YAW_IDX] = 0.0
         parts = [ori_err, gyro]
         if self._obs_dim == OBS_DIM:          # attitude_velocity のみ速度指令を観測に持つ
             parts.append(self._v_cmd)
-        parts += [servo_n, thrust_n, self._prev_action]
+        parts.append(self._prev_action)
         return np.concatenate(parts)
 
     def _tick(self):
         if not self._arm.armed:            # e-stopped / disarmed: keep asserting the detach
             self._detach_all()
             return
-        if self._imu is None or self._thr is None:
+        if self._imu is None:
             return
         if not self._ensure_model():
             return
-        obs = self._build_obs()
-        action, _ = self._model.predict(self._norm_obs(obs), deterministic=True)
+        action = self._model.act(self._build_obs())
         action = np.clip(np.asarray(action, dtype=float).reshape(ACT_DIM), -1.0, 1.0)
         if self._publish:
             self._command(action)
@@ -436,7 +382,7 @@ class RlAttitudeNode(Node):
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=True, servo=True)
             out.duty_cycle = float(self._duty_cmd[k])
-            out.angle = float(self._servo_cmd[k])                  # degrees, matching ros_policy
+            out.angle = float(self._servo_cmd[k])                  # degrees, matching the plugin
             self._pubs[p].publish(out)
 
     def _detach_all(self):
@@ -456,26 +402,6 @@ class RlAttitudeNode(Node):
 
     def stop(self):
         self._detach_all()
-
-
-def _make_stub_env(obs_dim=OBS_DIM):
-    """Minimal gymnasium.Env with the policy's obs/action spaces — only so VecNormalize.load has a
-    venv to bind to (we read its running stats, never step it)."""
-    import gymnasium as gym
-    from gymnasium import spaces
-
-    class _Stub(gym.Env):
-        def __init__(self):
-            self.observation_space = spaces.Box(-np.inf, np.inf, (obs_dim,), dtype=np.float32)
-            self.action_space = spaces.Box(-1.0, 1.0, (ACT_DIM,), dtype=np.float32)
-
-        def reset(self, *, seed=None, options=None):
-            return np.zeros(OBS_DIM, dtype=np.float32), {}
-
-        def step(self, action):
-            return np.zeros(OBS_DIM, dtype=np.float32), 0.0, False, False, {}
-
-    return _Stub()
 
 
 def main(args=None):

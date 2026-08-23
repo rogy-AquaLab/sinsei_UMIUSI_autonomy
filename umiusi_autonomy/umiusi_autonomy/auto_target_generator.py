@@ -40,7 +40,7 @@ class AutoTargetGenerator(LifecycleNode):
         self.declare_parameter("frame_h", 240)
         self.declare_parameter("frame_w", 320)
         self.declare_parameter("fovy_deg", 60.0)
-        self.declare_parameter("yaw_rate_axis", "y")      # IMU axis carrying the vehicle yaw rate
+        self.declare_parameter("yaw_rate_axis", "z")      # IMU axis carrying the vehicle yaw rate (REP-103: z)
         self.declare_parameter("yaw_rate_sign", 1.0)
         # IMU のサニティフィルタ (実機の化けサンプル対策)。0 以下で無効化できる。
         self.declare_parameter("imu_max_gyro", 10.0)        # [rad/s] 検出の閾値

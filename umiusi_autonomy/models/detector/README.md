@@ -1,7 +1,7 @@
 # 同梱の検出器チェックポイント
 
 風船検出器 (TinyBalloonNet) の学習済み重み。`perception_node` が読む。
-RL 姿勢制御のポリシー (`umiusi_rl_control/models/cruise_policy/`) とは**別物**なので注意。
+RL 姿勢制御のポリシー (`umiusi_rl_control/models/`) とは**別物**なので注意。
 
 学習は `Umiusi_sim` 側 (`tools/perception_train.py`)。ここに置いてあるのは、
 **clone しただけで動かせるようにするための既定値**。

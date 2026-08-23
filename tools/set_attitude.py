@@ -13,8 +13,8 @@
 起動直後などは 1 発だと届かないことがある。**実験では --hold を推奨**。
 
 `--vel` を指定しないときは速度指令に触らない (IGNORE_VELOCITY)。姿勢だけ変えたつもりで
-launch の `vel_cmd` (既定 0.4 m/s) が 0 に落ちるのを避けるため。止めたいときは `--level`
-か `--vel 0`。
+launch の `vel_cmd` (既定 0 = 姿勢保持) を黙って書き換えるのを避けるため。止めたいときは
+`--level` か `--vel 0`。
 """
 from __future__ import annotations
 

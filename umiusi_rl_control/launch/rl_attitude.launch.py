@@ -4,23 +4,23 @@
     ros2 launch umiusi_rl_control rl_attitude.launch.py vel_cmd:=0.4       # 巡航 (前進 0.4 m/s)
     ros2 launch umiusi_rl_control rl_attitude.launch.py start_armed:=true  # 起動と同時に武装
     ros2 launch umiusi_rl_control rl_attitude.launch.py hold_yaw:=false    # roll/pitch だけ保つ
-    ros2 launch umiusi_rl_control rl_attitude.launch.py max_duty:=0.2      # 出力を絞って試す
+    ros2 launch umiusi_rl_control rl_attitude.launch.py max_duty:=0.4      # 出力上限を上げる
 
-    # 姿勢保持だけ (前進しない。観測 22 次元のポリシー)
+    # 姿勢保持専用ポリシー (14 次元、フォールバック) で
     ros2 launch umiusi_rl_control rl_attitude.launch.py \
-        model_path:=$(ros2 pkg prefix umiusi_rl_control)/share/umiusi_rl_control/models/attitude_policy
+        model_path:=$(ros2 pkg prefix umiusi_rl_control)/share/umiusi_rl_control/models/att_cal1_best_rep103
     ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=false     # predict only (no thrusters)
-    ros2 launch umiusi_rl_control rl_attitude.launch.py model_path:=/abs/final.zip
 
-Runs just ``rl_attitude_node`` (no perception / FSM / core). It holds upright using the bundled
-``models/cruise_policy`` policy.
+Runs just ``rl_attitude_node`` (no perception / FSM / core). 既定は同梱の
+``models/av_cal1_best_rep103`` (本命、姿勢+速度指令 17 次元)。読み込み時に frame 契約
+(rep103) と golden.npz を検証し、不一致なら動かさない。
 
 **既定は disarmed + vel_cmd 0** なので、起動しただけではスラスタに何も出ない。
 ``~/arm`` (std_srvs/SetBool, data:true) で武装し、必要なら ``vel_cmd`` で前進させる。
 
-Needs stable-baselines3 + torch + gymnasium in the ROS runtime env, and the controllers/bridge
-(sinsei_umiusi_control or umiusi_sim_bridge) providing ``/state/imu`` +
-``/state/thruster_state_all`` and consuming ``/cmd/direct/...``.
+Needs torch + numpy in the ROS runtime env (SB3 は不要), and the controllers/bridge
+(sinsei_umiusi_control or umiusi_sim_bridge) providing ``/state/imu`` and consuming
+``/cmd/direct/...``.
 """
 
 from launch import LaunchDescription
@@ -39,19 +39,19 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
-                              description="policy .zip (empty = bundled models/cruise_policy/final.zip)"),
-        DeclareLaunchArgument("vel_cmd", default_value="0.4",
-                              description="forward (+X) commanded speed [m/s]。**学習時の巡航速度**。"
-                                          "0 にすると観測が学習分布の外に出て出力が飽和する"),
+                              description="policy bundle dir (empty = bundled models/av_cal1_best_rep103)"),
+        DeclareLaunchArgument("vel_cmd", default_value="0.0",
+                              description="forward (+X) commanded speed [m/s]。新ポリシーは停止保持 (0) も"
+                                          "学習分布内。巡航試験では 0.4 に上げる"),
         DeclareLaunchArgument("publish", default_value="true",
                               description="command the thrusters (false = predict only)"),
         DeclareLaunchArgument("hold_yaw", default_value="true",
                               description="yaw も保持する。false で roll/pitch だけ保つ "
                                           "(手で回したときに戻そうとして回り続けるのを避ける)。"
                                           "実行中も `ros2 param set` で切り替えられる"),
-        DeclareLaunchArgument("max_duty", default_value="0.4",
-                              description="duty_cycle の絶対値上限 (1.0 = 制限なし)。"
-                                          "空中では発振しやすく発熱もするので既定は絞ってある"),
+        DeclareLaunchArgument("max_duty", default_value="0.2",
+                              description="duty_cycle の絶対値上限 (1.0 = 制限なし)。**0.2 で開始 → "
+                                          "問題なければ 0.4** (issue #15 A-3 のプロトコル)"),
         DeclareLaunchArgument("start_armed", default_value="false",
                               description="起動と同時に武装する。**既定 false** — 起動しただけで "
                                           "スラスタへ指令が出るのを避けるため。`~/arm` で武装する"),
@@ -60,7 +60,7 @@ def generate_launch_description():
             executable="rl_attitude_node",
             name="rl_attitude_node",
             output="screen",
-            # model_path="" -> the node falls back to the bundled models/cruise_policy/final.zip
+            # model_path="" -> the node falls back to the bundled models/av_cal1_best_rep103
             parameters=[{"model_path": model_path, "vel_cmd": vel_cmd, "publish": publish,
                          "start_armed": start_armed, "hold_yaw": hold_yaw,
                          "max_duty": max_duty}],
