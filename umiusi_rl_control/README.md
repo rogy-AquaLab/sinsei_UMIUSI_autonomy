@@ -43,6 +43,8 @@ pip install torch numpy
 ros2 launch umiusi_rl_control rl_attitude.launch.py
 ros2 launch umiusi_rl_control rl_attitude.launch.py vel_cmd:=0.4    # cruise +X
 ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=false  # predict only (no thrusters)
+ros2 launch umiusi_rl_control rl_attitude.launch.py vel_timeout:=5.0 # デッドマン: 速度指令が
+                                    # 5 s 更新されなければ自動で 0 に戻す (狭いプールの巡航試験で推奨)
 ```
 Requires the controllers/bridge (`sinsei_umiusi_control` or `umiusi_sim_bridge`) providing
 `/state/imu` and consuming `/cmd/direct/...`.

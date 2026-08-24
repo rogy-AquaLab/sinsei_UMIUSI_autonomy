@@ -52,7 +52,7 @@ from pathlib import Path
 import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from rcl_interfaces.msg import SetParametersResult
+from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import FluidPressure, Imu
@@ -168,16 +168,19 @@ class RlAttitudeNode(Node):
         self.declare_parameter("vel_timeout", 0.0)
         # --- 深度モード切替 (水圧センサ搭載時のみ。冒頭 docstring と depth_supervisor.py 参照) ---
         self.declare_parameter("depth_supervisor", False)  # true で有効化。**max_duty 0.4 が前提**
-        self.declare_parameter("depth_topic", "/state/pressure")   # sensor_msgs/FluidPressure [Pa]
+        # 起動時専用パラメータは read_only にする (レビュー指摘: 実行中の `ros2 param set` が
+        # 黙って無効になるより、はっきり失敗した方がよい)。target_depth だけは実行中変更可
+        ro = ParameterDescriptor(read_only=True)
+        self.declare_parameter("depth_topic", "/state/pressure", ro)  # sensor_msgs/FluidPressure [Pa]
         self.declare_parameter("target_depth", 0.0)        # 目標深度 [m, 正=深い]。実行中 param set 可
-        self.declare_parameter("water_density", 1000.0)    # 淡水 1000 / 海水 ~1025 [kg/m^3]
-        self.declare_parameter("vert_model_path", "")      # "" -> 同梱 av_cal5_3d_rep103
+        self.declare_parameter("water_density", 1000.0, ro)  # 淡水 1000 / 海水 ~1025 [kg/m^3]
+        self.declare_parameter("vert_model_path", "", ro)  # "" -> 同梱 av_cal5_3d_rep103
         # sim 検証済みの閾値/ゲイン (depth_supervisor.py の既定値)。プールでの追い込み用に
-        # 主要 4 つだけ起動時パラメータにする (実行中の変更は不可 — 状態機械が持つため)
-        self.declare_parameter("depth_d_enter", 0.25)      # 補正に入る誤差 [m]
-        self.declare_parameter("depth_d_exit", 0.15)       # 浮上をやめる誤差 [m]
-        self.declare_parameter("depth_k", 0.7)             # 降下指令ゲイン [1/s]
-        self.declare_parameter("depth_v_vert", 0.2)        # 降下指令上限 [m/s]
+        # 主要 4 つだけ起動時パラメータにする
+        self.declare_parameter("depth_d_enter", 0.25, ro)  # 補正に入る誤差 [m]
+        self.declare_parameter("depth_d_exit", 0.15, ro)   # 浮上をやめる誤差 [m]
+        self.declare_parameter("depth_k", 0.7, ro)         # 降下指令ゲイン [1/s]
+        self.declare_parameter("depth_v_vert", 0.2, ro)    # 降下指令上限 [m/s]
 
         self._hz = float(self.get_parameter("control_hz").value)
         self._dt = 1.0 / self._hz
@@ -249,10 +252,13 @@ class RlAttitudeNode(Node):
         self._timer = self.create_timer(self._dt, self._tick)
         self.add_on_set_parameters_callback(self._on_set_params)
         self._publish_current_setpoint()
+        # ポリシーはここで読む (レビュー指摘): torch の import に ~1.5 s (SBC では数秒)
+        # かかり、tick 内で読むと武装後の最初の周期で e-stop の処理が止まる窓ができる。
+        # spin 前ならまだ何も指令していないので安全
+        self._ensure_model()
         self.get_logger().info(
             f"rl_attitude_node: default target=upright v_cmd=[{self._vel:.3f},0,0] m/s @ {self._hz:.0f} Hz "
-            f"(publish={self._publish}); live setpoint (AttitudeTarget) on '{sp_topic}'; "
-            "loading policy on first state...")
+            f"(publish={self._publish}); live setpoint (AttitudeTarget) on '{sp_topic}'")
 
     def _on_set_params(self, params):
         """`ros2 param set` を実行中に効かせる (hold_yaw / max_duty / vel_cmd / slew)。"""
@@ -482,10 +488,18 @@ class RlAttitudeNode(Node):
             return model, v_cmd
         now = self.get_clock().now().nanoseconds * 1e-9
         if self._depth is None or self._depth_stamp is None or now - self._depth_stamp > 1.0:
-            # 深度が来ていない/古い: 補正はしない。鉛直成分だけ落として水平運転を続ける
+            # 深度が来ていない/古い: 補正はしない。鉛直成分だけ落として水平運転を続ける。
+            # 状態機械もリセットする (レビュー指摘) — 補正の途中で止まった場合、古い
+            # brake/vert タイマーを残すと復帰時に watchdog が誤発火するし、~/depth_mode が
+            # 実挙動 (水平フォールバック) と食い違ったまま表示され続ける
+            if self._sup.state != HORIZ:
+                self._sup.state = HORIZ
             if self._depth_stamp is not None and now - self._depth_stamp > 1.0:
                 self.get_logger().warning("深度が 1 s 以上更新されていません — 深度補正を停止中",
                                           throttle_duration_sec=5.0)
+            if self._last_pub_state != "stale":
+                self._pub_mode.publish(String(data="stale"))
+                self._last_pub_state = "stale"
             return model, np.array([v_cmd[0], v_cmd[1], 0.0])
         state, override = self._sup.update(now, self._depth)
         if state != self._last_pub_state:
@@ -526,6 +540,16 @@ class RlAttitudeNode(Node):
                 self.get_logger().warning(
                     f"速度指令が {self._vel_timeout:.1f} s 更新されなかったので 0 に戻しました (デッドマン)")
         model, v_cmd = self._supervise()
+        # 鉛直指令インターロック (レビュー指摘): 鉛直速度が学習分布内のポリシー
+        # (export/meta.json の vertical_ok, 3-D vectoring 系) 以外には z 成分を渡さない。
+        # 水平専用ポリシーに鉛直指令が入ると姿勢が崩壊する (sim 実測 75〜122°)。
+        # set_attitude --vel 0 0 -0.2 を間違ったポリシーで打っても機体は水平ホールドを続ける
+        if v_cmd[2] != 0.0 and not model.meta.get("vertical_ok", False):
+            self.get_logger().warning(
+                "鉛直速度指令を 0 にクランプしました — このポリシーは水平専用です "
+                "(vertical_ok なし)。降下バーストは av_cal5_3d_rep103 で",
+                throttle_duration_sec=5.0)
+            v_cmd = np.array([v_cmd[0], v_cmd[1], 0.0])
         action = model.act(self._build_obs(v_cmd, model.obs_dim))
         action = np.clip(np.asarray(action, dtype=float).reshape(ACT_DIM), -1.0, 1.0)
         if self._publish:

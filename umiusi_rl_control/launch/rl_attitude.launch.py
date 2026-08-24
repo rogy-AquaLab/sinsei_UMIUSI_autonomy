@@ -38,6 +38,7 @@ def generate_launch_description():
     max_duty = LaunchConfiguration("max_duty")
     depth_supervisor = LaunchConfiguration("depth_supervisor")
     target_depth = LaunchConfiguration("target_depth")
+    vel_timeout = LaunchConfiguration("vel_timeout")
 
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
@@ -54,6 +55,9 @@ def generate_launch_description():
         DeclareLaunchArgument("max_duty", default_value="0.2",
                               description="duty_cycle の絶対値上限 (1.0 = 制限なし)。**0.2 で開始 → "
                                           "問題なければ 0.4** (issue #15 A-3 のプロトコル)"),
+        DeclareLaunchArgument("vel_timeout", default_value="0.0",
+                              description="デッドマン: 速度指令がこの秒数更新されなければ 0 に戻す "
+                                          "(0 以下で無効)。狭いプールの巡航試験では 5.0 を推奨"),
         DeclareLaunchArgument("depth_supervisor", default_value="false",
                               description="深度モード切替を有効化 (水圧センサ搭載時のみ)。"
                                           "**max_duty 0.4 が前提** — 0.2 では降下できない (sim 実測)。"
@@ -73,6 +77,6 @@ def generate_launch_description():
             parameters=[{"model_path": model_path, "vel_cmd": vel_cmd, "publish": publish,
                          "start_armed": start_armed, "hold_yaw": hold_yaw,
                          "max_duty": max_duty, "depth_supervisor": depth_supervisor,
-                         "target_depth": target_depth}],
+                         "target_depth": target_depth, "vel_timeout": vel_timeout}],
         ),
     ])

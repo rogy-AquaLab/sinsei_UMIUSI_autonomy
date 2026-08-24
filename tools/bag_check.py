@@ -135,6 +135,9 @@ def main():
     else:
         rep.line(len(have_cmd) == 4, "cmd topics", f"{len(have_cmd)}/4 ch 記録あり")
         for t in have_cmd:
+            if len(data[t][0]) < 2:   # 1 msg だと分母 0 でレートが出ない (実質死んでいる ch)
+                rep.line(False, "cmd rate", f"{t.rsplit('_', 1)[-1]}: {len(data[t][0])} msg のみ", warn=True)
+                continue
             r = len(data[t][0]) / max(data[t][0][-1] - data[t][0][0], 1e-9)
             if r < 40.0:
                 rep.line(False, "cmd rate", f"{t.rsplit('_', 1)[-1]}: {r:.1f} Hz", warn=True)
