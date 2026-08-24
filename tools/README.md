@@ -12,7 +12,7 @@
 
 | スクリプト | 用途 |
 |---|---|
-| `umiusi_stack.sh` | **実機スタックの起動/停止/状態確認**。`start` / `stop` / `restart` / `status`。`--no-ui` で rosbridge を止めて CPU を空ける、`--with-rl` で RL 姿勢制御も起動。**単体実験は `--attitude`（姿勢制御だけ・カメラを上げない）/ `--perception`（カメラブリッジ + perception だけ）**、`--no-publish` でスラスタへ出さず計算だけ。カメラ設定は同梱の `cameras_deploy.yaml` を自動で渡す（`UMIUSI_CAMERAS_PARAM` で上書き）|
+| `umiusi_stack.sh` | **実機スタックの起動/停止/状態確認**。`start` / `stop` / `restart` / `status`。`--no-ui` で rosbridge を止めて CPU を空ける、`--with-rl` で RL 姿勢制御も起動。**単体実験は `--attitude`（姿勢制御だけ・カメラを上げない）/ `--perception`（カメラブリッジ + perception だけ）**、`--no-publish` でスラスタへ出さず計算だけ。カメラ設定は同梱の `cameras_deploy.yaml` を自動で渡す（`UMIUSI_CAMERAS_PARAM` で上書き）。`--attitude-policy` で姿勢保持専用 (`att_cal1_best_rep103`) に差し替え、環境変数 `UMIUSI_RL_MODEL` でバンドルを直接指定できる |
 | `experiment_test.sh` | **単体実験モードの実機確認を一気に通す**。事前確認 (cameras 設定と H264 デバイスの一致など) → perception 単体 → 姿勢制御単体 → ロギング を起動から判定までやる。**スラスタは回さない** (RL は publish=false 固定)。`--perception` / `--attitude` / `--logging` で個別実行 |
 | `acceptance_test.sh` | **受け入れ試験**。CAN / VESC 4 台の ping / カメラ / torch / 周期 / IMU 健全性 を一気に確認して OK/NG を出す。`--start` でスタック起動から行う |
 | `bench_rates.py` | 指定トピックの周期と CPU/温度を確実に測る。**publisher 数も報告する**ので「0 Hz なのは publisher が居ないからか、遅いだけか」を取り違えない |
@@ -21,6 +21,7 @@
 
 | スクリプト | 用途 |
 |---|---|
+| `record_run.sh` | **実験の一括記録**。bag 19 トピック + H264 動画を同時に開始し、Ctrl-C で両方きれいに閉じる。`--name` で実験ごとに出力を分ける。`--bag-only` / `--camera-only` で片方だけ、走行後の `--fix` で bag の metadata を復元する。**録るトピックの一覧はこのスクリプトが正** |
 | `record_camera.sh` | **カメラ映像の録画**。実機カメラは ROS トピックを出さず rosbag に残らないため、RTSP から H264 のまま録る (再エンコードなし、CPU 15.5%)。`--raw` は切り捨てに強い生 H264 で、`kill -9` や電源断でも壊れない。詳細は `docs/logging.md` |
 
 ## 実験用
@@ -28,6 +29,7 @@
 | スクリプト | 用途 |
 |---|---|
 | `set_attitude.py` | **rl_attitude の目標姿勢を roll/pitch/yaw [deg] で与える**（Pi でも PC でも動く）。素だと `~/setpoint` にクォータニオンを publish する必要があるので、その代わり。`--hold` で押し続ける（QoS depth=1 なので 1 発だと取りこぼす）、`--level` で水平・停止。`--vel` 未指定なら速度指令は変更しない。`--vel X Y Z` の 3 値で body 速度指令（例 `--vel 0 0 -0.2` = 純下降。3-D ポリシー限定）|
+| `thruster_cmd.py` | **較正実験用のスラスタ直接指令**。`spin` / `step` / `sweep` / `steady` / `excite` で issue #18 の実験 1/3/4/6/8 をカバーする。終了時に自動でゼロ + detach。**`rl_attitude_node` と同時に動かさない**（同じトピックを奪い合う）|
 | `bag_check.py` | **実験直後に bag をその場で検品**。必須トピック/レート、前後静止 5 s、IMU 化け率、**衝突らしき gyro スパイクの時刻**（較正・world model から除外する区間）、`--profile teleop` で励起カバレッジ（duty 振幅帯・符号・サーボ可動域）。帰宅後に「使えない bag だった」を防ぐ |
 | `view_detections.py` | **検出結果を画像に重ねて表示**（時刻照合はせず、最後に届いた検出を重ねる）。**PC 側で動かす**こと（Pi でやると CPU が飽和して認識周期が落ちる）。`--save` で mp4 保存（表示も続く。録画だけなら `--no-window` を併用）|
 
@@ -67,9 +69,8 @@
 ./umiusi_stack.sh restart --attitude
 ./umiusi_stack.sh restart --perception
 
-# 3. 記録しながら走行
-./record_camera.sh --raw &
-ros2 bag record -o run_$(date +%Y%m%d-%H%M%S) /state/imu /perception_node/detections /cmd/target
+# 3. 記録しながら走行 (bag と映像をまとめて。走行後に --fix)
+./record_run.sh --name <走行名>
 
 # 4. 停止
 ./umiusi_stack.sh stop

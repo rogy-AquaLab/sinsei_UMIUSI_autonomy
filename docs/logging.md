@@ -50,15 +50,17 @@ ros2 bag play runs/latest/bag        # PC 側で再生して rqt / PlotJuggler �
 
 # それ以外: rosbag。**-a は使わないこと** (下記)
 ros2 bag record -o run_$(date +%Y%m%d-%H%M%S) \
-  /state/imu /state/thruster_state_all /state/high_power_circuit_info \
-  /state/low_power_circuit_info /state/main_power_enabled \
-  /perception_node/detections /cmd/target \
-  /cmd/direct/thruster_controller/output_lf \
-  /cmd/direct/thruster_controller/output_lb \
-  /cmd/direct/thruster_controller/output_rb \
-  /cmd/direct/thruster_controller/output_rf \
-  /joint_states /tf /tf_static
+  /state/imu /state/pressure /state/imu_temperature \
+  /rl_attitude_node/current_setpoint /rl_attitude_node/depth \
+  /rl_attitude_node/depth_mode \
+  ...  # 以下略 — 実際の一覧は tools/record_run.sh を見ること
 ```
+
+**録るトピックの一覧は `tools/record_run.sh` が正**（19 トピック）。ここに手で写した一覧は
+すぐ古くなるので置かない。上は雰囲気をつかむための抜粋で、`/rl_attitude_node/current_setpoint`
+`/rl_attitude_node/depth` `/rl_attitude_node/depth_mode` `/state/pressure`
+`/state/imu_temperature` を含む全量はスクリプト側で管理している。手で `ros2 bag record` を
+打つ場面でも、まず `record_run.sh` の一覧をコピーすること。
 
 ## `ros2 bag record -a` は使わない — 実測
 
@@ -184,7 +186,7 @@ ros2 bag reindex <bag ディレクトリ>
 ./tools/record_run.sh --name pool-01
 ```
 
-映像 (前後カメラ、H264 そのまま) と rosbag (状態・指令・検出の 15 トピック) を同時に開始し、
+映像 (前後カメラ、H264 そのまま) と rosbag (状態・指令・検出の 19 トピック) を同時に開始し、
 Ctrl-C で両方をきれいに閉じる。出力は `~/runs/<日時>-<名前>/` (`UMIUSI_RUN_DIR` で変更可) に
 `video/` `bag/` `meta.txt` が揃う。**実機実測で perception への影響なし** (7.74 -> 7.80 Hz)。
 
@@ -194,5 +196,7 @@ Ctrl-C で両方をきれいに閉じる。出力は `~/runs/<日時>-<名前>/`
    個別に回すより取りこぼしが少ない
 2. **走行後に `tools/record_run.sh --fix`** — 停止処理が最後まで走らないことがあるので、
    metadata の復元はここで確実に取り切る (上記「rosbag の metadata が…」参照)
-3. `~/umiusi_logs/` のノードログ (`tools/umiusi_stack.sh` が自動で残す)
-4. 走行前に `tools/bench_rates.py` を 20 秒回して**その日の周期の記録**を取る
+3. **取ったらその場で `python3 tools/bag_check.py <bag>` で検品** — 前後静止 5 s・IMU 化け・
+   衝突スパイク・励起カバレッジを見る。撤収してからでは取り直せない
+4. `~/umiusi_logs/` のノードログ (`tools/umiusi_stack.sh` が自動で残す)
+5. 走行前に `tools/bench_rates.py` を 20 秒回して**その日の周期の記録**を取る

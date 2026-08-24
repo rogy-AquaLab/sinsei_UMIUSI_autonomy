@@ -144,6 +144,9 @@ PC から sim 画像 (`ai/balloon/sim_eval/images` 200枚) を `/front_cam/image
 
 `umiusi_rl_control/models/cruise_policy` (PPO, obs_mode=imu, task=attitude_velocity, 250万step)。
 
+> 注記 (2026-08-24): cruise_policy と 25 次元観測はその後廃止され、REP-103 の 17/14 次元
+> バンドル (`av_cal1_best_rep103` ほか) に置換された (#15, PR #16/#17)。
+
 ### 復元性・発散の検証 (MuJoCo 閉ループ)
 
 機体を実際に傾けた状態から目標水平でロールアウト (400 step = 8 秒)。

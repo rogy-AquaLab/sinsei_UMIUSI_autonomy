@@ -14,6 +14,8 @@
 #
 # **スラスタは回さない。** RL は必ず --no-publish で起動するので、モータには何も出ない。
 # 実際に回す確認は docs/experiment_guide.md 1-4 を手順どおりに (e-stop を手元に置いて) 行うこと。
+# navigator FSM はこのスクリプトでは起動しない (ドライ確認は
+# `ros2 launch umiusi_autonomy autonomy.launch.py publish:=false`)。
 #
 # 判定できるのは「起動する / トピックが出る / ログにエラーが無い」まで。水中挙動・色判別・
 # 距離精度は判定できない (docs/competition_checklist.md)。

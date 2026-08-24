@@ -95,12 +95,11 @@ stack releases esc/servo). Re-arm with `~/arm` `data: true` (or `~/estop` `false
 * **`fovy_deg`** (both nodes) must match the physical camera vertical FOV — it sets every
   bearing/range estimate.
 * **IMU yaw rate**: `sensor_msgs/Imu.angular_velocity` is **rad/s** (ROS standard), matching the FSM.
-  `yaw_rate_axis` (`x`/`y`/`z`, default `y`=up as in sim) and `yaw_rate_sign` select and orient the
-  component. Confirm against the mounted IMU.
-* **Servo scaling**: `ThrusterOutput.angle` is documented in **rad**; `servo_range_deg` (default 90,
-  matching `configs/umiusi.yaml`) sets the half-range for the normalised-servo → rad mapping. NOTE:
-  `tools/ros_policy.py` currently scales in degrees — reconcile the two against the live bridge
-  during bring-up (the spec's open *FF-frame sign reconcile* item).
+  `yaw_rate_axis` (`x`/`y`/`z`, default `z`=up, the REP-103 body frame) and `yaw_rate_sign` select and
+  orient the component. Confirm against the mounted IMU.
+* **Servo scaling**: settled — `ThrusterOutput.angle` is commanded in **degrees** by `rl_attitude_node`
+  (see `../umiusi_rl_control/README.md`); `servo_range_deg` (default 90, matching `configs/umiusi.yaml`)
+  sets the half-range for the normalised-servo → degrees mapping.
 
 ## Test against the simulation
 The navigator's thruster topics/types match `umiusi_sim_bridge`, so you can close the loop against

@@ -35,6 +35,24 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
 
 ---
 
+## 0-2. 次回実験のチェックリストと新ツール
+
+当日の実行チェックリストは **issue #18**（実験 1〜8 の順番・合否条件）を見ること。ここでは
+新しく増えた道具だけを挙げる。
+
+* `tools/thruster_cmd.py` — 較正実験 1/3/4/6/8 のためのスラスタ直接指令（spin/step/sweep/
+  steady/excite）。**`rl_attitude_node` と同時に動かさない**（同じトピックを奪い合う）。
+* `tools/bag_check.py` — 取った bag のその場検品（前後静止 5 s・IMU 化け・衝突スパイク・
+  励起カバレッジ）。撤収前に必ず通す。
+* `vel_timeout:=5.0` — 速度指令が更新されないと 0 に戻すデッドマン。狭いプールでは推奨。
+* 深度モード（`depth_supervisor:=true`、`target_depth` で目標深度）— **水圧センサ搭載後**、
+  `max_duty 0.4` 前提。詳細は `umiusi_rl_control/README.md`。
+* navigator の FSM をドライで確認するなら
+  `ros2 launch umiusi_autonomy autonomy.launch.py publish:=false`
+  （`experiment_test.sh` は navigator を起動しない）。
+
+---
+
 ## 1. `rl_attitude` を単独で
 
 ### 1-1. まず指令を出さずに見る
@@ -71,8 +89,12 @@ python3 tools/set_attitude.py --level              # 水平・停止
 python3 tools/set_attitude.py --yaw 90 --hold      # 右に 90 度 (押し続ける)
 python3 tools/set_attitude.py --roll 20 --hold
 python3 tools/set_attitude.py --vel 0.3            # 前進速度だけ変える
+python3 tools/set_attitude.py --vel 0 0 -0.2       # 3 成分指定 (X Y Z) = 純下降
 python3 tools/set_attitude.py --yaw 45 --attitude-only --hold   # 速度は無視させる
 ```
+
+`--vel X Y Z` の 3 成分形は **3-D ポリシー `av_cal5_3d_rep103` 限定**。それ以外のバンドルでは
+node 側の interlock が z を 0 にクランプする。
 
 いま何を目標にして動いているかは、こちらで確認できる（latch しているのでいつでも読める）:
 
@@ -100,8 +122,9 @@ ros2 topic hz   /cmd/direct/thruster_controller/output_lf       # 50 Hz 目標
 ros2 topic echo /cmd/direct/thruster_controller/output_lf       # duty_cycle / angle
 ```
 
-**機体を傾けたとき、戻す向きに duty が出るか**を見る。シミュレータでは
-10〜90 度 (ヨーは 179 度) から復元し、定常誤差 2〜3 度・発散なしを確認済み。
+**機体を傾けたとき、戻す向きに duty が出るか**を見る。シミュレータでの現行バンドルの成績は
+`att_cal1_best_rep103` が hold 99.5 % / 定常誤差 3.1° / wobble 0.05 rad/s（姿勢専用）、
+`av_cal1_best_rep103` が姿勢+速度指令の本命（巡航時の姿勢維持は `max_duty` 0.2 で緩和される）。
 **プールが狭いならヨーが一番振りやすい。**
 
 ### 1-4. 実際に回す

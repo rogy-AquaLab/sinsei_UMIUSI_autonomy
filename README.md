@@ -65,19 +65,22 @@ python3 tools/set_attitude.py --vel 0.4 --hold    # 前進もさせるなら
 | `servo_slew_deg_per_s` | `250.0` | **サーボ指令のレート制限。sim と同じ値**。0 以下で無効（`known_issues.md` A-11）|
 | `thrust_slew_per_s` | `4.0` | ESC 指令のレート制限。同上 |
 | `vel_cmd` | `0.0` | 前進速度 [m/s]。新ポリシーは停止保持（0）も学習分布内。巡航試験で 0.4 に上げる |
+| `vel_timeout` | `0.0` | 速度指令がこの秒数更新されなければ 0 に戻すデッドマン（0 以下で無効）。狭いプールの巡航試験では `5.0` 推奨 |
+| `target_depth` | `0.0` | 深度モード時の目標深度 [m, 正=深い]（`depth_supervisor:=true` 時のみ有効）|
 
 ```bash
 ros2 param set /rl_attitude_node hold_yaw false
 ros2 param set /rl_attitude_node vel_cmd 0.4
 ```
 
-同梱ポリシーは 3 種（すべて REP-103 観測 + golden.npz 付き。読み込み時に自動検証）:
+同梱ポリシーは 4 種（すべて REP-103 観測 + golden.npz 付き。読み込み時に自動検証）:
 
 | バンドル | 観測 | 用途 |
 |---|---|---|
 | `av_cal1_best_rep103`（既定） | 17 次元（姿勢+速度指令） | 本命 |
 | `att_cal1_best_rep103` | 14 次元（姿勢のみ） | フォールバック。巡航が死んでも姿勢試験が成立する |
 | `av_sim2real2_rep103` | 17 次元 | B 案（較正前物理で学習、指令が最も滑らか）。A/B 材料 |
+| `av_cal5_3d_rep103` | 17 次元（3-D ベクタリング） | EXPERIMENTAL。深度モードの降下バースト専用（`vertical_ok`。上昇・斜めには使わない）|
 
 ```bash
 ./tools/umiusi_stack.sh start --attitude --attitude-policy   # 姿勢保持専用に差し替え
@@ -161,7 +164,7 @@ unconfigured のまま）。
 |---|---|
 | `core_autonomy` | `model_path` `image_topic` `use_rosbridge` `use_camera_bridge` `use_core` `rtsp_url` |
 | `autonomy` | `model_path` `image_topic` `publish` |
-| `rl_attitude` | `model_path` `vel_cmd` `publish` |
+| `rl_attitude` | `model_path` `vel_cmd` `publish` `start_armed` `hold_yaw` `max_duty` `vel_timeout` `depth_supervisor` `target_depth` |
 
 `model_path` は未指定なら同梱の検出器 (`models/detector/camp_mix.pt`) を使う。
 `publish` を `false` にすると計算だけしてスラスタに指令を出さない (ドライ試験)。
