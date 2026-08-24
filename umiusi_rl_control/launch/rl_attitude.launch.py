@@ -36,6 +36,9 @@ def generate_launch_description():
     start_armed = LaunchConfiguration("start_armed")
     hold_yaw = LaunchConfiguration("hold_yaw")
     max_duty = LaunchConfiguration("max_duty")
+    depth_supervisor = LaunchConfiguration("depth_supervisor")
+    target_depth = LaunchConfiguration("target_depth")
+    vel_timeout = LaunchConfiguration("vel_timeout")
 
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
@@ -52,6 +55,16 @@ def generate_launch_description():
         DeclareLaunchArgument("max_duty", default_value="0.2",
                               description="duty_cycle の絶対値上限 (1.0 = 制限なし)。**0.2 で開始 → "
                                           "問題なければ 0.4** (issue #15 A-3 のプロトコル)"),
+        DeclareLaunchArgument("vel_timeout", default_value="0.0",
+                              description="デッドマン: 速度指令がこの秒数更新されなければ 0 に戻す "
+                                          "(0 以下で無効)。狭いプールの巡航試験では 5.0 を推奨"),
+        DeclareLaunchArgument("depth_supervisor", default_value="false",
+                              description="深度モード切替を有効化 (水圧センサ搭載時のみ)。"
+                                          "**max_duty 0.4 が前提** — 0.2 では降下できない (sim 実測)。"
+                                          "詳細は depth_supervisor.py 冒頭"),
+        DeclareLaunchArgument("target_depth", default_value="0.0",
+                              description="目標深度 [m, 正=深い]。実行中に "
+                                          "`ros2 param set /rl_attitude_node target_depth 1.0` で変更"),
         DeclareLaunchArgument("start_armed", default_value="false",
                               description="起動と同時に武装する。**既定 false** — 起動しただけで "
                                           "スラスタへ指令が出るのを避けるため。`~/arm` で武装する"),
@@ -63,6 +76,7 @@ def generate_launch_description():
             # model_path="" -> the node falls back to the bundled models/av_cal1_best_rep103
             parameters=[{"model_path": model_path, "vel_cmd": vel_cmd, "publish": publish,
                          "start_armed": start_armed, "hold_yaw": hold_yaw,
-                         "max_duty": max_duty}],
+                         "max_duty": max_duty, "depth_supervisor": depth_supervisor,
+                         "target_depth": target_depth, "vel_timeout": vel_timeout}],
         ),
     ])

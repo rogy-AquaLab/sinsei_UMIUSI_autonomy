@@ -32,6 +32,16 @@ immediately — the loop stops predicting and asserts a DETACH every tick (Thrus
 esc/servo = false, zero output), so the control stack releases the thrusters. Re-arm with the
 ``~/arm`` service (data:true)。**既定は disarmed で起動する** (``start_armed:=true`` で
 起動と同時に武装)。
+
+深度モード切替 (``depth_supervisor:=true``, 水圧センサ搭載時のみ): 水圧 (``depth_topic``,
+sensor_msgs/FluidPressure) から深度を作り、``target_depth`` との誤差が閾値を超えたら
+巡航を一時停止して深度補正に入る — 降下はブレーキ→同梱 3-D ポリシー
+(``models/av_cal5_3d_rep103``) の純下バースト、浮上は弱正浮力トリム任せの受動浮上。
+状態機械と検証済みパラメータは ``depth_supervisor.py`` 冒頭を参照 (sim リハーサル:
+issue #15 のコメント)。**深度モードは max_duty 0.4 が前提** (0.2 では降下できない)。
+深度ゼロ点は起動後の最初の水圧サンプル列で取る (水面で起動する前提)。潜った状態で
+再ゼロしたいときは ``~/zero_depth`` (std_srvs/Trigger)。診断: ``~/depth`` (Float32, m,
+正=深い) と ``~/depth_mode`` (String: horiz/brake/vert/ascend)。
 """
 
 from __future__ import annotations
@@ -42,13 +52,16 @@ from pathlib import Path
 import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from rcl_interfaces.msg import SetParametersResult
+from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import FluidPressure, Imu
 from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable
+from std_msgs.msg import Float32, String
+from std_srvs.srv import Trigger
 
 from umiusi_rl_control.arm import ArmState
+from umiusi_rl_control.depth_supervisor import HORIZ, VERT, DepthSupervisor
 from umiusi_rl_control.imu_sanity import ImuSanity
 from umiusi_rl_control.thruster_limits import slew
 from umiusi_rl_control_msgs.msg import AttitudeTarget
@@ -63,6 +76,8 @@ OBS_DIM = 17
 OBS_DIM_NO_VEL = 14
 ACT_DIM = 8
 DEFAULT_MODEL = "av_cal1_best_rep103"     # 本命 (issue #15 B 表)。同梱 models/ から選ぶ
+DEFAULT_VERT_MODEL = "av_cal5_3d_rep103"  # 深度モードの降下バースト用 (EXPERIMENTAL, 降下専用)
+GRAVITY = 9.80665                          # 水圧 -> 深度換算 [m/s^2]
 # REP-103 (x前/y左/z上) では yaw は z 軸まわり。姿勢誤差 rot-vec の z 成分を落とすと
 # yaw 保持だけ切れる (hold_yaw=false)
 YAW_IDX = 2
@@ -146,6 +161,26 @@ class RlAttitudeNode(Node):
         self.declare_parameter("start_armed", False)       # True = 起動と同時に武装する
         # Real-time setpoint (hold last; until a message arrives, use the launch defaults below).
         self.declare_parameter("setpoint_topic", "~/setpoint")   # umiusi_rl_control_msgs/AttitudeTarget
+        # デッドマン: 速度指令が **vel_timeout 秒更新されなかったら 0 に戻す** (0 以下で無効、既定 off)。
+        # 狭いプールでの巡航試験向け — teleop が落ちた/操作者が手を離した/`set_attitude --hold` を
+        # Ctrl-C した後に、機体が壁まで巡航し続けるのを防ぐ。`--hold` (10 Hz) を使っていれば
+        # 通常運転では発動しない。姿勢目標は保持したまま (落とすのは速度だけ)
+        self.declare_parameter("vel_timeout", 0.0)
+        # --- 深度モード切替 (水圧センサ搭載時のみ。冒頭 docstring と depth_supervisor.py 参照) ---
+        self.declare_parameter("depth_supervisor", False)  # true で有効化。**max_duty 0.4 が前提**
+        # 起動時専用パラメータは read_only にする (レビュー指摘: 実行中の `ros2 param set` が
+        # 黙って無効になるより、はっきり失敗した方がよい)。target_depth だけは実行中変更可
+        ro = ParameterDescriptor(read_only=True)
+        self.declare_parameter("depth_topic", "/state/pressure", ro)  # sensor_msgs/FluidPressure [Pa]
+        self.declare_parameter("target_depth", 0.0)        # 目標深度 [m, 正=深い]。実行中 param set 可
+        self.declare_parameter("water_density", 1000.0, ro)  # 淡水 1000 / 海水 ~1025 [kg/m^3]
+        self.declare_parameter("vert_model_path", "", ro)  # "" -> 同梱 av_cal5_3d_rep103
+        # sim 検証済みの閾値/ゲイン (depth_supervisor.py の既定値)。プールでの追い込み用に
+        # 主要 4 つだけ起動時パラメータにする
+        self.declare_parameter("depth_d_enter", 0.25, ro)  # 補正に入る誤差 [m]
+        self.declare_parameter("depth_d_exit", 0.15, ro)   # 浮上をやめる誤差 [m]
+        self.declare_parameter("depth_k", 0.7, ro)         # 降下指令ゲイン [1/s]
+        self.declare_parameter("depth_v_vert", 0.2, ro)    # 降下指令上限 [m/s]
 
         self._hz = float(self.get_parameter("control_hz").value)
         self._dt = 1.0 / self._hz
@@ -162,6 +197,8 @@ class RlAttitudeNode(Node):
 
         self._target_quat = np.array([1.0, 0.0, 0.0, 0.0])   # identity = hold upright/level
         self._v_cmd = np.array([self._vel, 0.0, 0.0])         # cruise along body +X
+        self._vel_timeout = float(self.get_parameter("vel_timeout").value)
+        self._v_cmd_stamp = None       # 速度指令が最後に更新された時刻 [s] (デッドマン用)
         self._prev_action = np.zeros(ACT_DIM)
         self._model = None
         self._model_error = None       # 構造的な読み込み失敗 (リトライしても直らない)
@@ -171,6 +208,33 @@ class RlAttitudeNode(Node):
             max_gyro=float(self.get_parameter("imu_max_gyro").value),
             max_step_deg=float(self.get_parameter("imu_max_step_deg").value),
             enforce=bool(self.get_parameter("imu_sanity_enforce").value))
+
+        # --- 深度モード切替の状態 ---
+        self._sup_enabled = bool(self.get_parameter("depth_supervisor").value)
+        self._sup = DepthSupervisor(
+            d_enter=float(self.get_parameter("depth_d_enter").value),
+            d_exit=float(self.get_parameter("depth_d_exit").value),
+            k_depth=float(self.get_parameter("depth_k").value),
+            v_vert=float(self.get_parameter("depth_v_vert").value))
+        self._sup.target_depth = float(self.get_parameter("target_depth").value)
+        self._rho = float(self.get_parameter("water_density").value)
+        self._vert_model = None            # 3-D ポリシー (深度モード有効時に読み込む)
+        self._depth = None                 # 現在深度 [m, 正=深い]。ゼロ点確定まで None
+        self._depth_stamp = None           # 最終更新時刻 [s] (鮮度ガード)
+        self._p_surface = None             # 水面の圧力 [Pa] (ゼロ点)
+        self._p_samples: list[float] = []  # ゼロ点キャプチャ用 (最初の ~0.5 s 分)
+        self._last_pub_state = None
+
+        if self._sup_enabled:
+            self._sub_depth = self.create_subscription(
+                FluidPressure, self.get_parameter("depth_topic").value, self._on_pressure, 5)
+            self._pub_depth = self.create_publisher(Float32, "~/depth", 10)
+            self._pub_mode = self.create_publisher(String, "~/depth_mode", CURRENT_SETPOINT_QOS)
+            self._srv_zero = self.create_service(Trigger, "~/zero_depth", self._on_zero_depth)
+            if self._max_duty < 0.35:
+                self.get_logger().warning(
+                    f"depth_supervisor 有効だが max_duty={self._max_duty:.2f} — sim 実測では "
+                    "0.2 で降下不能 (下向き推力が浮力に負ける)。深度試験は 0.4 にすること")
 
         self._sub_imu = self.create_subscription(
             Imu, self.get_parameter("imu_topic").value, self._on_imu, 1)
@@ -188,10 +252,13 @@ class RlAttitudeNode(Node):
         self._timer = self.create_timer(self._dt, self._tick)
         self.add_on_set_parameters_callback(self._on_set_params)
         self._publish_current_setpoint()
+        # ポリシーはここで読む (レビュー指摘): torch の import に ~1.5 s (SBC では数秒)
+        # かかり、tick 内で読むと武装後の最初の周期で e-stop の処理が止まる窓ができる。
+        # spin 前ならまだ何も指令していないので安全
+        self._ensure_model()
         self.get_logger().info(
             f"rl_attitude_node: default target=upright v_cmd=[{self._vel:.3f},0,0] m/s @ {self._hz:.0f} Hz "
-            f"(publish={self._publish}); live setpoint (AttitudeTarget) on '{sp_topic}'; "
-            "loading policy on first state...")
+            f"(publish={self._publish}); live setpoint (AttitudeTarget) on '{sp_topic}'")
 
     def _on_set_params(self, params):
         """`ros2 param set` を実行中に効かせる (hold_yaw / max_duty / vel_cmd / slew)。"""
@@ -212,9 +279,42 @@ class RlAttitudeNode(Node):
                 self.get_logger().info(f"thrust_slew={self._thrust_slew:.2f} /s")
             elif p.name == "vel_cmd":
                 self._v_cmd = np.array([float(p.value), 0.0, 0.0])
+                self._v_cmd_stamp = self.get_clock().now().nanoseconds * 1e-9
                 self._publish_current_setpoint()
                 self.get_logger().info(f"vel_cmd={float(p.value):.2f} m/s")
+            elif p.name == "vel_timeout":
+                self._vel_timeout = float(p.value)
+                self.get_logger().info(f"vel_timeout={self._vel_timeout:.1f} s (0 以下で無効)")
+            elif p.name == "target_depth":
+                self._sup.target_depth = float(p.value)
+                self.get_logger().info(f"target_depth={float(p.value):.2f} m")
         return SetParametersResult(successful=True)
+
+    def _on_pressure(self, msg):
+        now = self.get_clock().now().nanoseconds * 1e-9
+        p = float(msg.fluid_pressure)
+        if self._p_surface is None:
+            # ゼロ点: 起動後の最初の ~25 サンプルの中央値を水面圧とする (水面で起動する前提)。
+            # 潜った状態で起動し直したときは ~/zero_depth で取り直すか、target_depth を
+            # 相対値として運用する
+            self._p_samples.append(p)
+            if len(self._p_samples) >= 25:
+                self._p_surface = float(np.median(self._p_samples))
+                self.get_logger().info(
+                    f"深度ゼロ点を設定: p_surface={self._p_surface:.0f} Pa "
+                    f"({len(self._p_samples)} サンプル中央値)")
+            return
+        self._depth = (p - self._p_surface) / (self._rho * GRAVITY)   # 正 = 深い
+        self._depth_stamp = now
+
+    def _on_zero_depth(self, req, res):
+        """~/zero_depth (std_srvs/Trigger): いまの圧力を水面 (深度 0) として取り直す。"""
+        self._p_surface = None
+        self._p_samples = []
+        self._depth = None
+        res.success = True
+        res.message = "深度ゼロ点を再キャプチャ中 (次の ~25 サンプル)"
+        return res
 
     def _on_imu(self, msg):
         # 実機の BNO055 は化けサンプルを混ぜてくる。姿勢と角速度を直接ポリシーの観測に
@@ -246,6 +346,7 @@ class RlAttitudeNode(Node):
                 self._target_quat = q / n
         if not (msg.type_mask & AttitudeTarget.IGNORE_VELOCITY):
             self._v_cmd = np.array([msg.velocity.x, msg.velocity.y, msg.velocity.z], dtype=float)
+            self._v_cmd_stamp = self.get_clock().now().nanoseconds * 1e-9
         self._publish_current_setpoint()
         r, p, y = _quat_to_rpy_deg(self._target_quat)
         self.get_logger().info(
@@ -289,13 +390,39 @@ class RlAttitudeNode(Node):
             return False
         try:
             self._load_model(self._model_dir())
+            if self._sup_enabled:
+                self._load_vert_model()
             return True
         except Exception as e:  # noqa: BLE001
             self._model_error = f"ポリシーを読み込めません: {e}"
+            self._model = None       # 片方だけ読めた状態で走らない
             self.get_logger().error(self._model_error)
             return False
 
+    def _load_vert_model(self):
+        """深度モードの降下バースト用 3-D ポリシー。水平ポリシーと同じ検証を通す。"""
+        mp = str(self.get_parameter("vert_model_path").value).strip()
+        d = (Path(mp) if mp else
+             Path(get_package_share_directory("umiusi_rl_control")) / "models" / DEFAULT_VERT_MODEL)
+        runner = self._load_bundle(d)
+        if runner.obs_dim != OBS_DIM:
+            raise ValueError(
+                f"vert モデルは attitude_velocity (17 次元) が必要です ({d}: {runner.obs_dim})")
+        self._vert_model = runner
+        self.get_logger().info(f"depth supervisor: vert policy loaded from {d}")
+
     def _load_model(self, d: Path):
+        runner = self._load_bundle(d)
+        self._model = runner
+        self._obs_dim = runner.obs_dim
+        if self._obs_dim == OBS_DIM_NO_VEL:
+            self.get_logger().info(
+                "attitude タスクのポリシーです (観測に速度指令を含まない)。"
+                "vel_cmd / AttitudeTarget.velocity は無視されます")
+        self.get_logger().info(f"policy loaded from {d / 'export'} (obs {self._obs_dim}-D, rep103)")
+
+    def _load_bundle(self, d: Path):
+        """バンドルを読み、frame 契約・観測次元・golden を検証した PolicyRunner を返す。"""
         from umiusi_rl_control.policy_infer import PolicyRunner   # torch は遅延 import
 
         export = d / "export"
@@ -332,16 +459,9 @@ class RlAttitudeNode(Node):
                 f"golden 検証 PASS: {len(g['obs'])} vectors, max err {worst:.1e}")
         else:
             self.get_logger().warning(f"{golden} が無いので配備前検証をスキップします")
+        return runner
 
-        self._model = runner
-        self._obs_dim = runner.obs_dim
-        if self._obs_dim == OBS_DIM_NO_VEL:
-            self.get_logger().info(
-                "attitude タスクのポリシーです (観測に速度指令を含まない)。"
-                "vel_cmd / AttitudeTarget.velocity は無視されます")
-        self.get_logger().info(f"policy loaded from {export} (obs {self._obs_dim}-D, rep103)")
-
-    def _build_obs(self):
+    def _build_obs(self, v_cmd, obs_dim):
         imu = self._imu
         cur_quat = np.array(imu.quat, dtype=float)      # ImuSanity が (w,x,y,z) 正規化済みで返す
         gyro = np.array(imu.gyro, dtype=float)          # rad/s, REP-103 のまま (A-2)
@@ -352,20 +472,85 @@ class RlAttitudeNode(Node):
             # 成分を落とすだけなので特異点が無い (RPY に直すと pitch±90 で破綻する)
             ori_err[YAW_IDX] = 0.0
         parts = [ori_err, gyro]
-        if self._obs_dim == OBS_DIM:          # attitude_velocity のみ速度指令を観測に持つ
-            parts.append(self._v_cmd)
+        if obs_dim == OBS_DIM:                # attitude_velocity のみ速度指令を観測に持つ
+            parts.append(v_cmd)
         parts.append(self._prev_action)
         return np.concatenate(parts)
+
+    def _supervise(self):
+        """深度モード切替。-> (使うモデル, 観測に入れる v_cmd)。
+
+        prev_action は共有のまま (両ポリシーとも 17 次元で obs レイアウト同一 —
+        sim リハーサルで切替の過渡が問題ないことを確認済み)。
+        """
+        model, v_cmd = self._model, self._v_cmd
+        if not (self._sup_enabled and self._vert_model is not None):
+            return model, v_cmd
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if self._depth is None or self._depth_stamp is None or now - self._depth_stamp > 1.0:
+            # 深度が来ていない/古い: 補正はしない。鉛直成分だけ落として水平運転を続ける。
+            # 状態機械もリセットする (レビュー指摘) — 補正の途中で止まった場合、古い
+            # brake/vert タイマーを残すと復帰時に watchdog が誤発火するし、~/depth_mode が
+            # 実挙動 (水平フォールバック) と食い違ったまま表示され続ける
+            if self._sup.state != HORIZ:
+                self._sup.state = HORIZ
+            if self._depth_stamp is not None and now - self._depth_stamp > 1.0:
+                self.get_logger().warning("深度が 1 s 以上更新されていません — 深度補正を停止中",
+                                          throttle_duration_sec=5.0)
+            if self._last_pub_state != "stale":
+                self._pub_mode.publish(String(data="stale"))
+                self._last_pub_state = "stale"
+            return model, np.array([v_cmd[0], v_cmd[1], 0.0])
+        state, override = self._sup.update(now, self._depth)
+        if state != self._last_pub_state:
+            self.get_logger().info(
+                f"depth mode: {self._last_pub_state or HORIZ} -> {state} "
+                f"(depth {self._depth:+.2f} m, target {self._sup.target_depth:+.2f} m, "
+                f"retry {self._sup.retries})")
+            self._pub_mode.publish(String(data=state))
+            self._last_pub_state = state
+        self._pub_depth.publish(Float32(data=float(self._depth)))
+        if override is None:
+            # 水平モード: 斜め指令を作らない (鉛直成分は必ず 0 に丸める — sim 実測で
+            # 斜めはどのポリシーも不安定)
+            return model, np.array([v_cmd[0], v_cmd[1], 0.0])
+        return (self._vert_model if state == VERT else model), override
 
     def _tick(self):
         if not self._arm.armed:            # e-stopped / disarmed: keep asserting the detach
             self._detach_all()
+            # 補正の途中で disarm されたら状態機械も仕切り直す (古いブレーキタイマー等を残さない)
+            if self._sup.state != HORIZ:
+                self._sup.state = HORIZ
+                self._last_pub_state = None
             return
         if self._imu is None:
             return
         if not self._ensure_model():
             return
-        action = self._model.act(self._build_obs())
+        # デッドマン: 速度指令が更新されないまま vel_timeout を過ぎたら 0 に戻す (姿勢保持は継続)
+        if self._vel_timeout > 0.0 and np.any(self._v_cmd != 0.0):
+            now = self.get_clock().now().nanoseconds * 1e-9
+            if self._v_cmd_stamp is None:      # launch 指定の vel_cmd も対象 (初回 tick 起点)
+                self._v_cmd_stamp = now
+            if now - self._v_cmd_stamp > self._vel_timeout:
+                self._v_cmd = np.zeros(3)
+                self._v_cmd_stamp = None
+                self._publish_current_setpoint()
+                self.get_logger().warning(
+                    f"速度指令が {self._vel_timeout:.1f} s 更新されなかったので 0 に戻しました (デッドマン)")
+        model, v_cmd = self._supervise()
+        # 鉛直指令インターロック (レビュー指摘): 鉛直速度が学習分布内のポリシー
+        # (export/meta.json の vertical_ok, 3-D vectoring 系) 以外には z 成分を渡さない。
+        # 水平専用ポリシーに鉛直指令が入ると姿勢が崩壊する (sim 実測 75〜122°)。
+        # set_attitude --vel 0 0 -0.2 を間違ったポリシーで打っても機体は水平ホールドを続ける
+        if v_cmd[2] != 0.0 and not model.meta.get("vertical_ok", False):
+            self.get_logger().warning(
+                "鉛直速度指令を 0 にクランプしました — このポリシーは水平専用です "
+                "(vertical_ok なし)。降下バーストは av_cal5_3d_rep103 で",
+                throttle_duration_sec=5.0)
+            v_cmd = np.array([v_cmd[0], v_cmd[1], 0.0])
+        action = model.act(self._build_obs(v_cmd, model.obs_dim))
         action = np.clip(np.asarray(action, dtype=float).reshape(ACT_DIM), -1.0, 1.0)
         if self._publish:
             self._command(action)

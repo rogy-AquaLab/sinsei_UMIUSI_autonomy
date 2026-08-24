@@ -29,6 +29,9 @@ def test_bundle_contract_and_golden(name):
     runner = PolicyRunner(d / "export")
     assert runner.meta.get("obs_frame") == "rep103", name
     assert runner.obs_dim in (14, 17), (name, runner.obs_dim)
+    # 鉛直指令インターロックの契約: vertical_ok は 3-D vectoring 系だけが持つ。
+    # 水平専用ポリシーに付くとノードのクランプが外れて転覆リスクになる
+    assert runner.meta.get("vertical_ok", False) == ("3d" in name), name
 
     g = np.load(d / "golden.npz")
     assert int(g["obs_dim"]) == runner.obs_dim, name
