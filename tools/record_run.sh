@@ -154,6 +154,17 @@ cleanup() {
   fi
   # 何が録れたのかを最後にもう一度出す。bag を開くまで分からない状態にしない。
   check_topics
+  # 映像の健康状態も表面化する。8/25 の run は cam2 が 0 バイトのまま・録画が bag より
+  # 4.5 分早く死んだまま 15 分回っていて、持ち帰るまで気付けなかった。再起動などの警告は
+  # record_camera.sh が camera.log に ⚠ で残す。
+  if [ "$BAG_ONLY" != true ]; then
+    warns=$(grep "⚠" "$OUT/camera.log" 2>/dev/null | tail -5)
+    [ -n "$warns" ] && { echo "  カメラの警告 (camera.log より、末尾 5 件):"; echo "$warns" | sed 's/^/    /'; }
+    for f in "$OUT"/video/*/cam*.h264 "$OUT"/video/*/cam*.mp4; do
+      [ -e "$f" ] || continue
+      [ -s "$f" ] || echo "  ⚠ $(basename "$f") が 0 バイト (1 フレームも録れていない)"
+    done
+  fi
   # 取り出しを楽にするため、最後の run へのリンクを張り直す
   #   scp -r pi@<機体>:runs/latest/ .        (ディレクトリ名を調べなくてよい)
   ln -sfn "$OUT" "$OUTROOT/latest"
