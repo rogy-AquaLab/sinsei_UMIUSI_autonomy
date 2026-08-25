@@ -464,6 +464,32 @@ netsh interface ipv6 show neighbors      # fe80:: は MAC 由来なので HUB �
 ping -6 ff02::1%<有線の Index>           # リンク上の全ノードに問い合わせ
 ```
 
+### B-11. 【解決済み】ビルド方式を切り替えると全パッケージが symlink エラーで落ちる
+
+`--symlink-install` の有無を切り替えて `colcon build` すると、こうなる:
+
+```
+failed to create symbolic link '.../build/<pkg>/ament_cmake_python/<pkg>/<pkg>'
+because existing path cannot be removed: Is a directory
+```
+
+`ament_cmake_python` は方式に関係なく Python モジュール用のシンボリックリンクを張るので、
+**前の方式で作られた実ディレクトリが残っていると必ず失敗する**。
+
+**エラーは最初に当たったパッケージ名を指すので、そのパッケージ固有の問題に見えるが、
+実際は全パッケージが同じ状態**。1 つ消しても次のパッケージで同じエラーが出る。
+
+```bash
+cd ~/ros2-ws
+rm -rf build install          # まとめて消すのが早い (Pi で再ビルド約 4 分)
+colcon build --packages-up-to umiusi_autonomy --cmake-args -DCMAKE_BUILD_TYPE=Release
+```
+
+> **ビルド方式は統一すること。** このプロジェクトの標準は **`--symlink-install` なし**
+> (`tools/setup_robot.sh` と `docs/robot_setup.md` がそう)。
+>
+> `sudo colcon build` は絶対にしないこと。root 所有の成果物が残ると `rm` もできなくなる。
+
 ### B-7. 【中】`ros2_control` がリアルタイム優先度を取れていない
 
 起動のたびに出る:
