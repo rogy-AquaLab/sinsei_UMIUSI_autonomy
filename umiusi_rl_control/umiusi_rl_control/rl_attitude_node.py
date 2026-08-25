@@ -19,7 +19,10 @@ FRAME 契約: ポリシーは **REP-103 body-frame (x前/y左/z上) の観測を
 
 配備前検証: バンドルに ``golden.npz`` (sim で記録した観測→行動ペア) があれば、読み込み時に
 全ベクトルを再生して一致確認する (issue #15 A-5)。**不一致ならポリシーを動かさない** —
-コピー・正規化統計・観測レイアウト・frame のどれかが壊れている。
+コピーか正規化統計が壊れている。**ただし golden は「このノードが観測をどう組み立てるか」を
+検証しない** — 記録済みの観測ベクトルをそのままネットに流すだけなので、並びを取り違えても
+PASS してしまう。組み立ての検証は ``export/meta.json`` の ``obs_fields`` と ``OBS_FIELDS``
+の突き合わせが受け持つ (無いバンドルでは警告のみ)。
 
 Command: holds UPRIGHT (target = identity)。前進は **既定 0** (新ポリシーは停止保持も学習
 分布内)。目標は ``umiusi_rl_control_msgs/AttitudeTarget`` を ``setpoint_topic`` に publish
@@ -79,13 +82,23 @@ CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
 # 値は正規化なしの生値 (0.2〜0.4 を想定、obs_norm.npz 側で素通し)。実行中に
 # `ros2 param set /rl_attitude_node max_duty` で変えると観測にもそのまま反映される —
 # 「現場で上限を上げたら実際に速く動く」ようにするためで、これが 18 次元化の目的。
+ACT_DIM = 8
 OBS_DIM_CAP = 18
 OBS_DIM = 17
 OBS_DIM_NO_VEL = 14
 # 速度指令を観測に持つ次元 (attitude タスクだけが持たない)
 OBS_DIMS_WITH_VEL = (OBS_DIM_CAP, OBS_DIM)
 OBS_DIMS_SUPPORTED = (OBS_DIM_CAP, OBS_DIM, OBS_DIM_NO_VEL)
-ACT_DIM = 8
+# 次元ごとの観測フィールド (名前, 幅)。`export/meta.json` の `obs_fields` と突き合わせる。
+# **golden 検証はこれを見ていない** — golden は記録済みの観測ベクトルをそのままネットに
+# 流すだけなので、重み・正規化統計は検証できるが、**このノードが観測をどう組み立てるかは
+# 検証されない**。並びを取り違えても golden は PASS してしまう。そこを埋めるための表。
+OBS_FIELDS = {
+    OBS_DIM_CAP: (("ori_err", 3), ("gyro", 3), ("v_cmd", 3), ("prev_action", ACT_DIM),
+                  ("max_duty", 1)),
+    OBS_DIM: (("ori_err", 3), ("gyro", 3), ("v_cmd", 3), ("prev_action", ACT_DIM)),
+    OBS_DIM_NO_VEL: (("ori_err", 3), ("gyro", 3), ("prev_action", ACT_DIM)),
+}
 DEFAULT_MODEL = "av_cal1_best_rep103"     # 本命 (issue #15 B 表)。同梱 models/ から選ぶ
 DEFAULT_VERT_MODEL = "av_cal5_3d_rep103"  # 深度モードの降下バースト用 (EXPERIMENTAL, 降下専用)
 GRAVITY = 9.80665                          # 水圧 -> 深度換算 [m/s^2]
@@ -448,6 +461,27 @@ class RlAttitudeNode(Node):
                 "入れます — 実行中に `ros2 param set` で変えると方策の出力も追従します")
         self.get_logger().info(f"policy loaded from {d / 'export'} (obs {self._obs_dim}-D, rep103)")
 
+    def _check_obs_fields(self, runner, export):
+        """``meta.json`` の ``obs_fields`` とこのノードの組み立て順を照合する。
+
+        ``obs_fields`` は ``[["ori_err", 3], ["gyro", 3], ...]`` のような (名前, 幅) の並び。
+        書いていないバンドル (既存の 17/14 次元) では警告だけ出して通す — 後方互換のため。
+        """
+        expected = OBS_FIELDS.get(runner.obs_dim)
+        fields = runner.meta.get("obs_fields")
+        if not fields:
+            self.get_logger().warning(
+                f"{export}/meta.json に obs_fields がありません。観測の並びを照合できないので "
+                "golden が PASS しても組み立て順の取り違えは検出できません "
+                f"(このノードの並び: {[n for n, _ in expected]})")
+            return
+        got = tuple((str(n), int(w)) for n, w in fields)
+        if got != expected:
+            raise ValueError(
+                f"観測レイアウトが sim と食い違っています ({export}/meta.json)。"
+                f"バンドル: {got} / このノード: {expected}")
+        self.get_logger().info(f"観測レイアウト一致: {[n for n, _ in expected]}")
+
     def _load_bundle(self, d: Path):
         """バンドルを読み、frame 契約・観測次元・golden を検証した PolicyRunner を返す。"""
         from umiusi_rl_control.policy_infer import PolicyRunner   # torch は遅延 import
@@ -472,6 +506,11 @@ class RlAttitudeNode(Node):
                 f"{OBS_DIM_CAP} (attitude_velocity + duty 上限) / {OBS_DIM} (attitude_velocity) / "
                 f"{OBS_DIM_NO_VEL} (attitude) のみ対応します "
                 "(servo/thrust を観測に含む旧 25/22 次元ポリシーは廃止 — A-11 のエコー問題)")
+
+        # 観測レイアウトの突き合わせ。**golden ではここは検証できない** (記録済みの観測を
+        # そのまま流すだけなので、このノードの組み立て順が違っても PASS する)。sim が
+        # meta.json に `obs_fields` を書いていれば、名前と幅で厳密に照合する。
+        self._check_obs_fields(runner, export)
 
         # 配備前検証 (issue #15 A-5): sim で記録した golden vectors を実機の推論経路で再生
         golden = d / "golden.npz"

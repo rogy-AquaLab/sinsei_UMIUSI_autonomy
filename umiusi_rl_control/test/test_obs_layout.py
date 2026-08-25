@@ -61,3 +61,27 @@ def test_速度指令を持つのは17と18だけ():
 def test_未対応の次元は黙って通さない():
     with pytest.raises(ValueError, match="次元"):
         _Stub()._build_obs(V_CMD, 25)
+
+
+# --- OBS_FIELDS (meta.json との突き合わせ表) が実際の組み立てと一致していること ---
+# golden 検証は記録済みの観測をそのままネットに流すだけなので、**組み立て順の取り違えを
+# 検出できない**。その穴を埋めるのが OBS_FIELDS なので、表そのものがずれていたら無意味。
+
+@pytest.mark.parametrize("obs_dim", N.OBS_DIMS_SUPPORTED)
+def test_OBS_FIELDSの幅の合計が次元と一致する(obs_dim):
+    assert sum(w for _, w in N.OBS_FIELDS[obs_dim]) == obs_dim
+
+
+@pytest.mark.parametrize("obs_dim", N.OBS_DIMS_SUPPORTED)
+def test_OBS_FIELDSの並びが実際の組み立てと一致する(obs_dim):
+    """各フィールドの区間に、実際にその値が入っていることを確かめる。"""
+    stub = _Stub(max_duty=0.3)
+    obs = stub._build_obs(V_CMD, obs_dim)
+    want = {"gyro": np.array(stub._imu.gyro), "v_cmd": V_CMD,
+            "prev_action": stub._prev_action, "max_duty": np.array([0.3])}
+    i = 0
+    for name, width in N.OBS_FIELDS[obs_dim]:
+        if name in want:
+            assert obs[i:i + width] == pytest.approx(want[name]), (obs_dim, name)
+        i += width
+    assert i == obs_dim
