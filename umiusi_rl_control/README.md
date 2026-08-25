@@ -56,6 +56,23 @@ All consume **REP-103 body-frame** observations (`export/meta.json` `obs_frame: 
 enforced at load) and carry `golden.npz` sim-recorded obs→action vectors that the node replays
 at load — a mismatch refuses to run (deploy-time verification, issue #15 A-5).
 
+**観測レイアウト** — 次元でタスクを判別し、組み立てを合わせる:
+
+| 次元 | 並び | タスク |
+|---|---|---|
+| 18 | `ori_err(3) gyro(3) v_cmd(3) prev_action(8) max_duty(1)` | attitude_velocity + duty 上限 |
+| 17 | `ori_err(3) gyro(3) v_cmd(3) prev_action(8)` | attitude_velocity (巡航) |
+| 14 | `ori_err(3) gyro(3) prev_action(8)` | attitude (姿勢のみ) |
+
+**`max_duty` は必ず末尾** (prev_action の後ろ)。sim 側の warm start が 17 次元の学習済み重みを
+初層のゼロパディングで引き継ぐため、この位置は**不変の契約**。値は正規化なしの生値で、
+実行中に `ros2 param set /rl_attitude_node max_duty 0.3` で変えると観測にもそのまま反映される
+— 「現場で上限を上げたら実際に速く動く」ようにするのが 18 次元化の目的 (盲目の domain
+randomization だと方策は最低上限に張り付く)。
+
+水平ポリシーと vert ポリシーで次元が違っていてよい (17 と 18 の混在)。観測はモデルごとに
+`model.obs_dim` で組むので `prev_action` の位置はずれない。
+
 ### 深度モード切替 (水圧センサ搭載時のみ)
 ```bash
 # 水圧の外側ループで水平巡航 (av_cal1_best) と降下バースト (av_cal5_3d) を切り替える。

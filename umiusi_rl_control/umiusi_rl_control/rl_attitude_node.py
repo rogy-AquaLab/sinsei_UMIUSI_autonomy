@@ -69,11 +69,22 @@ from umiusi_rl_control_msgs.msg import AttitudeTarget
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
 # 観測の次元は **ポリシーのタスクによって変わる**:
-#   attitude_velocity (巡航) = 17 … [ori_err 3, gyro 3, v_cmd 3, prev_action 8]
-#   attitude          (姿勢のみ) = 14 … 上から v_cmd を除いたもの
+#   attitude_velocity + duty 上限 = 18 … [ori_err 3, gyro 3, v_cmd 3, prev_action 8, max_duty 1]
+#   attitude_velocity (巡航)      = 17 … 上から max_duty を除いたもの
+#   attitude          (姿勢のみ)  = 14 … さらに v_cmd を除いたもの
 # 読み込んだポリシーの入力次元から判断して、観測の組み立てを合わせる。
+#
+# **`max_duty` は必ず末尾** (prev_action の後ろ)。sim 側の warm start (初層のゼロパディングで
+# 17 次元の学習済み重みを引き継ぐ) がこの位置を前提にしており、**今後も不変の契約**。
+# 値は正規化なしの生値 (0.2〜0.4 を想定、obs_norm.npz 側で素通し)。実行中に
+# `ros2 param set /rl_attitude_node max_duty` で変えると観測にもそのまま反映される —
+# 「現場で上限を上げたら実際に速く動く」ようにするためで、これが 18 次元化の目的。
+OBS_DIM_CAP = 18
 OBS_DIM = 17
 OBS_DIM_NO_VEL = 14
+# 速度指令を観測に持つ次元 (attitude タスクだけが持たない)
+OBS_DIMS_WITH_VEL = (OBS_DIM_CAP, OBS_DIM)
+OBS_DIMS_SUPPORTED = (OBS_DIM_CAP, OBS_DIM, OBS_DIM_NO_VEL)
 ACT_DIM = 8
 DEFAULT_MODEL = "av_cal1_best_rep103"     # 本命 (issue #15 B 表)。同梱 models/ から選ぶ
 DEFAULT_VERT_MODEL = "av_cal5_3d_rep103"  # 深度モードの降下バースト用 (EXPERIMENTAL, 降下専用)
@@ -413,9 +424,13 @@ class RlAttitudeNode(Node):
         d = (Path(mp) if mp else
              Path(get_package_share_directory("umiusi_rl_control")) / "models" / DEFAULT_VERT_MODEL)
         runner = self._load_bundle(d)
-        if runner.obs_dim != OBS_DIM:
+        if runner.obs_dim not in OBS_DIMS_WITH_VEL:
+            # 水平ポリシーと vert ポリシーで次元が違っていてよい (17 と 18 の混在)。
+            # 観測はモデルごとに `model.obs_dim` で組むので、prev_action の位置もずれない。
+            # 速度指令を持たない attitude タスク (14) だけは降下バーストに使えない。
             raise ValueError(
-                f"vert モデルは attitude_velocity (17 次元) が必要です ({d}: {runner.obs_dim})")
+                f"vert モデルは速度指令を観測に持つタスク "
+                f"({OBS_DIM} か {OBS_DIM_CAP} 次元) が必要です ({d}: {runner.obs_dim})")
         self._vert_model = runner
         self.get_logger().info(f"depth supervisor: vert policy loaded from {d}")
 
@@ -427,6 +442,10 @@ class RlAttitudeNode(Node):
             self.get_logger().info(
                 "attitude タスクのポリシーです (観測に速度指令を含まない)。"
                 "vel_cmd / AttitudeTarget.velocity は無視されます")
+        if self._obs_dim == OBS_DIM_CAP:
+            self.get_logger().info(
+                f"duty 上限を観測に持つポリシーです。max_duty={self._max_duty:.2f} を観測末尾に"
+                "入れます — 実行中に `ros2 param set` で変えると方策の出力も追従します")
         self.get_logger().info(f"policy loaded from {d / 'export'} (obs {self._obs_dim}-D, rep103)")
 
     def _load_bundle(self, d: Path):
@@ -447,10 +466,11 @@ class RlAttitudeNode(Node):
             raise ValueError(
                 f"obs_frame={frame!r} のポリシーです ({export}/meta.json)。このノードは IMU を "
                 "無変換 (REP-103) で観測に入れるので、rep103 変換済みバンドルだけを使えます")
-        if runner.obs_dim not in (OBS_DIM, OBS_DIM_NO_VEL):
+        if runner.obs_dim not in OBS_DIMS_SUPPORTED:
             raise ValueError(
                 f"対応していない観測次元 {runner.obs_dim} です ({export})。"
-                f"{OBS_DIM} (attitude_velocity) か {OBS_DIM_NO_VEL} (attitude) のみ対応します "
+                f"{OBS_DIM_CAP} (attitude_velocity + duty 上限) / {OBS_DIM} (attitude_velocity) / "
+                f"{OBS_DIM_NO_VEL} (attitude) のみ対応します "
                 "(servo/thrust を観測に含む旧 25/22 次元ポリシーは廃止 — A-11 のエコー問題)")
 
         # 配備前検証 (issue #15 A-5): sim で記録した golden vectors を実機の推論経路で再生
@@ -480,10 +500,19 @@ class RlAttitudeNode(Node):
             # 成分を落とすだけなので特異点が無い (RPY に直すと pitch±90 で破綻する)
             ori_err[YAW_IDX] = 0.0
         parts = [ori_err, gyro]
-        if obs_dim == OBS_DIM:                # attitude_velocity のみ速度指令を観測に持つ
+        if obs_dim in OBS_DIMS_WITH_VEL:      # attitude タスクだけが速度指令を持たない
             parts.append(v_cmd)
         parts.append(self._prev_action)
-        return np.concatenate(parts)
+        if obs_dim == OBS_DIM_CAP:
+            # duty 上限を **末尾** に生値で足す (契約は冒頭の OBS_DIM_CAP のコメント)。
+            # `self._max_duty` は `_on_set_params` で実行中も更新されるので、
+            # `ros2 param set` した値がそのまま方策に見える。
+            parts.append(np.array([self._max_duty], dtype=float))
+        obs = np.concatenate(parts)
+        if obs.shape[0] != obs_dim:           # レイアウトの取り違えを黙って通さない
+            raise ValueError(
+                f"観測を {obs.shape[0]} 次元で組みましたが、ポリシーは {obs_dim} 次元です")
+        return obs
 
     def _supervise(self):
         """深度モード切替。-> (使うモデル, 観測に入れる v_cmd)。
