@@ -85,3 +85,76 @@ def test_OBS_FIELDSの並びが実際の組み立てと一致する(obs_dim):
             assert obs[i:i + width] == pytest.approx(want[name]), (obs_dim, name)
         i += width
     assert i == obs_dim
+
+
+# --- meta.json の obs_fields 照合 (Node を立てずにメソッドだけ呼ぶ) ---
+
+class _Runner:
+    def __init__(self, obs_dim, fields=None):
+        self.obs_dim = obs_dim
+        self.meta = {} if fields is None else {"obs_fields": fields}
+
+
+class _Checker:
+    """`_check_obs_fields` はロガーしか使わないので、それだけ差し替える。"""
+
+    _check_obs_fields = N.RlAttitudeNode._check_obs_fields
+
+    def __init__(self):
+        self.warnings, self.infos = [], []
+        me = self
+
+        class _Log:
+            def warning(self, m, **kw):
+                me.warnings.append(m)
+
+            def info(self, m, **kw):
+                me.infos.append(m)
+
+        self._log = _Log()
+
+    def get_logger(self):
+        return self._log
+
+
+def _fields(obs_dim):
+    return [[n, w] for n, w in N.OBS_FIELDS[obs_dim]]
+
+
+@pytest.mark.parametrize("obs_dim", N.OBS_DIMS_SUPPORTED)
+def test_一致するobs_fieldsは通る(obs_dim):
+    c = _Checker()
+    c._check_obs_fields(_Runner(obs_dim, _fields(obs_dim)), "export")
+    assert c.infos and not c.warnings
+
+
+def test_obs_fieldsが無ければ警告だけで通す():
+    c = _Checker()
+    c._check_obs_fields(_Runner(N.OBS_DIM), "export")     # 既存の 17 次元バンドル
+    assert len(c.warnings) == 1
+
+
+def test_並びが違えば起動しない():
+    swapped = _fields(N.OBS_DIM_CAP)
+    swapped[0], swapped[1] = swapped[1], swapped[0]        # ori_err と gyro を入れ替え
+    with pytest.raises(ValueError, match="観測レイアウト"):
+        _Checker()._check_obs_fields(_Runner(N.OBS_DIM_CAP, swapped), "export")
+
+
+def test_max_dutyを先頭に置いたバンドルは弾く():
+    # このノードの実装ミスと対称な、sim 側が先頭に置いた場合
+    bad = [["max_duty", 1]] + _fields(N.OBS_DIM)
+    with pytest.raises(ValueError, match="観測レイアウト"):
+        _Checker()._check_obs_fields(_Runner(N.OBS_DIM_CAP, bad), "export")
+
+
+def test_幅の合計が次元と合わなければ弾く():
+    bad = _fields(N.OBS_DIM_CAP)[:-1]                      # max_duty を落とす = 17 分しかない
+    with pytest.raises(ValueError, match="幅の合計"):
+        _Checker()._check_obs_fields(_Runner(N.OBS_DIM_CAP, bad), "export")
+
+
+@pytest.mark.parametrize("bad", [["ori_err"], [["ori_err"]], [["ori_err", "three"]], "ori_err"])
+def test_形式が壊れていれば明示的に落ちる(bad):
+    with pytest.raises(ValueError, match="obs_fields"):
+        _Checker()._check_obs_fields(_Runner(N.OBS_DIM_CAP, bad), "export")

@@ -475,7 +475,18 @@ class RlAttitudeNode(Node):
                 "golden が PASS しても組み立て順の取り違えは検出できません "
                 f"(このノードの並び: {[n for n, _ in expected]})")
             return
-        got = tuple((str(n), int(w)) for n, w in fields)
+        try:
+            got = tuple((str(n), int(w)) for n, w in fields)
+        except (TypeError, ValueError) as e:
+            # 形が違うものを黙って「照合できた」ことにしない。sim 側は幅の合計が合わない
+            # ときは **キーごと省略する** 約束なので、ここに来るのは想定外の生成元。
+            raise ValueError(
+                f"obs_fields の形式が不正です ({export}/meta.json: {fields!r})。"
+                '[["名前", 幅], ...] の並びが必要です') from e
+        if sum(w for _, w in got) != runner.obs_dim:
+            raise ValueError(
+                f"obs_fields の幅の合計 {sum(w for _, w in got)} がポリシーの入力次元 "
+                f"{runner.obs_dim} と一致しません ({export}/meta.json)")
         if got != expected:
             raise ValueError(
                 f"観測レイアウトが sim と食い違っています ({export}/meta.json)。"
