@@ -90,7 +90,8 @@ class PerceptionNode(Node):
         except Exception as e:  # noqa: BLE001
             self.get_logger().error(
                 f"cannot import the detector from umiusi_perception ({type(e).__name__}: {e}); "
-                "is the umiusi_perception wheel installed (pip install .../packages/perception)?")
+                "is the umiusi_perception wheel installed (pip install .../packages/perception)?",
+                throttle_duration_sec=10.0)
             return False
         conf = self.get_parameter("conf_thresh").value
         size = self.get_parameter("input_size").value

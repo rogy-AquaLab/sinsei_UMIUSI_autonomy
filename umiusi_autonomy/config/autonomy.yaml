@@ -21,7 +21,14 @@ navigator_node:
     frame_h: 240
     frame_w: 320
     fovy_deg: 60.0
-    servo_range_deg: 90.0    # ThrusterOutput.angle [rad] = servo_action * radians(servo_range_deg)
+    servo_range_deg: 90.0    # ThrusterOutput.angle [deg] = servo_action * servo_range_deg
+                             # (受け側 sinsei_umiusi_control は DEGREES を期待し ±90 の範囲外は
+                             #  CAN フレームを落とす。msg の "[rad]" コメントのほうが誤り)
+    # DEPLOY CALIBRATION — 実機のサーボ回転センスが ch ごとに反転している場合の補正 (lf, lb, rb, rf)。
+    # sim のアロケーションは 4 基同符号 (+角度 = 推力が上向き) 前提。実機で「+指令なのに推力が
+    # 下を向く」ch があれば、その要素を -1.0 にする。**実験 1 (thruster_cmd.py spin) で確認してから
+    # 変えること** — 誤った符号はヒーブ指令をロールに化けさせる。
+    servo_sign: [1.0, 1.0, 1.0, 1.0]
     # DEPLOY CALIBRATION — verify against the mounted IMU (sensor_msgs/Imu.angular_velocity is RAD/S):
     yaw_rate_axis: "z"       # IMU axis carrying the vehicle yaw rate (x/y/z); REP-103 body frame -> z (up)
     yaw_rate_sign: 1.0

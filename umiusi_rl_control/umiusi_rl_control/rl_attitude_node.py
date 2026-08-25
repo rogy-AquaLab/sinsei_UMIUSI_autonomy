@@ -135,6 +135,9 @@ class RlAttitudeNode(Node):
         # 旧 A-9 (0 が分布外で飽和する) は当てはまらない。武装しても勝手に前進しない。
         self.declare_parameter("vel_cmd", 0.0)             # forward (+X) commanded speed [m/s]
         self.declare_parameter("servo_range_deg", 90.0)
+        # 実機のサーボ回転センスが ch ごとに反転している場合の補正 (lf, lb, rb, rf)。
+        # navigator_node と同じ規約。sim / ポリシーの前提は触らず、実機に出す直前で吸収する。
+        self.declare_parameter("servo_sign", [1.0, 1.0, 1.0, 1.0])
         self.declare_parameter("imu_max_gyro", 10.0)       # IMU サニティ: 角速度上限 [rad/s]
         self.declare_parameter("imu_max_step_deg", 30.0)   # IMU サニティ: 姿勢跳躍上限 [deg]
         # 既定は「検出するが破棄しない」。実機では該当が 0.44% しかないうえ、フィルタ自身の
@@ -186,6 +189,11 @@ class RlAttitudeNode(Node):
         self._dt = 1.0 / self._hz
         self._vel = float(self.get_parameter("vel_cmd").value)
         self._servo_range_deg = float(self.get_parameter("servo_range_deg").value)
+        _signs = [float(v) for v in self.get_parameter("servo_sign").value]
+        if len(_signs) != len(POSITIONS):
+            # 起動時に落とす。誤った符号のまま動かすほうが危険 (ヒーブがロールに化ける)。
+            raise ValueError(f"servo_sign needs {len(POSITIONS)} entries {POSITIONS}, got {_signs}")
+        self._servo_sign = _signs
         self._publish = bool(self.get_parameter("publish").value)
         self._hold_yaw = bool(self.get_parameter("hold_yaw").value)
         self._max_duty = abs(float(self.get_parameter("max_duty").value))
@@ -567,7 +575,10 @@ class RlAttitudeNode(Node):
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=True, servo=True)
             out.duty_cycle = float(self._duty_cmd[k])
-            out.angle = float(self._servo_cmd[k])                  # degrees, matching the plugin
+            # degrees, matching the plugin。ch 別のサーボ符号は **ここ** (実機に出す境界) でだけ
+            # 当てる — _servo_cmd は sim 規約のまま保つ。範囲外は CAN フレームが送れずに落ちる
+            # ので、ハードの ±90 に収めてから出す。
+            out.angle = max(-90.0, min(90.0, float(self._servo_cmd[k]) * self._servo_sign[k]))
             self._pubs[p].publish(out)
 
     def _detach_all(self):

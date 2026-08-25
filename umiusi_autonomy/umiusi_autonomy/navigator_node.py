@@ -33,10 +33,17 @@ DEPLOY CALIBRATION (verify on hardware, cannot be inferred from the sim):
     ``yaw_rate_axis`` / ``yaw_rate_sign`` select and orient that component (default z, +, REP-103
     x-fwd/y-left/z-up — the whole stack's frame contract). Confirm the axis/sign against the
     mounted IMU (issue #15 A-4).
-  * ThrusterOutput.angle is documented in RAD; ``servo_range_deg`` sets the half-range used to map
-    the normalised servo action to radians (default 90, matching configs/umiusi.yaml). NOTE:
-    tools/ros_policy currently scales in degrees — reconcile the two against the live bridge during
-    hardware bring-up (this is the spec's open "FF-frame sign reconcile" item).
+  * ThrusterOutput.angle は msg コメントでは [rad] だが、**受け側の実装は DEGREES**。
+    sinsei_umiusi_control の thruster_controller.cpp が /cmd/direct の angle を単位変換なしで
+    vesc_model.cpp ``make_servo_angle_frame(deg)`` に渡し、そこで ``(deg + 90) / 180`` に写す。
+    ±90 の範囲外は clamp ではなく **CAN フレーム送信そのものが失敗**する。よって
+    ``servo_range_deg`` (既定 90) をそのまま度スケールとして掛ける — tools/thruster_cmd.py と
+    umiusi_rl_control/rl_attitude_node.py も同じ規約。(以前ここは rad を送っており、フルスケール
+    でも 1.57 deg にしかならずベクタリングが実質死んでいた。spec の "FF-frame sign reconcile"
+    はこれで決着。ThrusterOutput.msg の "[rad]" コメント自体が誤りなので control 側で要訂正。)
+  * ``servo_sign`` — 実機のサーボは取り付けの都合で ch ごとに回転センスが反転しうる。sim 側の
+    アロケーションは 4 基同符号 (+角度 = 推力が上向き) 前提なので、**実機に出す直前**のここで
+    ch ごとに符号を合わせる。既定 [1,1,1,1] は従来どおりの挙動。
 
 SAFETY: ``~/estop`` (std_msgs/Bool, true) or ``~/arm`` (std_srvs/SetBool, data:false) DISARMs — the
 control tick stops and asserts a detach every cycle (direct mode: runnable esc/servo = false + zero;
@@ -44,8 +51,6 @@ target mode: zero Target). Re-arm via ``~/arm`` (data:true) or ``~/estop`` (fals
 """
 
 from __future__ import annotations
-
-import math
 
 import rclpy
 from rclpy.node import Node
@@ -73,6 +78,10 @@ class NavigatorNode(Node):
         self.declare_parameter("frame_w", 320)
         self.declare_parameter("fovy_deg", 60.0)
         self.declare_parameter("servo_range_deg", 90.0)
+        # 実機のサーボ回転センスが ch ごとに反転している場合の補正 (lf, lb, rb, rf)。
+        # sim / アロケーション側は触らない — あれは学習の前提なので、実機固有の事情は
+        # デプロイ境界であるここで吸収する。
+        self.declare_parameter("servo_sign", [1.0, 1.0, 1.0, 1.0])
         self.declare_parameter("yaw_rate_axis", "z")      # IMU axis carrying the vehicle yaw rate (REP-103: z)
         self.declare_parameter("yaw_rate_sign", 1.0)
         # IMU のサニティフィルタ (実機の化けサンプル対策)。0 以下で無効化できる。
@@ -89,8 +98,16 @@ class NavigatorNode(Node):
 
         self._control_hz = float(self.get_parameter("control_hz").value)
         self._dt = 1.0 / self._control_hz
-        self._servo_range_rad = math.radians(float(self.get_parameter("servo_range_deg").value))
-        self._yaw_axis = _AXIS.get(str(self.get_parameter("yaw_rate_axis").value).lower(), 1)
+        self._servo_range_deg = float(self.get_parameter("servo_range_deg").value)
+        signs = [float(v) for v in self.get_parameter("servo_sign").value]
+        if len(signs) != len(POSITIONS):
+            # 起動時に落とす。誤った符号のまま動かすほうが危険 (ヒーブがロールに化ける)。
+            raise ValueError(
+                f"servo_sign needs {len(POSITIONS)} entries {POSITIONS}, got {signs}")
+        self._servo_sign = signs
+        # 不正な軸名は既定の z にフォールバックする (以前は y に落ちており、1 文字の typo が
+        # 無言で誤軸になっていた)。
+        self._yaw_axis = _AXIS.get(str(self.get_parameter("yaw_rate_axis").value).lower(), 2)
         self._yaw_sign = float(self.get_parameter("yaw_rate_sign").value)
         self._imu_sanity = ImuSanity(
             max_gyro=float(self.get_parameter("imu_max_gyro").value),
@@ -105,6 +122,7 @@ class NavigatorNode(Node):
         self._dets = []                # last reconstructed detections (held between perception ticks)
         self._new_dets = False         # a fresh detection message arrived since the last control tick
         self._yaw_rate = 0.0
+        self._last_state = None        # FSM 状態遷移ログ用
 
         det_topic = self.get_parameter("detections_topic").value
         imu_topic = self.get_parameter("imu_topic").value
@@ -197,8 +215,9 @@ class NavigatorNode(Node):
             return
         fresh = self._new_dets
         self._new_dets = False
-        cmd, _info = self._behavior.step(self._dets, self._yaw_rate, heading=0.0,
-                                         dt=self._dt, fresh=fresh)
+        cmd, info = self._behavior.step(self._dets, self._yaw_rate, heading=0.0,
+                                        dt=self._dt, fresh=fresh)
+        self._log_fsm(cmd, info)
         if not self._publish:
             return
         if self._mode == "target":
@@ -208,6 +227,20 @@ class NavigatorNode(Node):
             # heave = +Vz, yaw command on the orientation channel.
             action = self._alloc([0.0, 0.0, cmd["yaw"]], [-cmd["surge"], 0.0, cmd["heave"]])
             self._command_thrusters(action)
+
+    def _log_fsm(self, cmd, info):
+        """FSM の状態と drive 指令をログに出す。状態遷移は毎回、通常のティックは
+        ``publish:=false`` のドライ確認時のみ 1 Hz。実機の通常運用ではほぼ無音。
+        これが無いと publish:=false は「落ちない」ことしか確認できない (issue #18 P4)。"""
+        state = info["state"]
+        line = (f"FSM {state} target={info['target']} az={info['az']:+.3f} "
+                f"range={info['range']:.2f} bbox={info['bbox']:.2f} blue={info['blue_threat']} "
+                f"-> surge={cmd['surge']:+.3f} heave={cmd['heave']:+.3f} yaw={cmd['yaw']:+.3f}")
+        if state != self._last_state:
+            self._last_state = state
+            self.get_logger().info(line)
+        elif not self._publish:
+            self.get_logger().info(line, throttle_duration_sec=1.0)
 
     def _publish_target(self, cmd):
         # Ride on core: publish the FSM's {surge, heave, yaw} as a Target setpoint on /cmd/target and
@@ -225,7 +258,10 @@ class NavigatorNode(Node):
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=True, servo=True)
             out.duty_cycle = float(action[4 + k])              # esc command in [-1, 1]
-            out.angle = float(action[k]) * self._servo_range_rad  # normalised servo -> radians
+            # 正規化サーボ値 -> DEGREES (受け側の規約)。範囲外は CAN フレームが送れずに
+            # 落ちるだけなので、ここでハードの ±90 に収めてから出す。
+            deg = float(action[k]) * self._servo_range_deg * self._servo_sign[k]
+            out.angle = max(-90.0, min(90.0, deg))
             self._pubs[p].publish(out)
 
     def _detach_all(self):
