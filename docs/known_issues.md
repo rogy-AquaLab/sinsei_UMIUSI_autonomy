@@ -548,13 +548,19 @@ pi  -  memlock unlimited
 
 ### B-12. 【高】`/cmd/direct` は `is_forward` / `max_duty` / スルーレート制限を素通りする
 
-> **上流で修正済み (未マージ)**: `sinsei_UMIUSI_control` の `fix/actuator-limits-on-direct-cmd`。
+> **上流に修正あり (未マージ)**: `sinsei_UMIUSI_control` 側で対応中 (issue #19-5)。
 > アクチュエータの歯止めを `ThrusterLimits` に切り出し、**指令の出所によらず必ず通す**ように
 > した (duty 上限 / スルーレート / `servo_sign` / サーボ角 ±90 クランプ)。
 > `is_forward` と `duty_per_thrust` は「推力[N] → duty の換算」なので Logic 側に残っている
 > — 直接指令はすでに duty で届くため、掛け直すと二重換算になる (A-12 で符号補正不要と確定)。
 > **マージされて実機へ入るまで、下記の実態は変わらない。** 入ったら autonomy 側の暫定シム
 > (`servo_sign` / `max_duty` / 度変換 / ±90 クランプ) を撤去する。
+>
+> **撤去を急ぐ必要があるのは `servo_sign` だけ。** 両側が掛けると符号が二度反転して
+> 補正が打ち消される (既定 `[1,1,1,1]` / `1.0` のままなら実害は無い)。残りは重ねても
+> 壊れない: レート制限は同じ値を直列にしても 1 段目の出力がすでに条件を満たすので
+> **べき等**、`max_duty` は厳しい側 (autonomy の 0.25) が効くだけ、±90 クランプも
+> べき等、度変換は control 側が持っていないので二重にならない。
 
 `thruster_controller.cpp` の `update()`:
 
@@ -601,8 +607,8 @@ msg のコメントは `[rad]` だが、受け側の実装は **DEGREES**:
 `navigator_node` が rad を送っておりフルスケールでも 1.57° にしかなっていなかった (修正済み)。
 `thruster_cmd.py` と `rl_attitude_node` は元から度で正しい。
 
-> **上流で修正済み (未マージ)**: `sinsei_umiusi_msgs` の `fix/servo-angle-unit-comment` で
-> `ThrusterOutput.angle` / `ThrusterState.angle` のコメントを DEGREES に訂正した。
+> **上流に修正あり (未マージ)**: `sinsei_umiusi_msgs` 側で `ThrusterOutput.angle` /
+> `ThrusterState.angle` のコメントを DEGREES に訂正 (issue #19-5)。
 > 併せて分かったこと: **`ThrusterState.angle` は指令のエコーで、実測のサーボ角ではない**。
 > サーボには位置のフィードバック経路が無く (state interface は `esc/rpm` / `esc/voltage` /
 > `esc/water_leaked` のみ)、`thruster_controller` が出した角度がそのまま返る。
