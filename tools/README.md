@@ -15,6 +15,7 @@
 | `umiusi_stack.sh` | **実機スタックの起動/停止/状態確認**。`start` / `stop` / `restart` / `status`。`--no-ui` で rosbridge を止めて CPU を空ける、`--with-rl` で RL 姿勢制御も起動。**単体実験は `--attitude`（姿勢制御だけ・カメラを上げない）/ `--perception`（カメラブリッジ + perception だけ）**、`--no-publish` でスラスタへ出さず計算だけ。カメラ設定は同梱の `cameras_deploy.yaml` を自動で渡す（`UMIUSI_CAMERAS_PARAM` で上書き）。`--attitude-policy` で姿勢保持専用 (`att_cal1_best_rep103`) に差し替え、環境変数 `UMIUSI_RL_MODEL` でバンドルを直接指定できる |
 | `experiment_test.sh` | **単体実験モードの実機確認を一気に通す**。事前確認 (cameras 設定と H264 デバイスの一致など) → perception 単体 → 姿勢制御単体 → ロギング を起動から判定までやる。**スラスタは回さない** (RL は publish=false 固定)。`--perception` / `--attitude` / `--logging` で個別実行 |
 | `acceptance_test.sh` | **受け入れ試験**。CAN / VESC 4 台の ping / カメラ / torch / 周期 / IMU 健全性 を一気に確認して OK/NG を出す。`--start` でスタック起動から行う |
+| `can_rate.py` | **CAN フレームの送信間隔を測る**（`candump` を呼ぶだけで**ビルド不要**）。サーボ振動の切り分け用。`control` は 1 制御ループにつき CAN 1 フレームしか送らないため、100 Hz でも**各サーボの角度更新は 6.25 Hz** になる計算 — それを実測で確かめる |
 | `bench_rates.py` | 指定トピックの周期と CPU/温度を確実に測る。**publisher 数も報告する**ので「0 Hz なのは publisher が居ないからか、遅いだけか」を取り違えない |
 
 ## 記録
