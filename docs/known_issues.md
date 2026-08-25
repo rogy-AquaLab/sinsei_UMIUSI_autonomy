@@ -385,6 +385,8 @@ systemd・スクリプト・非対話 SSH からの起動では**設定されな
 つまり:
 
 * **接続は IP ではなく `ssh pi@<機体名>.local` (mDNS)** で行う。固定 IP は使わない
+  — **が、実運用で mDNS が引けないことが多く、保険として固定 IP を併記した (B-10)。**
+  公式の設定は削っていないので、この項目の内容は引き続き有効
 * **PC からのインターネット共有が正規のワークフロー** (Pi が apt / pip / git を使えるようにする)。
   Linux の PC なら `sudo nmcli con mod "<有線接続名>" ipv4.method shared`
 * 共有が無くても `link-local: [ipv4]` により `169.254.x.x` を自己割り当てするので mDNS は効く。
@@ -400,6 +402,67 @@ sudo ufw allow in on <有線IF> from 10.42.0.0/24
 
 SSH だけなら PC 側の ufw は関係ない (PC からの outbound のため)。**PC でも ROS 2 を動かして
 Pi と通信する場合にのみ必要。**
+
+### B-10. 【運用】mDNS で入れないことが多い — 固定 IP を保険として併記した
+
+**公式方針 (B-4) は「固定 IP は使わず mDNS で入る」だが、実運用で引けない事例が続いた**ため、
+netplan に固定 IP を**併記**した。**公式の設定 (`dhcp4` / `link-local` / `optional`) は
+一切削っていない**ので、mDNS も DHCP も従来どおり効く。あくまで詰まったときの保険。
+
+> **この変更は公式 Wiki の方針からの逸脱**。共同開発者と Wiki 側にも共有すること。
+
+Pi 側 `/etc/netplan/99-*.yaml` (`addresses` の行を追加しただけ):
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: true                      # 公式のまま
+      link-local: [ipv4]               # 公式のまま
+      optional: true                   # 公式のまま
+      addresses: [192.168.137.2/24]    # ← 追加。Windows ICS のセグメントに合わせた
+```
+
+`sudo netplan apply` で反映する。**リモートから適用すると SSH が切れる**ので、
+`sudo netplan try` (120 秒で自動ロールバック) のほうが安全。
+
+#### 引けなくなる典型パターン
+
+| 症状 | 原因 |
+|---|---|
+| HUB / ケーブルを替えた直後から引けない | **Windows がネットワークを作り直し、プロファイルが「パブリック」に戻る**。パブリックだと mDNS がブロックされる |
+| `Set-NetConnectionProfile` が失敗する | **管理者 PowerShell で実行していない** (エラー文の 1 番目の理由) |
+| 共有を切り替えた直後だけ引けない | Pi が経路変更に適応するまで数分かかる (B-4) |
+| そもそも別名で探していた | 機体ごとにホスト名が違う (`umiusi2` / `alexandrite` …) |
+
+Windows 側の復旧 (**管理者 PowerShell**):
+
+```powershell
+Get-NetConnectionProfile                                          # 有線が Public なら原因はこれ
+Set-NetConnectionProfile -InterfaceIndex <有線の Index> -NetworkCategory Private
+Enable-NetFirewallRule -DisplayGroup "mDNS"
+```
+
+#### 共有のセグメントは OS で違う
+
+| PC 側 | Pi が取るアドレス |
+|---|---|
+| **Windows のインターネット共有 (ICS)** | `192.168.137.x` (PC は `192.168.137.1` 固定) |
+| **Linux の `nmcli ... ipv4.method shared`** | `10.42.0.x` |
+| 共有なし (両者 DHCP なし) | `169.254.x.x` (リンクローカル) |
+
+**固定 IP を振るならどちらのセグメントに合わせるかを決める必要がある。** いまは Windows ICS に
+合わせて `192.168.137.2/24` を採用している。Linux から繋ぐ場合は、PC 側を同セグメントに
+手動設定するか、従来どおり DHCP / mDNS で繋ぐ。
+
+#### 相手が見つからないときの探し方
+
+```powershell
+arp -a | Select-String "192.168.137"     # ICS 環境。Pi の MAC は DC:A6:32 で始まる (Raspberry Pi)
+netsh interface ipv6 show neighbors      # fe80:: は MAC 由来なので HUB 交換でも変わらない
+ping -6 ff02::1%<有線の Index>           # リンク上の全ノードに問い合わせ
+```
 
 ### B-7. 【中】`ros2_control` がリアルタイム優先度を取れていない
 

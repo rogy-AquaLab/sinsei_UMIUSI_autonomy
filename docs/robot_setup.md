@@ -14,18 +14,37 @@ RogikenWiki の公式手順が正。** この文書はそこに載っていな�
 ## 0. 前提の確認
 
 ```bash
-ssh pi@<機体名>.local          # mDNS で入れること (IP は使わない)
+ssh pi@<機体名>.local          # mDNS。引けないときは下の「接続のしかた」へ
 ip -d link show can0           # state UP / ERROR-ACTIVE / bitrate 500000
 systemctl is-active mediamtx   # active (RTSP サーバ)
 cam -l                         # カメラが列挙されること
 groups                         # video / gpio / i2c / dialout が含まれること
 ```
 
-> **ネットワークは「PC からのインターネット共有」が正規手順**。Pi 側の
-> `/etc/netplan/99-*.yaml` に `link-local: [ipv4]` があるので、共有の有無に関わらず
-> mDNS で引ける。**共有をオンオフした直後は Pi が経路変更に適応するまで数分かかる**。
-> 繋がらないときは PC 側のファイアウォールを疑うこと (Linux の PC なら
+### 接続のしかた
+
+**公式手順は「PC からのインターネット共有 + mDNS」**。ただし mDNS が引けないことが多いので、
+netplan に**固定 IP を併記**してある (`docs/known_issues.md` B-10)。用途で使い分ける:
+
+| 場面 | やること | 接続先 |
+|---|---|---|
+| **Pi をネットに出したい**<br>(`git pull` / apt / pip) | PC で**インターネット共有**を有効化<br>Win: Wi-Fi のプロパティ → 共有タブ → 有線を選択<br>Linux: `sudo nmcli con mod "<有線接続名>" ipv4.method shared` | `ssh pi@<機体名>.local`<br>または DHCP で得た IP |
+| **ネットが無い / 現場** | **PC 側に固定 IP を手動設定**<br>Win: `ncpa.cpl` → 有線 → IPv4 → `192.168.137.1` / `255.255.255.0`<br>(ゲートウェイと DNS は**空欄**)<br>Linux: `sudo nmcli con mod "<有線接続名>" ipv4.method manual ipv4.addresses 192.168.137.1/24` | **`ssh pi@192.168.137.2`** |
+| 従来どおり | 何もしない (両者リンクローカル) | `ssh pi@<機体名>.local` |
+
+**固定 IP は「追加」であって置き換えではない。** `dhcp4` も `link-local` も残っているので、
+インターネット共有も mDNS も従来どおり動く。
+
+> **共有をオンオフした直後は Pi が経路変更に適応するまで数分かかる。**
+>
+> **HUB やケーブルを替えた直後に mDNS が引けなくなったら**、Windows のネットワーク
+> プロファイルが「パブリック」に戻っていないか確認する (パブリックだと mDNS がブロックされる)。
+> **管理者 PowerShell**で `Set-NetConnectionProfile -InterfaceIndex <n> -NetworkCategory Private`。
+> 詳細と探し方は `known_issues.md` B-10。
+>
+> 繋がらないときは PC 側のファイアウォールも疑うこと (Linux の PC なら
 > `sudo ufw allow in on <有線IF> from 10.42.0.0/24`。これが無いと ROS 2 の DDS が通らない)。
+> **SSH だけなら PC 側の ufw は関係ない** (PC からの outbound のため)。
 
 ---
 
