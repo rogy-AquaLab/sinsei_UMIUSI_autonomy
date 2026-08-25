@@ -90,6 +90,11 @@ class NavigatorNode(Node):
         # 既定は「検出するが破棄しない」(rl_attitude_node と同じ理由)
         self.declare_parameter("imu_sanity_enforce", False)
         self.declare_parameter("publish", True)            # False = compute only, do not command
+        # duty の上限。**この経路には他にどこにも歯止めが無い** — /cmd/direct は control の
+        # max_duty / スルーレート制限を素通りする (docs/known_issues.md B-12)。FSM は SPEED_CAP を
+        # 掛けた {surge, heave, yaw} を出すが、アロケーションを通ると duty は最大 1.0 まで振れる
+        # (surge と heave と yaw が同時に立つと飽和する)。rl_attitude_node と同じ既定 0.2。
+        self.declare_parameter("max_duty", 0.2)
         # "direct" (default, unchanged): feed-forward allocate here -> /cmd/direct ThrusterOutput.
         # "target": ride on sinsei_umiusi_control -> publish a Target on /cmd/target and let the
         # control stack allocate. EXPERIMENTAL, needs hardware/sim validation (see module docstring).
@@ -114,6 +119,7 @@ class NavigatorNode(Node):
             max_step_deg=float(self.get_parameter("imu_max_step_deg").value),
             enforce=bool(self.get_parameter("imu_sanity_enforce").value))
         self._publish = bool(self.get_parameter("publish").value)
+        self._max_duty = abs(float(self.get_parameter("max_duty").value))
         self._mode = str(self.get_parameter("command_mode").value).lower()
 
         self._behavior = None          # lazily built (defer umiusi_perception import off the build path)
@@ -147,7 +153,9 @@ class NavigatorNode(Node):
         self._timer = self.create_timer(self._dt, self._control_tick)
         self.get_logger().info(
             f"navigator_node[{self._mode}]: detections='{det_topic}', imu='{imu_topic}' -> "
-            f"{sink} @ {self._control_hz:.0f} Hz (publish={self._publish})")
+            f"{sink} @ {self._control_hz:.0f} Hz "
+            f"(publish={self._publish}, max_duty={self._max_duty:.2f}, "
+            f"servo_sign={self._servo_sign})")
 
     def _ensure_behavior(self) -> bool:
         if self._behavior is not None:
@@ -254,10 +262,16 @@ class NavigatorNode(Node):
         self._pub_target.publish(msg)
 
     def _command_thrusters(self, action):
+        # duty を上限に収める。**チャンネルごとに clip すると推力ベクトルの向きが変わる**ので、
+        # 飽和したら 4 基まとめて同じ比率で縮める (向きを保ったまま弱くする)。FSM は
+        # 「どちらを向くか」で目標を追うので、向きが崩れるほうが挙動として危ない。
+        # (rl_attitude_node は per-channel clip。あちらはポリシーが飽和込みで学習しているため。)
+        peak = max(abs(float(action[4 + k])) for k in range(len(POSITIONS)))
+        scale = self._max_duty / peak if peak > self._max_duty > 0.0 else 1.0
         for k, p in enumerate(POSITIONS):
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=True, servo=True)
-            out.duty_cycle = float(action[4 + k])              # esc command in [-1, 1]
+            out.duty_cycle = float(action[4 + k]) * scale      # esc command in [-1, 1]
             # 正規化サーボ値 -> DEGREES (受け側の規約)。範囲外は CAN フレームが送れずに
             # 落ちるだけなので、ここでハードの ±90 に収めてから出す。
             deg = float(action[k]) * self._servo_range_deg * self._servo_sign[k]

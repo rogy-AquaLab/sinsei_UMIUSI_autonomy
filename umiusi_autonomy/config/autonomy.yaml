@@ -41,6 +41,10 @@ navigator_node:
     imu_max_gyro: 10.0        # [rad/s] 検出の閾値 (フルスケールは 35.74)
     imu_max_step_deg: 30.0    # 1 サンプルの姿勢跳躍上限 [deg]。50Hz なら 1500 deg/s 相当
     publish: true            # false -> compute the FSM but do NOT command the thrusters (dry test)
+    # duty の上限。**この経路には他に歯止めが無い** (/cmd/direct は control の max_duty と
+    # スルーレート制限を素通りする — known_issues B-12)。飽和時は向きを保ったまま 4 基を
+    # 同率で縮める。初回の水中投入は 0.2 から。深度方向を使うなら 0.4 が要る。
+    max_duty: 0.2
     command_mode: "direct"   # "direct" -> /cmd/direct ThrusterOutput (default, self-enabling).
                              # "target" -> ride on core: publish Target on /cmd/target (EXPERIMENTAL;
                              #             needs power-on + AUTO mode; see navigator_node docstring).

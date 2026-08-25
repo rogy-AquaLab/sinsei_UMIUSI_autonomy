@@ -19,6 +19,7 @@ def generate_launch_description():
     model_path = LaunchConfiguration("model_path")
     image_topic = LaunchConfiguration("image_topic")
     publish = LaunchConfiguration("publish")
+    max_duty = LaunchConfiguration("max_duty")
 
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
@@ -27,6 +28,8 @@ def generate_launch_description():
                               description="onboard camera topic"),
         DeclareLaunchArgument("publish", default_value="true",
                               description="navigator commands the thrusters (false = dry / FSM-only)"),
+        DeclareLaunchArgument("max_duty", default_value="0.2",
+                              description="duty upper bound (this path bypasses control's max_duty)"),
         Node(
             package="umiusi_autonomy",
             executable="perception_node",
@@ -39,6 +42,6 @@ def generate_launch_description():
             executable="navigator_node",
             name="navigator_node",
             output="screen",
-            parameters=[params, {"publish": publish}],
+            parameters=[params, {"publish": publish, "max_duty": max_duty}],
         ),
     ])
