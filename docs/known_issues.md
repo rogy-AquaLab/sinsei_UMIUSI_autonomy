@@ -546,6 +546,47 @@ pi  -  memlock unlimited
 実機は PR#303 相当で、**ESC の推力符号修正 (PR#307) が未取り込み**。実機の推力方向に効くので
 `main` へ更新すること。
 
+### B-12. 【高】`/cmd/direct` は `is_forward` / `max_duty` / スルーレート制限を素通りする
+
+`thruster_controller.cpp` の `update()`:
+
+```cpp
+const auto has_no_thruster_publishers = ...;
+if (has_no_thruster_publishers) {
+    this->output = this->logic->update(...);   // ← logic はここでしか呼ばれない
+}
+this->output.cmd.esc_duty_cycle.value = this->output.state.esc_duty_cycle.value;
+```
+
+`/cmd/direct/...` に publisher が居ると **logic ごとスキップ**される。直接指令経路 (較正実験の
+`tools/thruster_cmd.py`、`rl_attitude_node`、`navigator_node`) では以下が **一切効かない**:
+
+| パラメータ | 本来の役割 | 直接指令経路での実態 |
+|---|---|---|
+| `is_forward` | 基ごとの推力向き反転 | **無視**。実機の取り付け反転をここで直せない |
+| `max_duty` (0.5) | duty 上限 | **無視**。上限は publisher 側の自主規制のみ |
+| `max_duty_step_per_sec` | スルーレート制限 | **無視**。ステップ指令がそのまま出る |
+| `duty_per_thrust` | 推力→duty 換算 | **無視** |
+
+直接指令の上書き自体は意図どおりだが、**制御スタック側の歯止めがゼロ**になる点は認識が要る。
+max_duty 0.4 プロトコルは `thruster_cmd.py` の自主チェックだけで担保されている。
+
+**帰結**: 基ごとの推力向き・サーボ向きの補正を `is_forward` で入れることはできない。autonomy 側は
+`servo_sign` パラメータ (`navigator_node` / `rl_attitude_node`、既定 `[1,1,1,1]`) を publish 直前に
+当てる方式で吸収している。ESC 側の向き補正はまだ入っていない (A-12 の決着待ち)。
+
+### B-13. 【中】`ThrusterOutput.angle` の単位コメントが実装と逆
+
+msg のコメントは `[rad]` だが、受け側の実装は **DEGREES**:
+
+- `thruster_controller.cpp` が `/cmd/direct` の `msg->angle` を**単位変換なしで素通し**
+- `vesc_model.cpp` `make_servo_angle_frame(double deg)` が `(deg + 90) / 180` で 0..1 に写す
+- **±90 の範囲外は clamp ではなく CAN フレーム送信そのものが失敗**する
+- control 自身の FF も `atan(...) * 180 / pi` で度を出している
+
+`navigator_node` が rad を送っておりフルスケールでも 1.57° にしかなっていなかった (修正済み)。
+`thruster_cmd.py` と `rl_attitude_node` は元から度で正しい。**control 側の msg コメントを訂正すること**。
+
 ---
 
 ## C. 対応の優先順
