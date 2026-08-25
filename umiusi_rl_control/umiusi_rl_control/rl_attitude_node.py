@@ -38,7 +38,8 @@ sensor_msgs/FluidPressure) から深度を作り、``target_depth`` との誤差
 巡航を一時停止して深度補正に入る — 降下はブレーキ→同梱 3-D ポリシー
 (``models/av_cal5_3d_rep103``) の純下バースト、浮上は弱正浮力トリム任せの受動浮上。
 状態機械と検証済みパラメータは ``depth_supervisor.py`` 冒頭を参照 (sim リハーサル:
-issue #15 のコメント)。**深度モードは max_duty 0.4 が前提** (0.2 では降下できない)。
+issue #15 のコメント)。**深度モードは max_duty 0.3 以上を推奨** (既定 0.25 では降下が遅い。
+0.2 で降下できないのは上限ではなく零空間への配分が原因 — issue #19)。
 深度ゼロ点は起動後の最初の水圧サンプル列で取る (水面で起動する前提)。潜った状態で
 再ゼロしたいときは ``~/zero_depth`` (std_srvs/Trigger)。診断: ``~/depth`` (Float32, m,
 正=深い) と ``~/depth_mode`` (String: horiz/brake/vert/ascend)。
@@ -150,9 +151,13 @@ class RlAttitudeNode(Node):
         # ドリフトもあるので、roll/pitch だけ保ちたい場面が多い。
         # 実行中に `ros2 param set /rl_attitude_node hold_yaw false` で切り替えられる。
         self.declare_parameter("hold_yaw", True)
-        # duty_cycle の絶対値上限。1.0 = 制限なし。**既定は 0.2** — sim の事前評価で
-        # 姿勢・巡航とも最良だった値 (issue #15 A-3)。問題なければ 0.4 へ上げる。
-        self.declare_parameter("max_duty", 0.2)
+        # duty_cycle の絶対値上限。1.0 = 制限なし。**既定は 0.25**。
+        # 8/25 の水中 run の解析で 0.2 の根拠が崩れたため 0.25 に上げた: 実機の |duty| は p5〜p99 が
+        # すべて 0.2000 (96% 飽和) で比例制御になっておらず、さらに鉛直パワーの 41.2% が
+        # 零空間 (合力もモーメントも生まない対角モード) に流れていて 0.2 では降下できない。
+        # 0.25 でロール転覆余裕が 1.0 を超える (1.1x) ので、まずここまで。**0.4 は配分 (零空間)
+        # を直してから** — 上限は力の次元で効くので 0.2->0.4 は「倍」ではなく 4 倍 (F = |u|^2*30 N)。
+        self.declare_parameter("max_duty", 0.25)
         # **指令のレート制限。sim と同じ値を既定にする** (configs/umiusi.yaml の
         # servo_slew_deg_per_s / thrust_slew_per_s)。sim はポリシーの指令をこれで
         # 平滑化してから物理に入れており、実機側に無いと sim2real ギャップになる。

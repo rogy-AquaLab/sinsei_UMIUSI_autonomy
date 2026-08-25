@@ -7,6 +7,9 @@
 #   Ctrl-C で両方をきれいに停止する
 #   ./record_run.sh --fix           # 記録済み bag の metadata を後から復元する
 #
+# **スタックより先に起動してよい**。recorder は録りながら discovery を回すので、後から現れた
+# トピックも拾う。起動から UMIUSI_REC_VERIFY_S 秒 (既定 20) 後に「何を購読できたか」を出す。
+#
 # 映像は H264 のまま (再エンコードなし)、bag は生画像を含めない。実測の根拠は
 # docs/logging.md — `ros2 bag record -a` は容量 200 倍・CPU +30pt・認識 -12% になる。
 set -o pipefail
@@ -96,6 +99,33 @@ TOPICS="
 
 PIDS=""
 CLEANED=false
+# 購読の検証を出すまでの待ち時間 [s]。スタックの起動 (10 s 超) と discovery を待つ。
+VERIFY_S="${UMIUSI_REC_VERIFY_S:-20}"
+
+# recorder が **実際に購読できた** トピックを bag.log から数えて報告する。
+# 「黙って一部しか録れていない」まま 15 分回してしまったのが 8/25 の run で一番効いた欠落。
+# 実験を止められるうちに気付けるよう、開始直後と終了時の 2 回出す。
+check_topics() {
+  [ -f "$OUT/bag.log" ] || return 0
+  local n=0 total=0 missing=""
+  for t in $TOPICS; do
+    total=$((total+1))
+    if grep -qF "Subscribed to topic '$t'" "$OUT/bag.log"; then
+      n=$((n+1))
+    else
+      missing="$missing $t"
+    fi
+  done
+  if [ -z "$missing" ]; then
+    echo "  購読 $n/$total トピック — 指定したものはすべて録れています"
+    return 0
+  fi
+  echo "  ⚠ 購読 $n/$total トピック。まだ 1 度も publish されていない:"
+  for t in $missing; do echo "      $t"; done
+  echo "    後から publish が始まれば discovery が拾います (録り直しは不要)。"
+  echo "    最後まで出ないなら、そのノードが起動していないかトピック名が違います。"
+}
+
 
 # **子プロセスを起こす前に** trap を張る。起動直後〜trap 設定前に Ctrl-C が入ると
 # 録画と bag が孤児として回り続けてしまうため。
@@ -122,6 +152,8 @@ cleanup() {
     ros2 bag reindex "$OUT/bag" > "$OUT/reindex.log" 2>&1 \
       && echo "  reindex 完了" || echo "  ⚠ reindex に失敗 (bag/reindex.log を確認)"
   fi
+  # 何が録れたのかを最後にもう一度出す。bag を開くまで分からない状態にしない。
+  check_topics
   # 取り出しを楽にするため、最後の run へのリンクを張り直す
   #   scp -r pi@<機体>:runs/latest/ .        (ディレクトリ名を調べなくてよい)
   ln -sfn "$OUT" "$OUTROOT/latest"
@@ -140,23 +172,22 @@ if [ "$BAG_ONLY" != true ]; then
 fi
 
 if [ "$CAM_ONLY" != true ]; then
-  # 存在しないトピックを渡すと record 自体が起動しないので、実在するものだけに絞る
-  avail=$(ros2 topic list 2>/dev/null)
-  rec=""
-  for t in $TOPICS; do echo "$avail" | grep -qx "$t" && rec="$rec $t"; done
-  if [ -z "$rec" ]; then
-    echo "  ⚠ 記録対象のトピックが 1 つも見つかりません (スタックは起動していますか?)"
-  else
-    # shellcheck disable=SC2086
-    # `< /dev/null` は必須。`set -m` でジョブ制御が有効なので、この子は別プロセスグループに
-    # なる。`ros2 bag record` は「Press SPACE で一時停止」のため **stdin を読みにいく**ので、
-    # 端末を継いだままだと **SIGTTIN で停止**する。停止すると wait が返って cleanup が走り、
-    # SIGINT は停止中のプロセスに届かないので最後は kill -9 になる (対話シェルで実行すると
-    # 必ず踏む。ログには最初の warning 1 行しか残らない)。
-    ros2 bag record -o "$OUT/bag" $rec > "$OUT/bag.log" 2>&1 < /dev/null &
-    PIDS="$PIDS $!"
-    echo "  データ : $(echo $rec | wc -w) トピック -> $OUT/bag/"
-  fi
+  # **トピックを事前に絞ってはいけない。** 以前はここで `ros2 topic list` に無いものを落として
+  # いたが、recorder は起動後も discovery を回し、**後から現れたトピックを拾う** (実測: 起動時に
+  # 存在しないトピックでも publish が始まった 3.6 s 後に購読された)。事前に絞ると、その run では
+  # 二度と拾われない。8/25 の水中 run はこれで 20 指定のうち 12 しか録れず、autonomy 側
+  # (/perception_node/detections, /cmd/target, /rl_attitude_node/*) が全滅した。
+  # したがって **`--no-discovery` は絶対に付けない**。`-p` は discovery の周期 [ms]。
+  # 1 つも存在しなくても record 自体は起動する (実測) ので、事前チェックも不要。
+  # shellcheck disable=SC2086
+  # `< /dev/null` は必須。`set -m` でジョブ制御が有効なので、この子は別プロセスグループに
+  # なる。`ros2 bag record` は「Press SPACE で一時停止」のため **stdin を読みにいく**ので、
+  # 端末を継いだままだと **SIGTTIN で停止**する。停止すると wait が返って cleanup が走り、
+  # SIGINT は停止中のプロセスに届かないので最後は kill -9 になる (対話シェルで実行すると
+  # 必ず踏む。ログには最初の warning 1 行しか残らない)。
+  ros2 bag record -o "$OUT/bag" -p 200 --topics $TOPICS > "$OUT/bag.log" 2>&1 < /dev/null &
+  PIDS="$PIDS $!"
+  echo "  データ : $(echo $TOPICS | wc -w) トピック -> $OUT/bag/ (未起動のノードは後から拾う)"
 fi
 
 [ -z "$PIDS" ] && { echo "何も起動できませんでした"; exit 1; }
@@ -169,6 +200,12 @@ fi
 } > "$OUT/meta.txt"
 
 echo ""
+if [ "$CAM_ONLY" != true ]; then
+  echo "購読を確認しています (${VERIFY_S} s)..."
+  sleep "$VERIFY_S"
+  check_topics
+  echo ""
+fi
 echo "記録中。停止は Ctrl-C (kill -9 は使わないこと — bag と mp4 が閉じられません)"
 
 for pid in $PIDS; do wait "$pid" 2>/dev/null; done

@@ -46,7 +46,7 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
   励起カバレッジ）。撤収前に必ず通す。
 * `vel_timeout:=5.0` — 速度指令が更新されないと 0 に戻すデッドマン。狭いプールでは推奨。
 * 深度モード（`depth_supervisor:=true`、`target_depth` で目標深度）— **水圧センサ搭載後**、
-  `max_duty 0.4` 前提。詳細は `umiusi_rl_control/README.md`。
+  `max_duty 0.3` 以上を推奨（既定 0.25）。詳細は `umiusi_rl_control/README.md`。
 * navigator の FSM をドライで確認するなら
   `ros2 launch umiusi_autonomy autonomy.launch.py publish:=false`
   （`experiment_test.sh` は navigator を起動しない）。

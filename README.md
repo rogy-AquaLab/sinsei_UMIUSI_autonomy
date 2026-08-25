@@ -61,7 +61,7 @@ python3 tools/set_attitude.py --vel 0.4 --hold    # 前進もさせるなら
 | パラメータ | 既定 | 用途 |
 |---|---|---|
 | `hold_yaw` | `true` | `false` で **yaw を保持しない**（roll/pitch のみ）。手で回したとき戻そうとして回り続けるのを避ける |
-| `max_duty` | `0.2` | `duty_cycle` の絶対値上限（`1.0` = 制限なし）。**0.2 で開始 → 問題なければ 0.4**（issue #15 A-3）|
+| `max_duty` | `0.25` | `duty_cycle` の絶対値上限（`1.0` = 制限なし）。**0.25 で開始**。0.2 は 96% 飽和で比例制御にならず降下もできない（8/25 の水中 run）。**0.4 は零空間を潰してから** — 上限は力の次元で効くので 0.2→0.4 は 4 倍（issue #19）|
 | `servo_slew_deg_per_s` | `250.0` | **サーボ指令のレート制限。sim と同じ値**。0 以下で無効（`known_issues.md` A-11）|
 | `thrust_slew_per_s` | `4.0` | ESC 指令のレート制限。同上 |
 | `vel_cmd` | `0.0` | 前進速度 [m/s]。新ポリシーは停止保持（0）も学習分布内。巡航試験で 0.4 に上げる |
@@ -155,7 +155,7 @@ unconfigured のまま）。
 | launch | 起動するもの | 用途 |
 |---|---|---|
 | **`core_autonomy.launch.py`** | カメラブリッジ + perception + `auto_target_generator` + core の BT / manual_target / low_power + rosbridge | **本番はこれ**。core の BT に載り、AUTO モードで自律が動く |
-| `autonomy.launch.py` | perception + `navigator_node` | **core を使わない直接経路**。navigator が `/cmd/direct` でスラスタを直接叩く。単体試験向け |
+| `autonomy.launch.py` | カメラブリッジ + perception + `navigator_node` | **core を使わない直接経路**。navigator が `/cmd/direct` でスラスタを直接叩く。単体試験向け |
 | `rl_attitude.launch.py` | `rl_attitude_node` | RL 姿勢制御だけ。上の 2 つとは独立に足せる |
 
 主な引数:

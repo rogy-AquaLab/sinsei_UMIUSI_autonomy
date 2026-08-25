@@ -34,7 +34,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
-                              description="learned detector .pt checkpoint。空なら同梱の camp_mix.pt を使う。実際の水中は camp_real.pt のほうが強い (models/detector/README.md)"),
+                              description="learned detector .pt checkpoint。空なら同梱の camp_real.pt を使う (実プールでは camp_mix より強い: real_val F1 0.80 vs 0.69。models/detector/README.md)"),
         DeclareLaunchArgument("image_topic", default_value="/front_cam/image_raw",
                               description="onboard camera topic"),
         DeclareLaunchArgument("use_rosbridge", default_value="true",

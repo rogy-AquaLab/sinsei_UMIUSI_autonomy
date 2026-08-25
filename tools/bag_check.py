@@ -28,6 +28,18 @@ import numpy as np
 
 IMU_TOPIC = "/state/imu"
 CMD_TOPICS = tuple(f"/cmd/direct/thruster_controller/output_{p}" for p in ("lf", "lb", "rb", "rf"))
+# tools/record_run.sh が記録を指定するトピック。**指定したのに入っていない**ことに気付けるよう
+# 名指しで出す。8/25 の水中 run は 20 指定のうち 12 しか録れておらず (recorder より後に起動した
+# ノードのぶんが全滅)、「巡行を指令したのに出なかったのか、指令していないのか」が bag から
+# 確定できなかった。解析で一番効いた欠落なので、プールサイドで分かるようにする。
+RECORDED_TOPICS = (
+    "/state/imu", "/state/thruster_state_all", "/state/high_power_circuit_info",
+    "/state/low_power_circuit_info", "/state/main_power_enabled", "/state/imu_temperature",
+    "/perception_node/detections", "/cmd/target",
+    *CMD_TOPICS,
+    "/rl_attitude_node/current_setpoint", "/rl_attitude_node/depth",
+    "/rl_attitude_node/depth_mode", "/state/pressure", "/joint_states", "/tf", "/tf_static",
+)
 STILL_S = 5.0            # 前後に要求する静止時間 [s]
 STILL_GYRO_RMS = 0.05    # 静止判定の gyro RMS 上限 [rad/s]
 BUMP_JUMP = 2.0          # 衝突らしさ: 連続サンプル間の |gyro| ジャンプ [rad/s]
@@ -80,6 +92,16 @@ def main():
         sys.exit(f"bag がありません: {bag}")
     data, types = read_bag(bag)
     rep = Report()
+
+    # --- 記録の欠落 (指定したのに bag に無いトピック) ---
+    missing = [t for t in RECORDED_TOPICS if t not in types]
+    rep.line(not missing, "recorded topics",
+             (f"{len(RECORDED_TOPICS)}/{len(RECORDED_TOPICS)} 揃っています" if not missing else
+              f"{len(RECORDED_TOPICS) - len(missing)}/{len(RECORDED_TOPICS)} — 欠落: "
+              + ", ".join(missing)
+              + " (そのノードを起動していなければ想定どおり。起動していたのに欠けているなら"
+                " recorder が購読できていない — record_run.sh の購読チェックを見ること)"),
+             warn=True)
 
     # --- IMU ---
     if IMU_TOPIC not in data or len(data[IMU_TOPIC][0]) == 0:

@@ -47,9 +47,13 @@ class AutoTargetGenerator(LifecycleNode):
         self.declare_parameter("imu_max_step_deg", 30.0)    # 1 サンプルの姿勢跳躍上限 [deg]
         # 既定は「検出するが破棄しない」(rl_attitude_node と同じ理由)
         self.declare_parameter("imu_sanity_enforce", False)
+        # IMU 断の検出 (navigator_node と同じ理由・同じ既定)。0 以下で無効。
+        self.declare_parameter("imu_timeout", 1.0)
 
         self._dt = 1.0 / float(self.get_parameter("control_hz").value)
-        self._yaw_axis = _AXIS.get(str(self.get_parameter("yaw_rate_axis").value).lower(), 1)
+        # 不正な軸名は既定の z にフォールバックする (navigator_node と同じ。以前はここだけ y に
+        # 落ちており、1 文字の typo が無言で誤軸になっていた)。
+        self._yaw_axis = _AXIS.get(str(self.get_parameter("yaw_rate_axis").value).lower(), 2)
         self._yaw_sign = float(self.get_parameter("yaw_rate_sign").value)
         self._imu_sanity = ImuSanity(
             max_gyro=float(self.get_parameter("imu_max_gyro").value),
@@ -61,6 +65,8 @@ class AutoTargetGenerator(LifecycleNode):
         self._dets = []                # last reconstructed detections (held between perception ticks)
         self._new_dets = False         # a fresh detection message arrived since the last control tick
         self._yaw_rate = 0.0
+        self._imu_timeout = float(self.get_parameter("imu_timeout").value)
+        self._last_imu_t = None        # None = まだ 1 つも来ていない
         self._pub = None
         self._sub_det = None
         self._sub_imu = None
@@ -130,6 +136,7 @@ class AutoTargetGenerator(LifecycleNode):
         return True
 
     def _on_imu(self, msg) -> None:
+        self._last_imu_t = self.get_clock().now().nanoseconds * 1e-9
         # 実機の BNO055 は物理的にありえないサンプルを混ぜてくる (ゼロクォータニオン、
         # 角速度の int16 フルスケール張り付き、姿勢の跳躍)。ヨーレートをそのまま制御に
         # 使うので、1 発のスパイクで制御が跳ねる。ただし **既定では検出するだけで弾かない**
@@ -163,9 +170,26 @@ class AutoTargetGenerator(LifecycleNode):
             confidence=float(d.confidence),
         )
 
+    def _imu_stale_for(self) -> float:
+        """IMU が何秒途切れているか。0.0 = 生きている / -1.0 = まだ 1 つも来ていない。
+        検出と警告のみ — 探索の打ち切りは FSM (umiusi_perception) の仕事。"""
+        if self._imu_timeout <= 0.0:
+            return 0.0
+        if self._last_imu_t is None:
+            return -1.0
+        gap = self.get_clock().now().nanoseconds * 1e-9 - self._last_imu_t
+        return gap if gap > self._imu_timeout else 0.0
+
     def _tick(self) -> None:
         if not self._ensure_behavior():
             return
+        stale = self._imu_stale_for()
+        if stale != 0.0:
+            # ヨーレートは直近値のまま FSM に入る (ゼロにすると探索が進まなくなる)。
+            self.get_logger().warning(
+                ("IMU が 1 つも来ていません" if stale < 0.0 else f"IMU が {stale:.1f} s 途切れています")
+                + f" — ヨーレートは直近値 ({self._yaw_rate:+.3f} rad/s) を保持しています",
+                throttle_duration_sec=2.0)
         fresh = self._new_dets
         self._new_dets = False
         cmd, _info = self._behavior.step(self._dets, self._yaw_rate, heading=0.0,

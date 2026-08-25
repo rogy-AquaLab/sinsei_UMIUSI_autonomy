@@ -43,8 +43,10 @@ navigator_node:
     publish: true            # false -> compute the FSM but do NOT command the thrusters (dry test)
     # duty の上限。**この経路には他に歯止めが無い** (/cmd/direct は control の max_duty と
     # スルーレート制限を素通りする — known_issues B-12)。飽和時は向きを保ったまま 4 基を
-    # 同率で縮める。初回の水中投入は 0.2 から。深度方向を使うなら 0.4 が要る。
-    max_duty: 0.2
+    # 同率で縮める。**0.25** — 0.2 は 96% 飽和で比例制御になっておらず、零空間に 41% 流れて
+    # いるぶん降下もできない (8/25 の水中 run)。0.25 でロール転覆余裕が 1.1x。0.4 は配分を
+    # 直してから (上限は力の次元で効く: F = |u|^2*30 N なので 0.2->0.4 は 4 倍)。
+    max_duty: 0.25
     command_mode: "direct"   # "direct" -> /cmd/direct ThrusterOutput (default, self-enabling).
                              # "target" -> ride on core: publish Target on /cmd/target (EXPERIMENTAL;
                              #             needs power-on + AUTO mode; see navigator_node docstring).

@@ -12,9 +12,10 @@ The heavy imports (torch, umiusi_perception) are deferred until the first image 
 
 Parameters
 ----------
-model_path      : learned detector checkpoint (.pt). REQUIRED.
+model_path      : learned detector checkpoint (.pt). 未指定なら同梱の camp_real.pt。
 image_topic     : onboard camera topic (default /front_cam/image_raw).
 detections_topic: output topic (default ~/detections).
+image_timeout   : この秒数だけ画像が来なければ警告する (default 5.0, 0 = 無効)。
 conf_thresh     : detector confidence floor (default: the checkpoint's stored value).
 input_size      : detector square input (default: the checkpoint's stored value).
 fovy_deg        : camera vertical FOV, must match the physical camera (default 60.0).
@@ -49,14 +50,18 @@ class PerceptionNode(Node):
         self.declare_parameter("fovy_deg", 60.0)
         self.declare_parameter("max_rate_hz", 10.0)
         self.declare_parameter("sanitise_near", True)
+        # 画像が来ていないことに気付けるようにする。**画像ゼロでも無言で回り続ける**ので、
+        # 8/25 の水中 run では 15.6 分間ずっと検出ゼロ (= FSM が SEARCH から出られない) だった
+        # ことに、bag を持ち帰るまで気付けなかった。0 以下で無効。
+        self.declare_parameter("image_timeout", 5.0)
 
         self._model_path = str(self.get_parameter("model_path").value).strip()
         if not self._model_path:
-            # 未指定なら同梱の検出器を使う (clone しただけで動くように)。
-            # 実際の水中は camp_real.pt のほうが強い (F1 0.80 vs 0.69) ので、
-            # 競技ではそちらを model_path で指定すること。models/detector/README.md 参照。
+            # 未指定なら同梱の検出器を使う (clone しただけで動くように)。実際の水中は
+            # camp_real.pt のほうが強い (real_val の F1 0.80 vs 0.69) ので、そちらを既定にする。
+            # camp_mix.pt を使いたいときは model_path で明示すること。models/detector/README.md 参照。
             self._model_path = str(Path(get_package_share_directory("umiusi_autonomy"))
-                                   / "models" / "detector" / "camp_mix.pt")
+                                   / "models" / "detector" / "camp_real.pt")
         self._fovy = float(self.get_parameter("fovy_deg").value)
         self._sanitise = bool(self.get_parameter("sanitise_near").value)
         # 位相追従の間引き。素朴に「通した時刻から一定時間空ける」方式だと、入力が上限より
@@ -64,6 +69,9 @@ class PerceptionNode(Node):
         # (実機: 15 Hz 入力 + 10 Hz 上限 -> 7.9 Hz)。RateLimiter を参照。
         self._limiter = RateLimiter(float(self.get_parameter("max_rate_hz").value))
         self._warned_no_stamp = False
+        self._image_timeout = float(self.get_parameter("image_timeout").value)
+        self._last_image_t = None      # None = まだ 1 枚も来ていない
+        self._n_images = 0
 
         self._detector = None       # lazily loaded on the first frame (defer torch import)
         self._sanitise_fn = None
@@ -72,6 +80,9 @@ class PerceptionNode(Node):
         det_topic = self.get_parameter("detections_topic").value
         self._pub = self.create_publisher(BalloonDetectionArray, det_topic, 10)
         self._sub = self.create_subscription(Image, image_topic, self._on_image, 1)
+        self._image_topic = image_topic
+        if self._image_timeout > 0.0:
+            self._watchdog = self.create_timer(self._image_timeout, self._check_image_flow)
 
         if not self._model_path:
             self.get_logger().error(
@@ -79,6 +90,23 @@ class PerceptionNode(Node):
         self.get_logger().info(
             f"perception_node: image='{image_topic}' -> detections='{det_topic}' "
             f"(fovy={self._fovy:.0f}deg, max_rate={self._limiter.rate_hz:.0f}Hz, sanitise_near={self._sanitise})")
+
+    def _check_image_flow(self):
+        """画像が途切れていないか (そもそも来ているか) を見張る。実機カメラは RTSP なので
+        ``camera_bridge_node`` が居ないと 1 枚も来ない。沈黙で気付けないのが一番困る。"""
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if self._last_image_t is None:
+            self.get_logger().warning(
+                f"'{self._image_topic}' に画像が 1 枚も来ていません "
+                "(camera_bridge_node は起動していますか? use_camera_bridge:=true)",
+                throttle_duration_sec=10.0)
+            return
+        gap = now - self._last_image_t
+        if gap > self._image_timeout:
+            self.get_logger().warning(
+                f"'{self._image_topic}' の画像が {gap:.1f} s 途切れています "
+                f"({self._n_images} 枚受信済み)",
+                throttle_duration_sec=10.0)
 
     def _ensure_detector(self):
         """Load the detector on first use (defers the torch/umiusi_perception import off the build path)."""
@@ -111,6 +139,9 @@ class PerceptionNode(Node):
         return True
 
     def _on_image(self, msg: Image):
+        # ウォッチドッグ用。**レート制限より前**に記録する — 落としたフレームも「来ている」ので。
+        self._last_image_t = self.get_clock().now().nanoseconds * 1e-9
+        self._n_images += 1
         # rate cap: drop frames that arrive faster than max_rate_hz (realistic Pi-4 detector timing).
         # ヘッダの stamp を使うが、**設定していない publisher だと 0 のまま進まず全フレームが
         # 落ちて perception が沈黙する**ので、その場合はノードの時計に切り替える。

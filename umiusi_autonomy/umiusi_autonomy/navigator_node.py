@@ -89,12 +89,22 @@ class NavigatorNode(Node):
         self.declare_parameter("imu_max_step_deg", 30.0)    # 1 サンプルの姿勢跳躍上限 [deg]
         # 既定は「検出するが破棄しない」(rl_attitude_node と同じ理由)
         self.declare_parameter("imu_sanity_enforce", False)
+        # IMU が途切れたことに気付けるようにする。**FSM のヨーレートは直近値を保持する**ので、
+        # 断が起きると「回っているつもり」のまま探索が進む。8/25 の水中 run では autonomy 区間
+        # だけで 15.44 s + 11.10 s の欠落があり (残り 800 s は 0.5 s 超の欠落ゼロ)、
+        # コンソールにも bag にも痕跡が無かった。0 以下で無効。
+        self.declare_parameter("imu_timeout", 1.0)
         self.declare_parameter("publish", True)            # False = compute only, do not command
         # duty の上限。**この経路には他にどこにも歯止めが無い** — /cmd/direct は control の
         # max_duty / スルーレート制限を素通りする (docs/known_issues.md B-12)。FSM は SPEED_CAP を
         # 掛けた {surge, heave, yaw} を出すが、アロケーションを通ると duty は最大 1.0 まで振れる
-        # (surge と heave と yaw が同時に立つと飽和する)。rl_attitude_node と同じ既定 0.2。
-        self.declare_parameter("max_duty", 0.2)
+        # (surge と heave と yaw が同時に立つと飽和する)。rl_attitude_node と同じ既定。
+        # 8/25 の水中 run の解析で 0.2 の根拠が崩れたため 0.25 に上げた: 実機の |duty| は p5〜p99 が
+        # すべて 0.2000 (96% 飽和) で比例制御になっておらず、さらに鉛直パワーの 41.2% が
+        # 零空間 (合力もモーメントも生まない対角モード) に流れていて 0.2 では降下できない。
+        # 0.25 でロール転覆余裕が 1.0 を超える (1.1x) ので、まずここまで。**0.4 は配分 (零空間)
+        # を直してから** — 上限は力の次元で効くので 0.2->0.4 は「倍」ではなく 4 倍 (F = |u|^2*30 N)。
+        self.declare_parameter("max_duty", 0.25)
         # "direct" (default, unchanged): feed-forward allocate here -> /cmd/direct ThrusterOutput.
         # "target": ride on sinsei_umiusi_control -> publish a Target on /cmd/target and let the
         # control stack allocate. EXPERIMENTAL, needs hardware/sim validation (see module docstring).
@@ -118,6 +128,8 @@ class NavigatorNode(Node):
             max_gyro=float(self.get_parameter("imu_max_gyro").value),
             max_step_deg=float(self.get_parameter("imu_max_step_deg").value),
             enforce=bool(self.get_parameter("imu_sanity_enforce").value))
+        self._imu_timeout = float(self.get_parameter("imu_timeout").value)
+        self._last_imu_t = None        # None = まだ 1 つも来ていない
         self._publish = bool(self.get_parameter("publish").value)
         self._max_duty = abs(float(self.get_parameter("max_duty").value))
         self._mode = str(self.get_parameter("command_mode").value).lower()
@@ -182,6 +194,7 @@ class NavigatorNode(Node):
         return True
 
     def _on_imu(self, msg):
+        self._last_imu_t = self.get_clock().now().nanoseconds * 1e-9
         # 実機の BNO055 は物理的にありえないサンプルを混ぜてくる (ゼロクォータニオン、
         # 角速度の int16 フルスケール張り付き、姿勢の跳躍)。ヨーレートをそのまま制御に
         # 使うので、1 発のスパイクで制御が跳ねる。ただし **既定では検出するだけで弾かない**
@@ -196,6 +209,16 @@ class NavigatorNode(Node):
                 return          # まだ 1 つも有効値が無い
         # sensor_msgs/Imu.angular_velocity is RAD/S (ROS standard), which is what the FSM wants.
         self._yaw_rate = self._yaw_sign * sample.gyro[self._yaw_axis]
+
+    def _imu_stale_for(self) -> float:
+        """IMU が何秒途切れているか。0.0 = 生きている / -1.0 = まだ 1 つも来ていない。
+        検出と警告だけをここで行う — 探索の打ち切り自体は FSM (umiusi_perception) の仕事。"""
+        if self._imu_timeout <= 0.0:
+            return 0.0
+        if self._last_imu_t is None:
+            return -1.0
+        gap = self.get_clock().now().nanoseconds * 1e-9 - self._last_imu_t
+        return gap if gap > self._imu_timeout else 0.0
 
     def _on_detections(self, msg: BalloonDetectionArray):
         if not self._ensure_behavior():
@@ -221,6 +244,14 @@ class NavigatorNode(Node):
             return
         if not self._ensure_behavior():
             return
+        stale = self._imu_stale_for()
+        if stale != 0.0:
+            # ヨーレートは直近値のまま FSM に入る (ゼロにすると探索が止まり、その場旋回から
+            # 抜けられなくなる)。あくまで「気付ける」ようにするための警告。
+            self.get_logger().warning(
+                ("IMU が 1 つも来ていません" if stale < 0.0 else f"IMU が {stale:.1f} s 途切れています")
+                + f" — ヨーレートは直近値 ({self._yaw_rate:+.3f} rad/s) を保持したまま制御しています",
+                throttle_duration_sec=2.0)
         fresh = self._new_dets
         self._new_dets = False
         cmd, info = self._behavior.step(self._dets, self._yaw_rate, heading=0.0,
