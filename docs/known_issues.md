@@ -548,6 +548,14 @@ pi  -  memlock unlimited
 
 ### B-12. 【高】`/cmd/direct` は `is_forward` / `max_duty` / スルーレート制限を素通りする
 
+> **上流で修正済み (未マージ)**: `sinsei_UMIUSI_control` の `fix/actuator-limits-on-direct-cmd`。
+> アクチュエータの歯止めを `ThrusterLimits` に切り出し、**指令の出所によらず必ず通す**ように
+> した (duty 上限 / スルーレート / `servo_sign` / サーボ角 ±90 クランプ)。
+> `is_forward` と `duty_per_thrust` は「推力[N] → duty の換算」なので Logic 側に残っている
+> — 直接指令はすでに duty で届くため、掛け直すと二重換算になる (A-12 で符号補正不要と確定)。
+> **マージされて実機へ入るまで、下記の実態は変わらない。** 入ったら autonomy 側の暫定シム
+> (`servo_sign` / `max_duty` / 度変換 / ±90 クランプ) を撤去する。
+
 `thruster_controller.cpp` の `update()`:
 
 ```cpp
@@ -573,7 +581,13 @@ max_duty 0.4 プロトコルは `thruster_cmd.py` の自主チェックだけで
 
 **帰結**: 基ごとの推力向き・サーボ向きの補正を `is_forward` で入れることはできない。autonomy 側は
 `servo_sign` パラメータ (`navigator_node` / `rl_attitude_node`、既定 `[1,1,1,1]`) を publish 直前に
-当てる方式で吸収している。ESC 側の向き補正はまだ入っていない (A-12 の決着待ち)。
+当てる方式で吸収している。ESC 側の向き補正は不要と確定した (A-12: 左舷=前向き / 右舷=後向きの
+2-2 分割で、ソフトの前提と一致)。
+
+**上流の修正が入ると変わる点**: `max_duty_step_per_sec` が直接指令にも掛かるようになるため、
+実機の値を sim の `thrust_slew_per_s` と揃える必要がある (`controllers.yaml` で 1.0 → 4.0)。
+方策は平滑化された指令を前提に学習しているので、ここがずれるとそのまま sim2real ギャップになる
+(A-11 と同じ話)。autonomy 側の `thruster_limits.slew` はそのとき撤去できる。
 
 ### B-13. 【中】`ThrusterOutput.angle` の単位コメントが実装と逆
 
@@ -585,7 +599,15 @@ msg のコメントは `[rad]` だが、受け側の実装は **DEGREES**:
 - control 自身の FF も `atan(...) * 180 / pi` で度を出している
 
 `navigator_node` が rad を送っておりフルスケールでも 1.57° にしかなっていなかった (修正済み)。
-`thruster_cmd.py` と `rl_attitude_node` は元から度で正しい。**control 側の msg コメントを訂正すること**。
+`thruster_cmd.py` と `rl_attitude_node` は元から度で正しい。
+
+> **上流で修正済み (未マージ)**: `sinsei_umiusi_msgs` の `fix/servo-angle-unit-comment` で
+> `ThrusterOutput.angle` / `ThrusterState.angle` のコメントを DEGREES に訂正した。
+> 併せて分かったこと: **`ThrusterState.angle` は指令のエコーで、実測のサーボ角ではない**。
+> サーボには位置のフィードバック経路が無く (state interface は `esc/rpm` / `esc/voltage` /
+> `esc/water_leaked` のみ)、`thruster_controller` が出した角度がそのまま返る。
+> **較正やモデル同定でこれを実測値として使ってはいけない** (bag の 12.5 Hz ±90° 往復が
+> 2250 deg/s 相当で物理的にありえなかったのはこのため)。
 
 ---
 
