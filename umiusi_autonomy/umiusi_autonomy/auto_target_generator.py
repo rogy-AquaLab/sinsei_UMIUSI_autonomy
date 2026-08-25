@@ -21,55 +21,35 @@ from __future__ import annotations
 
 import rclpy
 from rclpy.lifecycle import LifecycleNode, LifecycleState, TransitionCallbackReturn
-from sensor_msgs.msg import Imu
 from sinsei_umiusi_msgs.msg import Target
-from umiusi_rl_control.imu_sanity import ImuSanity
 
 from umiusi_autonomy_msgs.msg import BalloonDetectionArray
 
-_AXIS = {"x": 0, "y": 1, "z": 2}
+from umiusi_autonomy.imu_source import ImuSource
 
 
 class AutoTargetGenerator(LifecycleNode):
     def __init__(self) -> None:
         super().__init__("auto_target_generator")
         self.declare_parameter("detections_topic", "/perception_node/detections")
-        self.declare_parameter("imu_topic", "/state/imu")
         self.declare_parameter("target_topic", "/cmd/target")
         self.declare_parameter("control_hz", 50.0)
         self.declare_parameter("frame_h", 240)
         self.declare_parameter("frame_w", 320)
         self.declare_parameter("fovy_deg", 60.0)
-        self.declare_parameter("yaw_rate_axis", "z")      # IMU axis carrying the vehicle yaw rate (REP-103: z)
-        self.declare_parameter("yaw_rate_sign", 1.0)
-        # IMU のサニティフィルタ (実機の化けサンプル対策)。0 以下で無効化できる。
-        self.declare_parameter("imu_max_gyro", 10.0)        # [rad/s] 検出の閾値
-        self.declare_parameter("imu_max_step_deg", 30.0)    # 1 サンプルの姿勢跳躍上限 [deg]
-        # 既定は「検出するが破棄しない」(rl_attitude_node と同じ理由)
-        self.declare_parameter("imu_sanity_enforce", False)
-        # IMU 断の検出 (navigator_node と同じ理由・同じ既定)。0 以下で無効。
-        self.declare_parameter("imu_timeout", 1.0)
+        # IMU 関連 (imu_topic / yaw_rate_axis / yaw_rate_sign / imu_max_gyro /
+        # imu_max_step_deg / imu_sanity_enforce / imu_timeout) は ImuSource が宣言する。
+        # navigator_node と同じ扱いを 1 箇所に寄せてある (issue #19-5)。
+        self._imu = ImuSource(self)
 
         self._dt = 1.0 / float(self.get_parameter("control_hz").value)
-        # 不正な軸名は既定の z にフォールバックする (navigator_node と同じ。以前はここだけ y に
-        # 落ちており、1 文字の typo が無言で誤軸になっていた)。
-        self._yaw_axis = _AXIS.get(str(self.get_parameter("yaw_rate_axis").value).lower(), 2)
-        self._yaw_sign = float(self.get_parameter("yaw_rate_sign").value)
-        self._imu_sanity = ImuSanity(
-            max_gyro=float(self.get_parameter("imu_max_gyro").value),
-            max_step_deg=float(self.get_parameter("imu_max_step_deg").value),
-            enforce=bool(self.get_parameter("imu_sanity_enforce").value))
 
         self._behavior = None          # lazily built (defer the umiusi_perception import off the build path)
         self._Detection = None
         self._dets = []                # last reconstructed detections (held between perception ticks)
         self._new_dets = False         # a fresh detection message arrived since the last control tick
-        self._yaw_rate = 0.0
-        self._imu_timeout = float(self.get_parameter("imu_timeout").value)
-        self._last_imu_t = None        # None = まだ 1 つも来ていない
         self._pub = None
         self._sub_det = None
-        self._sub_imu = None
         self._timer = None
 
     # ---- lifecycle transitions ----
@@ -77,8 +57,7 @@ class AutoTargetGenerator(LifecycleNode):
         self._pub = self.create_publisher(Target, self.get_parameter("target_topic").value, 10)
         self._sub_det = self.create_subscription(
             BalloonDetectionArray, self.get_parameter("detections_topic").value, self._on_detections, 10)
-        self._sub_imu = self.create_subscription(
-            Imu, self.get_parameter("imu_topic").value, self._on_imu, 10)
+        self._imu.create_subscription()
         self._timer = self.create_timer(self._dt, self._tick, autostart=False)
         self.get_logger().info("auto_target_generator configured (FSM-driven Target on /cmd/target)")
         return TransitionCallbackReturn.SUCCESS
@@ -106,11 +85,10 @@ class AutoTargetGenerator(LifecycleNode):
             self.destroy_timer(self._timer)
         if self._sub_det is not None:
             self.destroy_subscription(self._sub_det)
-        if self._sub_imu is not None:
-            self.destroy_subscription(self._sub_imu)
+        self._imu.destroy()
         if self._pub is not None:
             self.destroy_publisher(self._pub)
-        self._timer = self._sub_det = self._sub_imu = self._pub = None
+        self._timer = self._sub_det = self._pub = None
 
     # ---- FSM plumbing (mirrors navigator_node) ----
     def _ensure_behavior(self) -> bool:
@@ -135,23 +113,6 @@ class AutoTargetGenerator(LifecycleNode):
         self.get_logger().info("behaviour FSM initialised")
         return True
 
-    def _on_imu(self, msg) -> None:
-        self._last_imu_t = self.get_clock().now().nanoseconds * 1e-9
-        # 実機の BNO055 は物理的にありえないサンプルを混ぜてくる (ゼロクォータニオン、
-        # 角速度の int16 フルスケール張り付き、姿勢の跳躍)。ヨーレートをそのまま制御に
-        # 使うので、1 発のスパイクで制御が跳ねる。ただし **既定では検出するだけで弾かない**
-        # (`imu_sanity_enforce`)。理由は imu_sanity.py 冒頭。
-        q, g = msg.orientation, msg.angular_velocity
-        sample, reason = self._imu_sanity.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
-        if reason is not None:
-            self.get_logger().warning(
-                self._imu_sanity.describe(reason),
-                throttle_duration_sec=5.0)
-            if sample is None:
-                return          # まだ 1 つも有効値が無い
-        # sensor_msgs/Imu.angular_velocity is RAD/S (ROS standard), which is what the FSM wants.
-        self._yaw_rate = self._yaw_sign * sample.gyro[self._yaw_axis]
-
     def _on_detections(self, msg: BalloonDetectionArray) -> None:
         if not self._ensure_behavior():
             return
@@ -170,29 +131,13 @@ class AutoTargetGenerator(LifecycleNode):
             confidence=float(d.confidence),
         )
 
-    def _imu_stale_for(self) -> float:
-        """IMU が何秒途切れているか。0.0 = 生きている / -1.0 = まだ 1 つも来ていない。
-        検出と警告のみ — 探索の打ち切りは FSM (umiusi_perception) の仕事。"""
-        if self._imu_timeout <= 0.0:
-            return 0.0
-        if self._last_imu_t is None:
-            return -1.0
-        gap = self.get_clock().now().nanoseconds * 1e-9 - self._last_imu_t
-        return gap if gap > self._imu_timeout else 0.0
-
     def _tick(self) -> None:
         if not self._ensure_behavior():
             return
-        stale = self._imu_stale_for()
-        if stale != 0.0:
-            # ヨーレートは直近値のまま FSM に入る (ゼロにすると探索が進まなくなる)。
-            self.get_logger().warning(
-                ("IMU が 1 つも来ていません" if stale < 0.0 else f"IMU が {stale:.1f} s 途切れています")
-                + f" — ヨーレートは直近値 ({self._yaw_rate:+.3f} rad/s) を保持しています",
-                throttle_duration_sec=2.0)
+        self._imu.warn_if_stale()
         fresh = self._new_dets
         self._new_dets = False
-        cmd, _info = self._behavior.step(self._dets, self._yaw_rate, heading=0.0,
+        cmd, _info = self._behavior.step(self._dets, self._imu.yaw_rate, heading=0.0,
                                          dt=self._dt, fresh=fresh)
         # {surge, heave, yaw} -> Target, the same six numbers the direct path feeds
         # feedforward_allocation: forward surge = -velocity.x, heave = +velocity.z, yaw = orientation.z.
