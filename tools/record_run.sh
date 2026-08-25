@@ -160,10 +160,16 @@ cleanup() {
   if [ "$BAG_ONLY" != true ]; then
     warns=$(grep "⚠" "$OUT/camera.log" 2>/dev/null | tail -5)
     [ -n "$warns" ] && { echo "  カメラの警告 (camera.log より、末尾 5 件):"; echo "$warns" | sed 's/^/    /'; }
+    empty=0; first_empty=""
     for f in "$OUT"/video/*/cam*.h264 "$OUT"/video/*/cam*.mp4; do
       [ -e "$f" ] || continue
-      [ -s "$f" ] || echo "  ⚠ $(basename "$f") が 0 バイト (1 フレームも録れていない)"
+      if [ ! -s "$f" ]; then
+        empty=$((empty+1)); [ -z "$first_empty" ] && first_empty="$(basename "$f")"
+      fi
     done
+    # 件数で集約する。再起動が多いと 0 バイトファイルが数百できることがあり、
+    # 1 行ずつ出すと警告そのものが埋もれる
+    [ "$empty" -gt 0 ] && echo "  ⚠ 0 バイトの映像ファイルが $empty 件 (例: $first_empty) — 1 フレームも録れていません"
   fi
   # 取り出しを楽にするため、最後の run へのリンクを張り直す
   #   scp -r pi@<機体>:runs/latest/ .        (ディレクトリ名を調べなくてよい)
@@ -172,7 +178,10 @@ cleanup() {
   echo "  (最新へのリンク: $OUTROOT/latest)"
   du -sh "$OUT"/* 2>/dev/null | sed 's/^/  /'
 }
-trap cleanup INT TERM
+# trap 経由で cleanup が走った場合、bash は中断された行の次から実行を再開する。
+# 「記録中」や購読レポートが停止後に再表示されないよう、シグナル時はここで終える。
+on_signal() { cleanup; exit 0; }
+trap on_signal INT TERM
 
 echo "記録先: $OUT"
 
@@ -213,7 +222,14 @@ fi
 echo ""
 if [ "$CAM_ONLY" != true ]; then
   echo "購読を確認しています (${VERIFY_S} s)..."
-  sleep "$VERIFY_S"
+  # **`sleep` をフォアグラウンドで回してはいけない**。`set -m` でジョブ制御が有効なので、
+  # 端末の Ctrl-C は `sleep` 専用のプロセスグループにしか届かず、bash は `trap cleanup INT` を
+  # 実行しない (2 回目の Ctrl-C でようやく効く)。この間に名前の打ち間違いに気付いて止めようと
+  # した作業者が「Ctrl-C が効かない」と判断し、このスクリプトが禁じている kill -9 に逃げて
+  # bag の metadata を落とす。バックグラウンドにして `wait` すれば trap が即座に走る。
+  sleep "$VERIFY_S" &
+  wait $!
+  [ "$CLEANED" = true ] && exit 0     # 待っている間に停止要求が来ていたらここで終わる
   check_topics
   echo ""
 fi

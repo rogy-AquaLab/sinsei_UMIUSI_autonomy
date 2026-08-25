@@ -104,10 +104,19 @@ trap cleanup INT TERM
 # 終了時にそちらの cleanup が表面化する)。
 # **$(start_one ...) の形で呼ばないこと**: コマンド置換だと別シェルの子になり、
 # 親から wait / kill -INT できず finalize に失敗する。
+MAX_FAILS="${UMIUSI_REC_MAX_FAILS:-5}"   # 連続で 0 バイトが続いたら再起動を諦める
+MAX_BACKOFF=30                           # 再起動間隔の上限 [s]
+
 start_one() {
   local url="$1" tag="$2"
   (
-    stop=false gpid=""
+    # **監視シェルの中でジョブ制御を入れ直す。** bash はフォークしたサブシェルで job control を
+    # 無効化するので、ここで起こす `gst-launch &` は非対話シェルの非同期子として SIGINT/SIGQUIT を
+    # SIG_IGN で継承してしまう (実測: SigIgn 0x6)。いまは GLib の g_unix_signal_add が SIG_IGN を
+    # 上書きするので結果的に止まるが、**スクリプトが依拠してよい性質ではない** (gst を ffmpeg や
+    # シェルラッパに差し替えた瞬間に finalize が空振りする)。
+    set -m
+    stop=false gpid="" fails=0 backoff=2
     trap 'stop=true; [ -n "$gpid" ] && kill -INT "$gpid" 2>/dev/null' INT TERM
     n=0
     while [ "$stop" != true ]; do
@@ -134,10 +143,24 @@ start_one() {
       wait "$gpid"; rc=$?          # trap が入ると wait は戻る -> stop を見て抜ける
       kill "$wpid" 2>/dev/null
       [ "$stop" = true ] && break
-      echo "$(date +%T) ⚠ $tag: 録画パイプラインが終了 (rc=$rc)。2 s 後に再起動します (-> ${tag}_r$((n+1)))" \
+      # **バックオフと諦め**。RTSP が恒久的に落ちていると gst は 1 秒未満で死ぬので、固定 2 s だと
+      # 15 分の run で 300 回以上再起動し、そのたび 0 バイトの $tag_rN が作られる。停止時の
+      # 「0 バイト」報告が数百行になって、気付かせるための警告が逆に埋もれる。
+      if [ ! -s "$first" ]; then
+        fails=$((fails+1))
+      else
+        fails=0; backoff=2       # 一度でも録れたら仕切り直す
+      fi
+      if [ "$fails" -ge "$MAX_FAILS" ]; then
+        echo "$(date +%T) ⚠ $tag: $MAX_FAILS 回連続で 1 バイトも録れませんでした。再起動を諦めます (RTSP 配信元を確認)" \
+          | tee -a "$OUT/$tag.log" >&2
+        break
+      fi
+      echo "$(date +%T) ⚠ $tag: 録画パイプラインが終了 (rc=$rc)。${backoff} s 後に再起動します (-> ${tag}_r$((n+1)))" \
         | tee -a "$OUT/$tag.log" >&2
       n=$((n+1))
-      sleep 2
+      sleep "$backoff"
+      [ "$backoff" -lt "$MAX_BACKOFF" ] && backoff=$((backoff*2))
     done
     # 停止要求後、gst の EOS/finalize を待つ。ただし **待ち切ってはいけない**: 親の cleanup は
     # 10 s で kill -9 に移り、-9 されるのはこの監視シェルなので、その時点で gst が生きていると

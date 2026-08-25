@@ -3,7 +3,8 @@
 
 perception_node:
   ros__parameters:
-    # REQUIRED: learned detector checkpoint (.pt). Override at launch (see model_path launch arg).
+    # learned detector checkpoint (.pt)。**空なら同梱のものにフォールバックする**
+    # (models/detector/README.md)。launch 引数 model_path で上書きできる。
     model_path: ""
     image_topic: "/front_cam/image_raw"
     detections_topic: "/perception_node/detections"
@@ -12,6 +13,10 @@ perception_node:
     fovy_deg: 60.0           # MUST match the physical camera vertical FOV
     max_rate_hz: 10.0        # cap detector rate (realistic Pi-4 timing); 0 = every frame
     sanitise_near: true      # near red/blue colour re-confirmation before the FSM commits
+    # この秒数だけ画像が来なければ警告する (0 以下で無効)。実機カメラは RTSP なので
+    # camera_bridge_node が居ないと 1 枚も来ないが、**画像ゼロでも無言で回り続ける**。
+    # 8/25 の run はそれで 15.6 分間ずっと検出ゼロだったことに帰るまで気付けなかった
+    image_timeout: 5.0
 
 navigator_node:
   ros__parameters:
@@ -40,6 +45,10 @@ navigator_node:
     imu_sanity_enforce: false
     imu_max_gyro: 10.0        # [rad/s] 検出の閾値 (フルスケールは 35.74)
     imu_max_step_deg: 30.0    # 1 サンプルの姿勢跳躍上限 [deg]。50Hz なら 1500 deg/s 相当
+    # IMU がこの秒数来なければ警告する (0 以下で無効)。**ヨーレートは直近値を保持する**ので、
+    # 断が起きると「回っているつもり」のまま探索が進む。8/25 の run では autonomy 区間だけで
+    # 15.44 s + 11.10 s の欠落があり、コンソールにも bag にも痕跡が無かった
+    imu_timeout: 1.0
     publish: true            # false -> compute the FSM but do NOT command the thrusters (dry test)
     # duty の上限。**この経路には他に歯止めが無い** (/cmd/direct は control の max_duty と
     # スルーレート制限を素通りする — known_issues B-12)。飽和時は向きを保ったまま 4 基を
@@ -72,3 +81,4 @@ auto_target_generator:          # lifecycle node for the on-core path (core_auto
     imu_sanity_enforce: false
     imu_max_gyro: 10.0        # [rad/s] 検出の閾値 (フルスケールは 35.74)
     imu_max_step_deg: 30.0    # 1 サンプルの姿勢跳躍上限 [deg]。50Hz なら 1500 deg/s 相当
+    imu_timeout: 1.0          # IMU がこの秒数来なければ警告 (0 以下で無効)。navigator_node と同じ

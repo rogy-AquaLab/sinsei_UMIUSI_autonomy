@@ -12,7 +12,7 @@ The heavy imports (torch, umiusi_perception) are deferred until the first image 
 
 Parameters
 ----------
-model_path      : learned detector checkpoint (.pt). 未指定なら同梱の camp_real.pt。
+model_path      : learned detector checkpoint (.pt). 未指定なら同梱の camp_mix.pt。
 image_topic     : onboard camera topic (default /front_cam/image_raw).
 detections_topic: output topic (default ~/detections).
 image_timeout   : この秒数だけ画像が来なければ警告する (default 5.0, 0 = 無効)。
@@ -57,11 +57,10 @@ class PerceptionNode(Node):
 
         self._model_path = str(self.get_parameter("model_path").value).strip()
         if not self._model_path:
-            # 未指定なら同梱の検出器を使う (clone しただけで動くように)。実際の水中は
-            # camp_real.pt のほうが強い (real_val の F1 0.80 vs 0.69) ので、そちらを既定にする。
-            # camp_mix.pt を使いたいときは model_path で明示すること。models/detector/README.md 参照。
+            # 未指定なら同梱の検出器を使う (clone しただけで動くように)。
+            # models/detector/README.md 参照。
             self._model_path = str(Path(get_package_share_directory("umiusi_autonomy"))
-                                   / "models" / "detector" / "camp_real.pt")
+                                   / "models" / "detector" / "camp_mix.pt")
         self._fovy = float(self.get_parameter("fovy_deg").value)
         self._sanitise = bool(self.get_parameter("sanitise_near").value)
         # 位相追従の間引き。素朴に「通した時刻から一定時間空ける」方式だと、入力が上限より
@@ -165,6 +164,11 @@ class PerceptionNode(Node):
         if self._sanitise:
             dets = self._sanitise_fn(rgb, dets)
         self._pub.publish(self._to_msg(msg.header, dets))
+        # **末尾でも更新する。** 初回フレームでは `_ensure_detector()` が torch の import と
+        # チェックポイント読み込みを同期実行し、Pi-4 ではこれが image_timeout を超える。
+        # 単一スレッド executor なのでその間タイマーは走れず、復帰直後に
+        # 「画像が 8 s 途切れています」という偽の警告が出る (起動直後でいちばん誤読される)。
+        self._last_image_t = self.get_clock().now().nanoseconds * 1e-9
 
     @staticmethod
     def _to_msg(header, dets) -> BalloonDetectionArray:
