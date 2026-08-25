@@ -100,14 +100,15 @@ Python の依存はすべて `--user` (`~/.local`) に入る。apt が要るも�
 
 ### 検出器 (同梱済み)
 
-風船検出器の重みはリポジトリに同梱してある。未指定なら `models/detector/camp_mix.pt`。
+風船検出器の重みはリポジトリに同梱してある。未指定なら `models/detector/camp_real2.pt`。
 
-| ファイル | real_val の F1 | 用途 |
-|---|---:|---|
-| **`camp_real.pt`** | **0.80** | **実際の水中はこちらが強い。競技はこれ** |
-| `camp_mix.pt` (既定) | 0.69 | 両対応。実機で通しの動作確認をしたのはこちら |
+| ファイル | val の F1 | 推奨 conf | 用途 |
+|---|---:|---:|---|
+| **`camp_real2.pt`** (既定) | **0.80** | **0.4** | **競技はこれ**。8/25 プール実写で誤検出を潰した版 |
+| `camp_real.pt` | 0.44 | 0.3 | 旧版。A/B 比較用 |
+| `camp_mix.pt` | — | 0.3 | sim 寄り。sim_eval の F1 が最良 |
 
-競技で切り替えるとき:
+旧版に切り替えるとき:
 
 ```bash
 ros2 launch umiusi_autonomy core_autonomy.launch.py \

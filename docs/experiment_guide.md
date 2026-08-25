@@ -211,7 +211,8 @@ ros2 topic echo --once /perception_node/detections
 
 ### 検出器の切り替え
 
-既定は同梱の `camp_mix.pt`。**実際の水中は `camp_real.pt` のほうが強い** (F1 0.80 vs 0.69):
+既定は同梱の `camp_real2.pt` (8/25 プール実写で継続学習した版、conf 0.4 で F1 0.80)。
+旧版と A/B するとき:
 
 ```bash
 ros2 launch umiusi_autonomy core_autonomy.launch.py \
