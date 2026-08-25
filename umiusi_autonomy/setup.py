@@ -27,7 +27,6 @@ setup(
         "umiusi_perception package."
     ),
     license="MIT",
-    tests_require=["pytest"],
     entry_points={
         "console_scripts": [
             "perception_node = umiusi_autonomy.perception_node:main",

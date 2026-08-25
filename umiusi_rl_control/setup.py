@@ -35,7 +35,6 @@ setup(
         "teleop, and arm/disarm (e-stop). Independent of the perception/autonomy stack."
     ),
     license="MIT",
-    tests_require=["pytest"],
     entry_points={
         "console_scripts": [
             "rl_attitude_node = umiusi_rl_control.rl_attitude_node:main",
