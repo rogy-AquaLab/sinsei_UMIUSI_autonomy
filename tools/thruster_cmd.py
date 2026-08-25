@@ -5,7 +5,7 @@
 RL もアロケータも通さない「素の指令」— 較正実験はこれで駆動する。**rl_attitude_node と
 同時に動かさないこと** (同じトピックを取り合う)。
 
-    python3 thruster_cmd.py spin                     # 実験 1: 1 基ずつ duty 0.2 / servo +45°
+    python3 thruster_cmd.py spin                     # 実験 1: 1 基ずつ、回したまま servo を振る
     python3 thruster_cmd.py step --ch lf --angle 80  # 実験 3: サーボステップ 0→80°→0 ×3
     python3 thruster_cmd.py sweep --ch lf            # 実験 4: 推力ベンチ duty ±0.2..±1.0
     python3 thruster_cmd.py steady --duty 0.3        # 実験 6: 全基前進 10 s (--yaw で旋回)
@@ -74,14 +74,21 @@ def confirm(text, yes):
 
 
 def cmd_spin(drv, a):
-    confirm(f"実験 1: {', '.join(POSITIONS)} を 1 基ずつ duty {a.duty} で {a.seconds} s 回し、"
-            f"続けて servo +45° を保持します。物理位置と回転方向・サーボ向きを目視/動画で記録",
+    """回しっぱなしのままサーボを振る。推力の前後とサーボの上下を同じ映像で見比べられる。"""
+    targets = [p for p in POSITIONS if p in a.ch] if a.ch else list(POSITIONS)
+    confirm(f"実験 1: {', '.join(targets)} を 1 基ずつ duty {a.duty} で回し、"
+            f"**回したまま** servo 0 → +{a.angle:.0f}° → 0 → -{a.angle:.0f}° → 0 を各 {a.seconds} s。"
+            "推力の向き (前/後) とサーボの傾く向き (上/下) を同時に目視/動画で記録",
             a.yes)
-    for p in POSITIONS:
+    for p in targets:
         input(f"[{p}] Enter で回します: ") if not a.yes else None
-        drv.hold(a.seconds, duty={p: a.duty}, label=f"{p}: duty {a.duty}")
-        drv.hold(1.0, label=f"{p}: 停止")
-        drv.hold(a.seconds, angle={p: 45.0}, label=f"{p}: servo +45 deg")
+        for ang, what in ((0.0, "水平 — 推力の前後を見る"),
+                          (a.angle, f"servo +{a.angle:.0f}° — 上下どちらに傾くか"),
+                          (0.0, "水平"),
+                          (-a.angle, f"servo -{a.angle:.0f}°"),
+                          (0.0, "水平")):
+            drv.hold(a.seconds, duty={p: a.duty}, angle={p: ang},
+                     label=f"{p}: duty {a.duty} / {what}")
         drv.hold(1.0, label=f"{p}: 停止")
 
 
@@ -142,7 +149,10 @@ def main():
 
     s = sub.add_parser("spin", help="実験 1: スラスタ ID (1 基ずつ回す)")
     s.add_argument("--duty", type=float, default=0.2)
-    s.add_argument("--seconds", type=float, default=3.0)
+    s.add_argument("--seconds", type=float, default=8.0, help="各ステップの保持時間 [s]")
+    s.add_argument("--angle", type=float, default=45.0, help="サーボの振り角 [deg]")
+    s.add_argument("--ch", nargs="+", choices=POSITIONS, default=None,
+                   help="対象 ch (既定は 4 基すべて)")
 
     s = sub.add_parser("step", help="実験 3: サーボステップ応答")
     s.add_argument("--ch", choices=POSITIONS, required=True)
