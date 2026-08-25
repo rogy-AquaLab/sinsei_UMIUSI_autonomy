@@ -244,10 +244,11 @@ class RlAttitudeNode(Node):
             self._pub_depth = self.create_publisher(Float32, "~/depth", 10)
             self._pub_mode = self.create_publisher(String, "~/depth_mode", CURRENT_SETPOINT_QOS)
             self._srv_zero = self.create_service(Trigger, "~/zero_depth", self._on_zero_depth)
-            if self._max_duty < 0.35:
+            if self._max_duty < 0.3:
                 self.get_logger().warning(
-                    f"depth_supervisor 有効だが max_duty={self._max_duty:.2f} — sim 実測では "
-                    "0.2 で降下不能 (下向き推力が浮力に負ける)。深度試験は 0.4 にすること")
+                    f"depth_supervisor 有効だが max_duty={self._max_duty:.2f} — 深度試験は "
+                    "**0.3 以上を推奨**。0.2 で降下できないのは上限ではなく零空間への配分が"
+                    "原因で、0.4 は配分を直してから (issue #19)")
 
         self._sub_imu = self.create_subscription(
             Imu, self.get_parameter("imu_topic").value, self._on_imu, 1)

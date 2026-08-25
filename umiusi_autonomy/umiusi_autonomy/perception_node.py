@@ -168,6 +168,11 @@ class PerceptionNode(Node):
         if self._sanitise:
             dets = self._sanitise_fn(rgb, dets)
         self._pub.publish(self._to_msg(msg.header, dets))
+        # **末尾でも更新する。** 初回フレームでは `_ensure_detector()` が torch の import と
+        # チェックポイント読み込みを同期実行し、Pi-4 ではこれが image_timeout を超える。
+        # 単一スレッド executor なのでその間タイマーは走れず、復帰直後に
+        # 「画像が 8 s 途切れています」という偽の警告が出る (起動直後でいちばん誤読される)。
+        self._last_image_t = self.get_clock().now().nanoseconds * 1e-9
 
     @staticmethod
     def _to_msg(header, dets) -> BalloonDetectionArray:

@@ -16,10 +16,11 @@ arguments. Use ``publish:=false`` to run the FSM without commanding the thruster
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+
+from umiusi_autonomy.launch_common import camera_bridge_node
 
 
 def generate_launch_description():
@@ -50,20 +51,8 @@ def generate_launch_description():
                               description="ブリッジが読む RTSP URL (前方カメラ = cam1)"),
 
         # --- 実機カメラ映像を perception に渡す (core_autonomy.launch.py と同じ設定) ---
-        Node(
-            package="umiusi_autonomy",
-            executable="camera_bridge_node",
-            name="camera_bridge_node",
-            output="screen",
-            condition=IfCondition(use_camera_bridge),
-            parameters=[{
-                "rtsp_url": rtsp_url,
-                "image_topic": image_topic,
-                "width": 320, "height": 240,   # autonomy.yaml の frame_w/frame_h に合わせる
-                "max_rate_hz": 0.0,            # 制限をかけると取りこぼす (実測) — カメラ側で絞ること
-                "auto_rate": False,            # AIMD 追従は実験的。既定は無効
-            }],
-        ),
+        camera_bridge_node(condition=use_camera_bridge, rtsp_url=rtsp_url,
+                           image_topic=image_topic),
         Node(
             package="umiusi_autonomy",
             executable="perception_node",

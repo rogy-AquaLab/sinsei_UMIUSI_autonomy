@@ -112,6 +112,11 @@ ffmpeg -nostdin -r 15 -i cam.h264 -c copy cam.mp4
 ```
 
 `-c copy` なので画質劣化なし・一瞬で終わる (28 MB → 28 MB)。
+
+> **`cam1_r1.h264` のような `_rN` 付きのファイルがあれば、それも忘れずに変換すること。**
+> `record_camera.sh` は RTSP が途切れて gst が落ちたら自動で録画を再開し、そのたび `_rN`
+> (N = 再起動回数) を付けた新しいファイルを作る (同じ名前で開き直すと `filesink` が先頭から
+> 上書きしてそれまでの録画が消えるため)。1 本だけ変換すると再起動以降を取りこぼす。
 `-nostdin` を付けないと ffmpeg が標準入力を食ってスクリプトが壊れる。
 
 ## mp4 セグメントを使うときの注意
@@ -161,6 +166,16 @@ RTSP 直録 (上記) のほうが安い。** 生 `sensor_msgs/Image` を bag に
 **対処済み**: `record_camera.sh` / `record_run.sh` は `set -m` (ジョブ制御) を有効にして
 子を独立したプロセスグループで起こし、SIGINT が届くようにした。`umiusi_stack.sh` は
 `SIGINT → SIGTERM → SIGKILL` の段階的停止にした。
+
+> **`set -m` はサブシェルの中では効かない。** bash はフォークしたサブシェルで job control を
+> 無効化するので、`( ... ) &` の中で起こした子は SIGINT/SIGQUIT を `SIG_IGN` で継承する。
+> `record_camera.sh` の監視ループは `( ... ) &` の中で gst を起こすため、**サブシェルの先頭で
+> `set -m` を入れ直している**。これを外すと gst に SIGINT が届かず finalize が空振りする
+> (いまは GLib が `SIG_IGN` を上書きするので結果的に動くが、依拠してよい性質ではない)。
+>
+> **フォアグラウンドの `sleep` も同じ罠。** `set -m` 下で `sleep N` を前景で回すと Ctrl-C は
+> `sleep` のプロセスグループにしか届かず、親の `trap` が走らない (2 回目でようやく効く)。
+> `record_run.sh` の購読確認は `sleep N & wait $!` にしてある。
 
 > **実機での Ctrl-C 動作は未検証。** `set -m` により子が別プロセスグループになるため、
 > tty からの Ctrl-C は親にだけ届き、親の trap が子へ転送する形に変わる。次回の実機作業で

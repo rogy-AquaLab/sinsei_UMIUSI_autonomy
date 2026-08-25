@@ -163,7 +163,7 @@ unconfigured のまま）。
 | launch | 引数 |
 |---|---|
 | `core_autonomy` | `model_path` `image_topic` `use_rosbridge` `use_camera_bridge` `use_core` `rtsp_url` |
-| `autonomy` | `model_path` `image_topic` `publish` |
+| `autonomy` | `model_path` `image_topic` `publish` `max_duty` `use_camera_bridge` `rtsp_url` |
 | `rl_attitude` | `model_path` `vel_cmd` `publish` `start_armed` `hold_yaw` `max_duty` `vel_timeout` `depth_supervisor` `target_depth` |
 
 `model_path` は未指定なら同梱の検出器 (`models/detector/camp_real2.pt`) を使う。

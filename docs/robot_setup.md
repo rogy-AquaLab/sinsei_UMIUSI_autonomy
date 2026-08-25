@@ -102,13 +102,17 @@ Python の依存はすべて `--user` (`~/.local`) に入る。apt が要るも�
 
 風船検出器の重みはリポジトリに同梱してある。未指定なら `models/detector/camp_real2.pt`。
 
+評価セットは **旧 real_val 25 枚 + 8/25 プール 46 枚**。`camp_real` の F1 が旧 docs の 0.80 から
+下がって見えるのはモデルが劣化したのではなく、実プールの画像が評価に入ったため。
+
 | ファイル | val の F1 | 推奨 conf | 用途 |
 |---|---:|---:|---|
 | **`camp_real2.pt`** (既定) | **0.80** | **0.4** | **競技はこれ**。8/25 プール実写で誤検出を潰した版 |
 | `camp_real.pt` | 0.44 | 0.3 | 旧版。A/B 比較用 |
 | `camp_mix.pt` | — | 0.3 | sim 寄り。sim_eval の F1 が最良 |
 
-旧版に切り替えるとき:
+旧版に切り替えるとき (**`conf_thresh` も checkpoint 側で 0.4 → 0.3 に変わる**ので、
+A/B ではモデルと閾値の 2 つが同時に動く点に注意):
 
 ```bash
 ros2 launch umiusi_autonomy core_autonomy.launch.py \

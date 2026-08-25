@@ -212,7 +212,8 @@ ros2 topic echo --once /perception_node/detections
 ### 検出器の切り替え
 
 既定は同梱の `camp_real2.pt` (8/25 プール実写で継続学習した版、conf 0.4 で F1 0.80)。
-旧版と A/B するとき:
+旧版と A/B するとき (**`conf_thresh` も checkpoint 側で 0.4 → 0.3 に変わる**ので、
+モデルと閾値の 2 つが同時に動く):
 
 ```bash
 ros2 launch umiusi_autonomy core_autonomy.launch.py \
@@ -270,9 +271,14 @@ UI (WebRTC) 側でも映像は見えるが、そちらは MediaMTX 経由の生�
 | **Ctrl-C で録画が閉じるか** | 停止後に `ls ~/runs/*/video/` と `pgrep gst-launch` | **閉じる**。bag の `metadata.yaml` も書かれ reindex 不要、孤児プロセスも残らない |
 | **RL の実機での復元** | 傾けて `/cmd/direct/...` の duty | **未確認** — `publish:=false` でしか回していない。手順 1-4 で確認すること |
 
-> **記録は 30 秒以上録ること。** `record_run.sh` は起動に 10 秒以上かかり (`ros2 topic list` と
-> カメラの立ち上げ)、`ros2 bag record` の discovery にも数秒かかる。15 秒だと **bag に `/tf` しか
-> 入らない**（実機で踏んだ）。30 秒あれば `/state/imu` が 50 Hz、`detections` が 10 Hz で入る。
+> **記録は 30 秒以上録ること。** カメラの立ち上げと `ros2 bag record` の discovery に数秒かかる。
+> 15 秒だと **bag に `/tf` しか入らない**（実機で踏んだ）。30 秒あれば `/state/imu` が 50 Hz、
+> `detections` が 10 Hz で入る。
+>
+> **`record_run.sh` はスタックより先に起動してよい。** recorder は録りながら discovery を回すので
+> 後から現れたトピックも拾う（以前はここで `ros2 topic list` に無いものを落としており、8/25 の run は
+> 19 指定のうち 12 しか録れていなかった）。起動から `UMIUSI_REC_VERIFY_S` 秒（既定 20）後に
+> 「何を購読できたか」を出すので、欠けていればその場で気付ける。
 
 その他の実測: `/front_cam/image_raw` 15.1 Hz / `/state/imu` 50.2 Hz /
 `/state/thruster_state_all` 50.0 Hz / VESC 4 台すべて応答 / CPU 温度 42〜48°C (throttle なし)。
