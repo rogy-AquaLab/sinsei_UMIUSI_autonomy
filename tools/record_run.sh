@@ -4,6 +4,7 @@
 #
 #   ./record_run.sh                 # 前後カメラ + 状態/指令/検出の bag
 #   ./record_run.sh --name pool-01  # 名前を付ける
+#   ./record_run.sh --vision        # 画像も bag に入れる (視覚での位置固定を作るための素材)
 #   Ctrl-C で両方をきれいに停止する
 #   ./record_run.sh --fix           # 記録済み bag の metadata を後から復元する
 #
@@ -32,6 +33,7 @@ OUTROOT="${UMIUSI_RUN_DIR:-$HOME/runs}"
 BAG_ONLY=false
 CAM_ONLY=false
 FIX=false
+VISION=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -39,8 +41,9 @@ while [ $# -gt 0 ]; do
     --dir)  OUTROOT="$2"; shift 2 ;;
     --bag-only) BAG_ONLY=true; shift ;;
     --camera-only) CAM_ONLY=true; shift ;;
+    --vision) VISION=true; shift ;;
     --fix) FIX=true; shift ;;
-    *) echo "使い方: $0 [--name 名前] [--dir DIR] [--bag-only|--camera-only] [--fix]"; exit 1 ;;
+    *) echo "使い方: $0 [--name 名前] [--dir DIR] [--bag-only|--camera-only] [--vision] [--fix]"; exit 1 ;;
   esac
 done
 
@@ -75,6 +78,16 @@ OUT="$OUTROOT/${STAMP}${NAME:+-$NAME}"
 mkdir -p "$OUT"
 
 # 生画像 (/front_cam/image_raw) は**入れない**。映像は H264 のまま別途録る。
+#
+# `/rl_attitude_node/setpoint` と `/rosout` は 8/25 の run で「指令したのに出なかったのか、
+# そもそも指令していないのか」が bag から確定できなかったので足した。効くのはこの 3 つ:
+#   * `setpoint`  … teleop が**送った**目標。`current_setpoint` (ノードが**適用した**目標)
+#                   と突き合わせれば、届いていないのか無視されたのかが 1 発で分かる
+#   * `/rosout`   … 「目標を更新: … 速度=[…]」「policy loaded (obs 14-D)」「ARMED」など
+#                   ノードのログが全部入る。**どのポリシーで走ったか**が run から確定できる
+#                   (14 次元ポリシーは速度指令を受理表示しつつ黙って捨てる — A-15)
+#   * `estop`     … 武装/解除の履歴。arm は**サービス**なので topic には出ず、/rosout 頼み
+# いずれも小さい (docs/logging.md の実測で重いのは /front_cam/image_raw ただ 1 つ)。
 TOPICS="
 /state/imu
 /state/thruster_state_all
@@ -89,13 +102,30 @@ TOPICS="
 /cmd/direct/thruster_controller/output_rb
 /cmd/direct/thruster_controller/output_rf
 /rl_attitude_node/current_setpoint
+/rl_attitude_node/setpoint
+/rl_attitude_node/estop
 /rl_attitude_node/depth
 /rl_attitude_node/depth_mode
 /state/pressure
 /joint_states
 /tf
 /tf_static
+/rosout
 "
+
+# `--vision` のときだけ足す。**画像は既定では録らない** (JPEG エンコードの CPU を払うため)。
+# 視覚での位置固定を作るには、映像 (RTSP 直録) だけでは足りない:
+#   * H264 のフレームと bag のイベントを対応づける手段が meta.txt の開始壁時計しかない。
+#     rtspsrc のジッタバッファ (100 ms) と再接続 (_rN ファイル) があるので単純な積算では合わない
+#   * 誰も CameraInfo を publish しないので、後から内部パラメータを復元できない (A-14/A-16)
+# bag に 2 Hz の圧縮画像が入っていれば、**映像との突き合わせの基準**になり、
+# 「そのとき何が見えていたか」も stamp 付きで残る。
+# スタック側も `record_vision:=true` で起動すること (これが無いと compressed は publish されない)。
+VISION_TOPICS="
+/front_cam/image_raw/compressed
+/front_cam/camera_info
+"
+[ "$VISION" = true ] && TOPICS="$TOPICS $VISION_TOPICS"
 
 PIDS=""
 CLEANED=false
@@ -208,6 +238,12 @@ if [ "$CAM_ONLY" != true ]; then
   ros2 bag record -o "$OUT/bag" -p 200 --topics $TOPICS > "$OUT/bag.log" 2>&1 < /dev/null &
   PIDS="$PIDS $!"
   echo "  データ : $(echo $TOPICS | wc -w) トピック -> $OUT/bag/ (未起動のノードは後から拾う)"
+  if [ "$VISION" = true ]; then
+    echo "  画像   : $(echo $VISION_TOPICS | wc -w) トピックも bag に入れます (--vision)"
+    echo "    スタックを record_vision:=true で起動していないと compressed は出ません:"
+    echo "      ros2 launch umiusi_autonomy core_autonomy.launch.py record_vision:=true"
+    echo "    /front_cam/camera_info は現状どのノードも出しません (未較正 — known_issues A-14)"
+  fi
 fi
 
 [ -z "$PIDS" ] && { echo "何も起動できませんでした"; exit 1; }
@@ -217,6 +253,7 @@ fi
   echo "start_unix=$(date +%s.%N)"
   echo "host=$(hostname)"
   echo "name=${NAME:-（無し）}"
+  echo "vision=$VISION"
 } > "$OUT/meta.txt"
 
 echo ""

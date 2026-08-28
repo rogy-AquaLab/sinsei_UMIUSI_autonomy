@@ -37,9 +37,12 @@ RECORDED_TOPICS = (
     "/state/low_power_circuit_info", "/state/main_power_enabled", "/state/imu_temperature",
     "/perception_node/detections", "/cmd/target",
     *CMD_TOPICS,
-    "/rl_attitude_node/current_setpoint", "/rl_attitude_node/depth",
+    "/rl_attitude_node/current_setpoint", "/rl_attitude_node/setpoint",
+    "/rl_attitude_node/estop", "/rl_attitude_node/depth",
     "/rl_attitude_node/depth_mode", "/state/pressure", "/joint_states", "/tf", "/tf_static",
+    "/rosout",
 )
+ROSOUT_TOPIC = "/rosout"
 STILL_S = 5.0            # 前後に要求する静止時間 [s]
 STILL_GYRO_RMS = 0.05    # 静止判定の gyro RMS 上限 [rad/s]
 BUMP_JUMP = 2.0          # 衝突らしさ: 連続サンプル間の |gyro| ジャンプ [rad/s]
@@ -57,7 +60,7 @@ def read_bag(bag_dir):
                 ConverterOptions(input_serialization_format="cdr",
                                  output_serialization_format="cdr"))
     types = {t.name: t.type for t in reader.get_all_topics_and_types()}
-    keep = {IMU_TOPIC, *CMD_TOPICS}
+    keep = {IMU_TOPIC, ROSOUT_TOPIC, *CMD_TOPICS}
     out = {t: ([], []) for t in keep if t in types}
     msg_cls = {t: get_message(types[t]) for t in out}
     while reader.has_next():
@@ -66,6 +69,38 @@ def read_bag(bag_dir):
             out[topic][0].append(stamp_ns * 1e-9)
             out[topic][1].append(deserialize_message(data, msg_cls[topic]))
     return {t: (np.asarray(ts), msgs) for t, (ts, msgs) in out.items()}, types
+
+
+def check_policy(data, rep):
+    """/rosout から「どのポリシーで走ったか」を確定させる。
+
+    8/25 の run はここが bag から分からず、「巡航を指令したのに出なかったのか、そもそも
+    指令していないのか」を確定できなかった。**14 次元 (姿勢のみ) のポリシーは速度指令を
+    「目標を更新 … 速度=[0.40,…]」と受理したように表示しつつ観測では捨てる** (A-15) ので、
+    ログの見た目だけでは巡航を指令したつもりの run と区別できない。
+    """
+    if ROSOUT_TOPIC not in data or len(data[ROSOUT_TOPIC][1]) == 0:
+        rep.line(False, "policy", f"{ROSOUT_TOPIC} が bag にありません — "
+                                  "どのポリシーで走ったか確定できません", warn=True)
+        return
+    lines = [m.msg for m in data[ROSOUT_TOPIC][1] if m.name == "rl_attitude_node"]
+    loaded = [ln for ln in lines if "policy loaded from" in ln]
+    if not loaded:
+        rep.line(False, "policy", "rl_attitude_node のポリシー読み込みログがありません "
+                                  "(RL を起動していなければ想定どおり)", warn=True)
+        return
+    # 「policy loaded from <path>/export (obs 17-D, rep103)」
+    rep.line(True, "policy", loaded[-1])
+    att_only = any("attitude タスクのポリシーです" in ln for ln in lines)
+    vel_cmds = [ln for ln in lines if "目標を更新" in ln and "速度=[0.00,0.00,0.00]" not in ln]
+    if att_only and vel_cmds:
+        rep.line(False, "policy vs 速度指令",
+                 f"**姿勢のみ (14 次元) のポリシーに速度指令が {len(vel_cmds)} 回入っています。"
+                 "観測に入らないので前進しません** (A-15)。巡航は 17/18 次元のバンドルで")
+    else:
+        rep.line(True, "policy vs 速度指令",
+                 f"速度指令 {len(vel_cmds)} 回 / ポリシーは"
+                 f"{'姿勢のみ (14 次元)' if att_only else '速度指令を観測に持つ'}")
 
 
 class Report:
@@ -102,6 +137,9 @@ def main():
               + " (そのノードを起動していなければ想定どおり。起動していたのに欠けているなら"
                 " recorder が購読できていない — record_run.sh の購読チェックを見ること)"),
              warn=True)
+
+    # --- どのポリシーで走ったか (前進しない run の切り分けはここが起点) ---
+    check_policy(data, rep)
 
     # --- IMU ---
     if IMU_TOPIC not in data or len(data[IMU_TOPIC][0]) == 0:

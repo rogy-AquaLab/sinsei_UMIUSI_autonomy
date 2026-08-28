@@ -33,6 +33,7 @@ def generate_launch_description():
     use_camera_bridge = LaunchConfiguration("use_camera_bridge")
     use_core = LaunchConfiguration("use_core")
     rtsp_url = LaunchConfiguration("rtsp_url")
+    record_vision = LaunchConfiguration("record_vision")
 
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
@@ -55,10 +56,14 @@ def generate_launch_description():
                                           "unconfigured のまま)"),
         DeclareLaunchArgument("rtsp_url", default_value="rtsp://localhost:8554/cam1",
                               description="ブリッジが読む RTSP URL (前方カメラ = cam1)"),
+        DeclareLaunchArgument("record_vision", default_value="false",
+                              description="圧縮画像 (<image_topic>/compressed) も出す。"
+                                          "`record_run.sh --vision` で bag に残すため — "
+                                          "視覚での位置固定を作る素材集め用 (docs/logging.md)"),
 
         # --- 実機カメラ映像を perception に渡す (umiusi_autonomy) ---
         camera_bridge_node(condition=use_camera_bridge, rtsp_url=rtsp_url,
-                           image_topic=image_topic),
+                           image_topic=image_topic, record_vision=record_vision),
 
         # --- autonomy side (umiusi_autonomy) ---
         Node(
