@@ -28,7 +28,8 @@ def test_bundle_contract_and_golden(name):
     d = MODELS / name
     runner = PolicyRunner(d / "export")
     assert runner.meta.get("obs_frame") == "rep103", name
-    assert runner.obs_dim in (14, 17), (name, runner.obs_dim)
+    # 対応次元はノード側の定義と同期させる (18 = duty 上限を観測に持つ Phase2 バンドル)
+    assert runner.obs_dim in (14, 17, 18), (name, runner.obs_dim)
     # 鉛直指令インターロックの契約: vertical_ok は 3-D vectoring 系だけが持つ。
     # 水平専用ポリシーに付くとノードのクランプが外れて転覆リスクになる
     assert runner.meta.get("vertical_ok", False) == ("3d" in name), name

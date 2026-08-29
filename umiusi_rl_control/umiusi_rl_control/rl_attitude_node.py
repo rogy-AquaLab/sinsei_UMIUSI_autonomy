@@ -4,8 +4,9 @@ SB3/mujoco 非依存: 同梱バンドルの ``export/`` (weights.pt + obs_norm.n
 素 torch で推論する (``policy_infer.PolicyRunner``)。ループ:
 
   * SUBSCRIBE  /state/imu (sensor_msgs/Imu)
-  * ポリシーの観測を組み立てる — layout [ori_err(3), gyro(3), v_cmd(3), prev_action(8)] の
-    17 次元 (attitude_velocity) / v_cmd を除いた 14 次元 (attitude)。
+  * ポリシーの観測を組み立てる — layout [ori_err(3), gyro(3), v_cmd(3), prev_action(8),
+    max_duty(1)] の 18 次元 (attitude_velocity + duty 上限) / max_duty を除いた 17 次元
+    (attitude_velocity) / さらに v_cmd を除いた 14 次元 (attitude)。**max_duty は必ず末尾**。
     **サーボ角・推力は観測に入れない** (実機の /state/thruster_state_all は指令のエコーで、
     正帰還に入る — known_issues A-11)。prev_action は自分が出した action をそのまま使う
     (sim 側 ``proprio_mode: action`` と同じ)。
@@ -19,7 +20,10 @@ FRAME 契約: ポリシーは **REP-103 body-frame (x前/y左/z上) の観測を
 
 配備前検証: バンドルに ``golden.npz`` (sim で記録した観測→行動ペア) があれば、読み込み時に
 全ベクトルを再生して一致確認する (issue #15 A-5)。**不一致ならポリシーを動かさない** —
-コピー・正規化統計・観測レイアウト・frame のどれかが壊れている。
+コピーか正規化統計が壊れている。**ただし golden は「このノードが観測をどう組み立てるか」を
+検証しない** — 記録済みの観測ベクトルをそのままネットに流すだけなので、並びを取り違えても
+PASS してしまう。組み立ての検証は ``export/meta.json`` の ``obs_fields`` と ``OBS_FIELDS``
+の突き合わせが受け持つ (無いバンドルでは警告のみ)。
 
 Command: holds UPRIGHT (target = identity)。前進は **既定 0** (新ポリシーは停止保持も学習
 分布内)。目標は ``umiusi_rl_control_msgs/AttitudeTarget`` を ``setpoint_topic`` に publish
@@ -70,12 +74,39 @@ from umiusi_rl_control_msgs.msg import AttitudeTarget
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
 # 観測の次元は **ポリシーのタスクによって変わる**:
-#   attitude_velocity (巡航) = 17 … [ori_err 3, gyro 3, v_cmd 3, prev_action 8]
-#   attitude          (姿勢のみ) = 14 … 上から v_cmd を除いたもの
+#   attitude_velocity + duty 上限 = 18 … [ori_err 3, gyro 3, v_cmd 3, prev_action 8, max_duty 1]
+#   attitude_velocity (巡航)      = 17 … 上から max_duty を除いたもの
+#   attitude          (姿勢のみ)  = 14 … さらに v_cmd を除いたもの
 # 読み込んだポリシーの入力次元から判断して、観測の組み立てを合わせる。
+#
+# **`max_duty` は必ず末尾** (prev_action の後ろ)。sim 側の warm start (初層のゼロパディングで
+# 17 次元の学習済み重みを引き継ぐ) がこの位置を前提にしており、**今後も不変の契約**。
+# 値は正規化なしの生値 (0.2〜0.4 を想定、obs_norm.npz 側で素通し)。実行中に
+# `ros2 param set /rl_attitude_node max_duty` で変えると観測にもそのまま反映される —
+# 「現場で上限を上げたら実際に速く動く」ようにするためで、これが 18 次元化の目的。
+ACT_DIM = 8
+OBS_DIM_CAP = 18
 OBS_DIM = 17
 OBS_DIM_NO_VEL = 14
-ACT_DIM = 8
+# 速度指令を観測に持つ次元 (attitude タスクだけが持たない)
+OBS_DIMS_WITH_VEL = (OBS_DIM_CAP, OBS_DIM)
+OBS_DIMS_SUPPORTED = (OBS_DIM_CAP, OBS_DIM, OBS_DIM_NO_VEL)
+# 次元ごとの観測フィールド (名前, 幅)。`export/meta.json` の `obs_fields` と突き合わせる。
+# **golden 検証はこれを見ていない** — golden は記録済みの観測ベクトルをそのままネットに
+# 流すだけなので、重み・正規化統計は検証できるが、**このノードが観測をどう組み立てるかは
+# 検証されない**。並びを取り違えても golden は PASS してしまう。そこを埋めるための表。
+# 18 次元ポリシーの学習時 duty 上限の分布 (sim の domain randomization は U(0.2, 0.4))。
+# **観測に入れる値だけ**この範囲にクランプする — 実際の duty クリップはオペレータが設定した
+# `max_duty` のまま。範囲外の値をそのまま観測に入れると、warm start でゼロパディングされた
+# 新次元へ**学習時に一度も見ていない値**が入り、出力全体が予測不能になる (17 次元時代は
+# 単にクリップが緩むだけの単調な変化だった)。
+MAX_DUTY_OBS_RANGE = (0.2, 0.4)
+OBS_FIELDS = {
+    OBS_DIM_CAP: (("ori_err", 3), ("gyro", 3), ("v_cmd", 3), ("prev_action", ACT_DIM),
+                  ("max_duty", 1)),
+    OBS_DIM: (("ori_err", 3), ("gyro", 3), ("v_cmd", 3), ("prev_action", ACT_DIM)),
+    OBS_DIM_NO_VEL: (("ori_err", 3), ("gyro", 3), ("prev_action", ACT_DIM)),
+}
 DEFAULT_MODEL = "av_cal1_best_rep103"     # 本命 (issue #15 B 表)。同梱 models/ から選ぶ
 DEFAULT_VERT_MODEL = "av_cal5_3d_rep103"  # 深度モードの降下バースト用 (EXPERIMENTAL, 降下専用)
 GRAVITY = 9.80665                          # 水圧 -> 深度換算 [m/s^2]
@@ -285,6 +316,13 @@ class RlAttitudeNode(Node):
             elif p.name == "max_duty":
                 self._max_duty = abs(float(p.value))
                 self.get_logger().info(f"max_duty={self._max_duty:.2f}")
+                # 実行中の変更でも同じ検査をする。「現場で上限を上げたら速く動く」のが
+                # 18 次元化の目的なので、実行中に変える導線こそ主流になる
+                self._warn_if_max_duty_out_of_range()
+                if self._sup_enabled and self._max_duty < 0.3:
+                    self.get_logger().warning(
+                        f"depth_supervisor 有効だが max_duty={self._max_duty:.2f} — "
+                        "深度試験は 0.3 以上を推奨 (issue #19)")
             elif p.name == "servo_slew_deg_per_s":
                 self._servo_slew = float(p.value)
                 self.get_logger().info(f"servo_slew={self._servo_slew:.1f} deg/s")
@@ -419,9 +457,13 @@ class RlAttitudeNode(Node):
         d = (Path(mp) if mp else
              Path(get_package_share_directory("umiusi_rl_control")) / "models" / DEFAULT_VERT_MODEL)
         runner = self._load_bundle(d)
-        if runner.obs_dim != OBS_DIM:
+        if runner.obs_dim not in OBS_DIMS_WITH_VEL:
+            # 水平ポリシーと vert ポリシーで次元が違っていてよい (17 と 18 の混在)。
+            # 観測はモデルごとに `model.obs_dim` で組むので、prev_action の位置もずれない。
+            # 速度指令を持たない attitude タスク (14) だけは降下バーストに使えない。
             raise ValueError(
-                f"vert モデルは attitude_velocity (17 次元) が必要です ({d}: {runner.obs_dim})")
+                f"vert モデルは速度指令を観測に持つタスク "
+                f"({OBS_DIM} か {OBS_DIM_CAP} 次元) が必要です ({d}: {runner.obs_dim})")
         self._vert_model = runner
         self.get_logger().info(f"depth supervisor: vert policy loaded from {d}")
 
@@ -433,7 +475,54 @@ class RlAttitudeNode(Node):
             self.get_logger().info(
                 "attitude タスクのポリシーです (観測に速度指令を含まない)。"
                 "vel_cmd / AttitudeTarget.velocity は無視されます")
+        if self._obs_dim == OBS_DIM_CAP:
+            self.get_logger().info(
+                f"duty 上限を観測に持つポリシーです。max_duty={self._max_duty:.2f} を観測末尾に"
+                "入れます — 実行中に `ros2 param set` で変えると方策の出力も追従します")
+            self._warn_if_max_duty_out_of_range()
         self.get_logger().info(f"policy loaded from {d / 'export'} (obs {self._obs_dim}-D, rep103)")
+
+    def _check_obs_fields(self, runner, export):
+        """``meta.json`` の ``obs_fields`` とこのノードの組み立て順を照合する。
+
+        ``obs_fields`` は ``[["ori_err", 3], ["gyro", 3], ...]`` のような (名前, 幅) の並び。
+
+        **18 次元では必須**。後方互換で警告だけにしてよいのは「既に出回っていて直せない
+        バンドル」に限る話で、18 次元のバンドルはこの機能と同時に生まれたので守るべき既存が
+        無い。しかも並びを取り違えて一番困るのが末尾に `max_duty` を足したこの次元なので、
+        **一番塞ぐべきところだけ穴が開く**ことになる。既存の 17/14 は警告のみで通す。
+        """
+        expected = OBS_FIELDS[runner.obs_dim]
+        fields = runner.meta.get("obs_fields")
+        if fields is None or len(fields) == 0:
+            if runner.obs_dim == OBS_DIM_CAP:
+                raise ValueError(
+                    f"{export}/meta.json に obs_fields がありません。{OBS_DIM_CAP} 次元の"
+                    "バンドルでは必須です (末尾の max_duty の位置を照合できないと、"
+                    "golden が PASS しても方策が別の入力を読みます)。"
+                    f"このノードの並び: {[n for n, _ in expected]}")
+            self.get_logger().warning(
+                f"{export}/meta.json に obs_fields がありません。観測の並びを照合できないので "
+                "golden が PASS しても組み立て順の取り違えは検出できません "
+                f"(このノードの並び: {[n for n, _ in expected]})")
+            return
+        try:
+            got = tuple((str(n), int(w)) for n, w in fields)
+        except (TypeError, ValueError) as e:
+            # 形が違うものを黙って「照合できた」ことにしない。sim 側は幅の合計が合わない
+            # ときは **キーごと省略する** 約束なので、ここに来るのは想定外の生成元。
+            raise ValueError(
+                f"obs_fields の形式が不正です ({export}/meta.json: {fields!r})。"
+                '[["名前", 幅], ...] の並びが必要です') from e
+        if sum(w for _, w in got) != runner.obs_dim:
+            raise ValueError(
+                f"obs_fields の幅の合計 {sum(w for _, w in got)} がポリシーの入力次元 "
+                f"{runner.obs_dim} と一致しません ({export}/meta.json)")
+        if got != expected:
+            raise ValueError(
+                f"観測レイアウトが sim と食い違っています ({export}/meta.json)。"
+                f"バンドル: {got} / このノード: {expected}")
+        self.get_logger().info(f"観測レイアウト一致: {[n for n, _ in expected]}")
 
     def _load_bundle(self, d: Path):
         """バンドルを読み、frame 契約・観測次元・golden を検証した PolicyRunner を返す。"""
@@ -453,11 +542,17 @@ class RlAttitudeNode(Node):
             raise ValueError(
                 f"obs_frame={frame!r} のポリシーです ({export}/meta.json)。このノードは IMU を "
                 "無変換 (REP-103) で観測に入れるので、rep103 変換済みバンドルだけを使えます")
-        if runner.obs_dim not in (OBS_DIM, OBS_DIM_NO_VEL):
+        if runner.obs_dim not in OBS_DIMS_SUPPORTED:
             raise ValueError(
                 f"対応していない観測次元 {runner.obs_dim} です ({export})。"
-                f"{OBS_DIM} (attitude_velocity) か {OBS_DIM_NO_VEL} (attitude) のみ対応します "
+                f"{OBS_DIM_CAP} (attitude_velocity + duty 上限) / {OBS_DIM} (attitude_velocity) / "
+                f"{OBS_DIM_NO_VEL} (attitude) のみ対応します "
                 "(servo/thrust を観測に含む旧 25/22 次元ポリシーは廃止 — A-11 のエコー問題)")
+
+        # 観測レイアウトの突き合わせ。**golden ではここは検証できない** (記録済みの観測を
+        # そのまま流すだけなので、このノードの組み立て順が違っても PASS する)。sim が
+        # meta.json に `obs_fields` を書いていれば、名前と幅で厳密に照合する。
+        self._check_obs_fields(runner, export)
 
         # 配備前検証 (issue #15 A-5): sim で記録した golden vectors を実機の推論経路で再生
         golden = d / "golden.npz"
@@ -475,6 +570,22 @@ class RlAttitudeNode(Node):
             self.get_logger().warning(f"{golden} が無いので配備前検証をスキップします")
         return runner
 
+    def _warn_if_max_duty_out_of_range(self):
+        """18 次元ポリシーで `max_duty` が学習分布の外なら警告する。
+
+        観測に入る値はクランプするので方策が壊れることはないが、**オペレータの意図と
+        実挙動がずれる**: 0.5 に上げても方策は 0.4 のつもりで指令を作る。黙って丸めない。
+        """
+        if self._obs_dim != OBS_DIM_CAP:
+            return
+        lo, hi = MAX_DUTY_OBS_RANGE
+        if not (lo <= self._max_duty <= hi):
+            self.get_logger().warning(
+                f"max_duty={self._max_duty:.2f} は 18 次元ポリシーの学習分布 [{lo}, {hi}] の外です。"
+                f"**観測に入れる値は {min(max(self._max_duty, lo), hi):.2f} にクランプ**します "
+                "(duty のクリップ自体は設定値のまま)。方策は学習していない上限では意図どおりに"
+                "動きません")
+
     def _build_obs(self, v_cmd, obs_dim):
         imu = self._imu
         cur_quat = np.array(imu.quat, dtype=float)      # ImuSanity が (w,x,y,z) 正規化済みで返す
@@ -486,16 +597,29 @@ class RlAttitudeNode(Node):
             # 成分を落とすだけなので特異点が無い (RPY に直すと pitch±90 で破綻する)
             ori_err[YAW_IDX] = 0.0
         parts = [ori_err, gyro]
-        if obs_dim == OBS_DIM:                # attitude_velocity のみ速度指令を観測に持つ
+        if obs_dim in OBS_DIMS_WITH_VEL:      # attitude タスクだけが速度指令を持たない
             parts.append(v_cmd)
         parts.append(self._prev_action)
-        return np.concatenate(parts)
+        if obs_dim == OBS_DIM_CAP:
+            # duty 上限を **末尾** に足す (契約は冒頭の OBS_DIM_CAP のコメント)。
+            # `self._max_duty` は `_on_set_params` で実行中も更新されるので、
+            # `ros2 param set` した値がそのまま方策に見える。ただし**学習分布の外は入れない**
+            # (MAX_DUTY_OBS_RANGE)。クリップの実値は `_command` 側の `self._max_duty` のままで、
+            # 観測に入る値だけを丸める。
+            parts.append(np.array([np.clip(self._max_duty, *MAX_DUTY_OBS_RANGE)], dtype=float))
+        obs = np.concatenate(parts)
+        if obs.shape[0] != obs_dim:           # レイアウトの取り違えを黙って通さない
+            raise ValueError(
+                f"観測を {obs.shape[0]} 次元で組みましたが、ポリシーは {obs_dim} 次元です")
+        return obs
 
     def _supervise(self):
         """深度モード切替。-> (使うモデル, 観測に入れる v_cmd)。
 
-        prev_action は共有のまま (両ポリシーとも 17 次元で obs レイアウト同一 —
-        sim リハーサルで切替の過渡が問題ないことを確認済み)。
+        prev_action は共有のまま。**水平と vert で観測次元が違ってよい** (17 と 18 の混在) —
+        観測はモデルごとに `model.obs_dim` で組み、`prev_action` の位置は
+        どちらでも同じなのでずれない (test_obs_layout.py で固定)。
+        ただし **vert が 17 次元なら duty 上限の変化には追従しない** (観測に持たないため)。
         """
         model, v_cmd = self._model, self._v_cmd
         if not (self._sup_enabled and self._vert_model is not None):
