@@ -184,6 +184,14 @@ def test_契約が欠けていたら落とす(missing):
         ModeAction(c, POSITIONS)
 
 
+@pytest.mark.parametrize("bad", [[1, -1, -1, 1, 1], [1, -1, -1, 1, 1, -1, 1]])
+def test_符号表の長さが違ったらユニット名を添えて落とす(bad):
+    """numpy の "inhomogeneous shape" に化けさせない — どのユニットが壊れているか出す。"""
+    c = dict(CONTRACT, mode_signs=dict(CONTRACT["mode_signs"], rb=bad))
+    with pytest.raises(ValueError, match="rb"):
+        ModeAction(c, POSITIONS)
+
+
 def test_ユニット名が食い違ったら落とす():
     c = dict(CONTRACT, mode_signs={"lf": [1] * 6, "lb": [1] * 6, "rb": [1] * 6, "xx": [1] * 6})
     with pytest.raises(ValueError, match="ユニット名"):

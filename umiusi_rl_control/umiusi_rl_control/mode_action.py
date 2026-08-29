@@ -76,6 +76,14 @@ class ModeAction:
             raise ValueError(
                 f"mode_signs のユニット名 {sorted(signs)} がノードの配置 {list(positions)} と"
                 "一致しません")
+        # 長さも**ユニット名を添えて**確かめる。ここを素の np.array に任せると
+        # 「inhomogeneous shape」という numpy の一般論に化けて、どのユニットが壊れているか
+        # 分からなくなる (落ちること自体は変わらないが、実験の合間に読むログとして役に立たない)
+        for p in positions:
+            if len(signs[p]) != MODE_DIM:
+                raise ValueError(
+                    f"mode_signs['{p}'] は {MODE_DIM} 要素必要ですが {len(signs[p])} 個です "
+                    f"({signs[p]})。列の並びは mode_sign_columns を参照")
         # 符号表は (h 3 列 | v 3 列) の並び。どのモード成分に掛かるかは mode_sign_columns で
         # 決まるので、順序を仮定せず名前で引く。
         s = np.array([[float(x) for x in signs[p]] for p in positions], dtype=float)

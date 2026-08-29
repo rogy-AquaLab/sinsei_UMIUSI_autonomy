@@ -274,6 +274,7 @@ class RlAttitudeNode(Node):
         self._sup.target_depth = float(self.get_parameter("target_depth").value)
         self._rho = float(self.get_parameter("water_density").value)
         self._vert_model = None            # 3-D ポリシー (深度モード有効時に読み込む)
+        self._active_model = None          # 直前の tick で使ったモデル (切替の検出用)
         self._depth = None                 # 現在深度 [m, 正=深い]。ゼロ点確定まで None
         self._depth_stamp = None           # 最終更新時刻 [s] (鮮度ガード)
         self._p_surface = None             # 水面の圧力 [Pa] (ゼロ点)
@@ -742,6 +743,15 @@ class RlAttitudeNode(Node):
                 self.get_logger().warning(
                     f"速度指令が {self._vel_timeout:.1f} s 更新されなかったので 0 に戻しました (デッドマン)")
         model, v_cmd = self._supervise()
+        if model is not self._active_model:
+            # 深度モードの切替でモデルが変わったら、**これから使うほうの積分器を 0 から始める**。
+            # モードの積分器はモデルごとに持つので、切替で待機していた側は「最後に使ったときの
+            # モードベクトル」を抱えたままになる。再選択の瞬間にその力がいきなり出るのは危険で、
+            # sim には対応する状況が無い (env は方策 1 個で積分器も 1 個)。
+            # 現状はどちらも direct 出力なので不活性だが、vert に modes 系を載せた瞬間に効く。
+            if getattr(model, "mode_action", None) is not None:
+                model.mode_action.reset()
+            self._active_model = model
         # 鉛直指令インターロック (レビュー指摘): 鉛直速度が学習分布内のポリシー
         # (export/meta.json の vertical_ok, 3-D vectoring 系) 以外には z 成分を渡さない。
         # 水平専用ポリシーに鉛直指令が入ると姿勢が崩壊する (sim 実測 75〜122°)。
@@ -821,6 +831,7 @@ class RlAttitudeNode(Node):
             if m is not None and getattr(m, "mode_action", None) is not None:
                 m.mode_action.reset()
                 reset_any = True
+        self._active_model = None      # 再武装時に切替判定をやり直す
         if reset_any:
             # 直接出力の方策では従来どおり prev_action を触らない (挙動を変えない)
             self._prev_action = np.zeros(ACT_DIM)
