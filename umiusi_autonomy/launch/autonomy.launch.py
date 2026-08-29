@@ -31,6 +31,7 @@ def generate_launch_description():
     max_duty = LaunchConfiguration("max_duty")
     use_camera_bridge = LaunchConfiguration("use_camera_bridge")
     rtsp_url = LaunchConfiguration("rtsp_url")
+    record_vision = LaunchConfiguration("record_vision")
 
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
@@ -49,10 +50,14 @@ def generate_launch_description():
                                           "別の image publisher を使うときだけ false"),
         DeclareLaunchArgument("rtsp_url", default_value="rtsp://localhost:8554/cam1",
                               description="ブリッジが読む RTSP URL (前方カメラ = cam1)"),
+        DeclareLaunchArgument("record_vision", default_value="false",
+                              description="圧縮画像 (<image_topic>/compressed) も出す。"
+                                          "`record_run.sh --vision` で bag に残すため — "
+                                          "視覚での位置固定を作る素材集め用 (docs/logging.md)"),
 
         # --- 実機カメラ映像を perception に渡す (core_autonomy.launch.py と同じ設定) ---
         camera_bridge_node(condition=use_camera_bridge, rtsp_url=rtsp_url,
-                           image_topic=image_topic),
+                           image_topic=image_topic, record_vision=record_vision),
         Node(
             package="umiusi_autonomy",
             executable="perception_node",

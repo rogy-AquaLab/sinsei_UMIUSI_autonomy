@@ -56,7 +56,7 @@ ros2 bag record -o run_$(date +%Y%m%d-%H%M%S) \
   ...  # 以下略 — 実際の一覧は tools/record_run.sh を見ること
 ```
 
-**録るトピックの一覧は `tools/record_run.sh` が正**（19 トピック）。ここに手で写した一覧は
+**録るトピックの一覧は `tools/record_run.sh` が正**（22 トピック、`--vision` で +2）。ここに手で写した一覧は
 すぐ古くなるので置かない。上は雰囲気をつかむための抜粋で、`/rl_attitude_node/current_setpoint`
 `/rl_attitude_node/depth` `/rl_attitude_node/depth_mode` `/state/pressure`
 `/state/imu_temperature` を含む全量はスクリプト側で管理している。手で `ros2 bag record` を
@@ -150,6 +150,29 @@ ros2 run umiusi_autonomy camera_bridge_node --ros-args \
 RTSP 直録 (上記) のほうが安い。** 生 `sensor_msgs/Image` を bag に入れるのは
 320x240 でも 3.5 MB/s あるので勧めない。
 
+### カメラで位置を固定する準備として録る (`--vision`)
+
+視覚で位置を推定するなら、**H264 の映像だけでは足りない**。フレームと bag のイベントを
+対応づける手段が `meta.txt` の開始壁時計しかなく、`rtspsrc` のジッタバッファ (100 ms) と
+再接続 (`_rN`) があるので単純な積算では合わないため (known_issues A-16)。
+
+```bash
+# スタック側: 圧縮画像も出す
+ros2 launch umiusi_autonomy core_autonomy.launch.py record_vision:=true
+# 記録側: それを bag に入れる
+./tools/record_run.sh --vision --name pool-vision
+```
+
+`record_vision:=true` は `<image_topic>/compressed` を **2 Hz に間引いて** publish する
+(`compressed_max_rate_hz`)。全フレームは RTSP 直録が持っているので、bag 側は
+**映像と bag を突き合わせる基準**と「そのとき何が見えていたか」があれば足りる。
+間引きは `cv2.imencode` を呼ぶ前に効くので、**払う CPU も 2 Hz ぶん**で済む。
+
+> `/front_cam/camera_info` も録る一覧に入れてあるが、**いまはどのノードも publish しない**。
+> 内部パラメータが未較正で、しかも 16:9 → 4:3 の強制リサイズで方位角が系統的にずれている
+> (**known_issues A-14 — 位置固定を作る前にここを潰すこと**)。購読チェックがこれを毎回
+> 「まだ publish されていない」と出すのは想定どおりで、較正が入ったら消える。
+
 ## bag の metadata が書かれないことがある — 真の原因は SIGINT の継承
 
 `ros2 bag record` を止めたのに **`metadata.yaml` が書かれず**、`ros2 bag info` / `play` が
@@ -201,9 +224,21 @@ ros2 bag reindex <bag ディレクトリ>
 ./tools/record_run.sh --name pool-01
 ```
 
-映像 (前後カメラ、H264 そのまま) と rosbag (状態・指令・検出の 19 トピック) を同時に開始し、
+映像 (前後カメラ、H264 そのまま) と rosbag (状態・指令・検出の 22 トピック) を同時に開始し、
 Ctrl-C で両方をきれいに閉じる。出力は `~/runs/<日時>-<名前>/` (`UMIUSI_RUN_DIR` で変更可) に
 `video/` `bag/` `meta.txt` が揃う。**実機実測で perception への影響なし** (7.74 -> 7.80 Hz)。
+
+そのうち 3 つは **「前進しない」の切り分け専用**に入れてある。8/25 の run はここが無くて
+「指令したのに出なかったのか、そもそも指令していないのか」を bag から確定できなかった:
+
+| トピック | これで分かること |
+|---|---|
+| `/rl_attitude_node/setpoint` | teleop が**送った**目標。`current_setpoint` (ノードが**適用した**目標) と突き合わせると、届いていないのか無視されたのかが分かる |
+| `/rosout` | **どのポリシーで走ったか** (`policy loaded … obs 17-D`)、`目標を更新`、`ARMED`。14 次元ポリシーは速度指令を受理表示しつつ黙って捨てるので、これが無いと区別できない (A-15) |
+| `/rl_attitude_node/estop` | 武装/解除の履歴。`~/arm` は**サービス**なので topic には出ない |
+
+`bag_check.py` はこの `/rosout` を読んで、**14 次元ポリシーに速度指令が入っている run を
+FAIL にする**。プールサイドで気付けるようにするため。
 
 ## 最低限これだけは残す (競技当日)
 
@@ -212,6 +247,6 @@ Ctrl-C で両方をきれいに閉じる。出力は `~/runs/<日時>-<名前>/`
 2. **走行後に `tools/record_run.sh --fix`** — 停止処理が最後まで走らないことがあるので、
    metadata の復元はここで確実に取り切る (上記「rosbag の metadata が…」参照)
 3. **取ったらその場で `python3 tools/bag_check.py <bag>` で検品** — 前後静止 5 s・IMU 化け・
-   衝突スパイク・励起カバレッジを見る。撤収してからでは取り直せない
+   衝突スパイク・励起カバレッジ・**どのポリシーで走ったか**を見る。撤収してからでは取り直せない
 4. `~/umiusi_logs/` のノードログ (`tools/umiusi_stack.sh` が自動で残す)
 5. 走行前に `tools/bench_rates.py` を 20 秒回して**その日の周期の記録**を取る

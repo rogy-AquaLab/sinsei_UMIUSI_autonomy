@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import argparse
-import math
+import re
 import sys
 from pathlib import Path
 
@@ -37,9 +37,22 @@ RECORDED_TOPICS = (
     "/state/low_power_circuit_info", "/state/main_power_enabled", "/state/imu_temperature",
     "/perception_node/detections", "/cmd/target",
     *CMD_TOPICS,
-    "/rl_attitude_node/current_setpoint", "/rl_attitude_node/depth",
+    "/rl_attitude_node/current_setpoint", "/rl_attitude_node/setpoint",
+    "/rl_attitude_node/estop", "/rl_attitude_node/depth",
     "/rl_attitude_node/depth_mode", "/state/pressure", "/joint_states", "/tf", "/tf_static",
+    "/rosout",
 )
+ROSOUT_TOPIC = "/rosout"
+RL_NODE = "rl_attitude_node"
+# 主ポリシーの読み込みログ。**行頭一致で見ること。** 深度スーパーバイザは
+# 「depth supervisor: vert policy loaded from …」を**主ポリシーの直後に**出すので、
+# 部分一致にすると vert のほうで上書きされ、`att_only` が False に戻ってしまう
+# (= 14 次元 + 深度モードの run が黙って PASS する。この検査が防ぎたい失敗そのもの)。
+LOADED_PREFIX = "policy loaded from"
+# 「目標を更新: roll=… deg  速度=[0.40,0.00,0.00] m/s」の 3 成分
+VEL_RE = re.compile(r"速度=\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]")
+# ログは .2f なので、表示されうる最小の非ゼロは 0.01。その半分を閾値にする
+VEL_EPS = 5e-3
 STILL_S = 5.0            # 前後に要求する静止時間 [s]
 STILL_GYRO_RMS = 0.05    # 静止判定の gyro RMS 上限 [rad/s]
 BUMP_JUMP = 2.0          # 衝突らしさ: 連続サンプル間の |gyro| ジャンプ [rad/s]
@@ -57,7 +70,7 @@ def read_bag(bag_dir):
                 ConverterOptions(input_serialization_format="cdr",
                                  output_serialization_format="cdr"))
     types = {t.name: t.type for t in reader.get_all_topics_and_types()}
-    keep = {IMU_TOPIC, *CMD_TOPICS}
+    keep = {IMU_TOPIC, ROSOUT_TOPIC, *CMD_TOPICS}
     out = {t: ([], []) for t in keep if t in types}
     msg_cls = {t: get_message(types[t]) for t in out}
     while reader.has_next():
@@ -66,6 +79,78 @@ def read_bag(bag_dir):
             out[topic][0].append(stamp_ns * 1e-9)
             out[topic][1].append(deserialize_message(data, msg_cls[topic]))
     return {t: (np.asarray(ts), msgs) for t, (ts, msgs) in out.items()}, types
+
+
+def _is_rl_logger(name: str) -> bool:
+    """`/rosout` の `name` が rl_attitude_node のものか。
+
+    ROS 2 の logger 名は**名前空間を `.` で繋いだ完全修飾名** (`ns.rl_attitude_node`) なので、
+    素の名前だけで比較すると名前空間付きで起動したときに**黙って 0 件**になり、
+    「RL を起動していない」という誤った WARN に化ける (この検査が防ぎたい失敗そのもの)。
+    """
+    return name == RL_NODE or name.endswith("." + RL_NODE)
+
+
+def _parse_velocity(line: str):
+    """「目標を更新: … 速度=[0.40,0.00,0.00] m/s」から 3 成分を取り出す。無ければ None。
+
+    **文字列一致で "速度=[0.00,0.00,0.00]" を弾かないこと。** teleop は刻みの加減算で
+    速度を作るので、意図上ゼロでも浮動小数の残差で `-0.00` と表示されることがあり、
+    リテラル比較だとゼロ指令を「速度指令あり」と数えて誤 FAIL する。
+    """
+    m = VEL_RE.search(line)
+    return tuple(float(g) for g in m.groups()) if m else None
+
+
+def check_policy(data, rep):
+    """/rosout から「どのポリシーで走ったか」を確定させる。
+
+    8/25 の run はここが bag から分からず、「巡航を指令したのに出なかったのか、そもそも
+    指令していないのか」を確定できなかった。**14 次元 (姿勢のみ) のポリシーは速度指令を
+    「目標を更新 … 速度=[0.40,…]」と受理したように表示しつつ観測では捨てる** (A-15) ので、
+    ログの見た目だけでは巡航を指令したつもりの run と区別できない。
+    """
+    if ROSOUT_TOPIC not in data or len(data[ROSOUT_TOPIC][1]) == 0:
+        rep.line(False, "policy", f"{ROSOUT_TOPIC} が bag にありません — "
+                                  "どのポリシーで走ったか確定できません", warn=True)
+        return
+    lines = [m.msg for m in data[ROSOUT_TOPIC][1] if _is_rl_logger(m.name)]
+    # **最後の読み込み以降だけを見る。** recorder はスタックと独立に起動してよい設計なので、
+    # 1 本の bag がノードの再起動をまたぐことがある。全体を見ると「1 個目の 14 次元 +
+    # 2 個目への正当な速度指令」で誤 FAIL する。
+    last, att_only, seen_att = None, False, False
+    for i, ln in enumerate(lines):
+        if "attitude タスクのポリシーです" in ln:
+            seen_att = True          # この INFO は「policy loaded from」の直前に出る
+        elif ln.startswith(LOADED_PREFIX):
+            last, att_only, seen_att = i, seen_att, False
+    if last is None:
+        rep.line(False, "policy", "rl_attitude_node のポリシー読み込みログがありません "
+                                  "(RL を起動していなければ想定どおり)", warn=True)
+        return
+    # 「policy loaded from <path>/export (obs 17-D, rep103)」
+    rep.line(True, "policy", lines[last])
+    vel_cmds, unparsed = [], 0
+    for ln in lines[last + 1:]:
+        if "目標を更新" not in ln:
+            continue
+        v = _parse_velocity(ln)
+        if v is None:
+            unparsed += 1
+        elif any(abs(x) > VEL_EPS for x in v):
+            vel_cmds.append(ln)
+    if unparsed:
+        rep.line(False, "policy vs 速度指令",
+                 f"速度を読み取れない「目標を更新」行が {unparsed} 件あります — "
+                 "ログの書式が変わった可能性。この検査は信用しないこと", warn=True)
+    if att_only and vel_cmds:
+        rep.line(False, "policy vs 速度指令",
+                 f"**姿勢のみ (14 次元) のポリシーに速度指令が {len(vel_cmds)} 回入っています。"
+                 "観測に入らないので前進しません** (A-15)。巡航は 17/18 次元のバンドルで")
+    else:
+        rep.line(True, "policy vs 速度指令",
+                 f"速度指令 {len(vel_cmds)} 回 / ポリシーは"
+                 f"{'姿勢のみ (14 次元)' if att_only else '速度指令を観測に持つ'}")
 
 
 class Report:
@@ -102,6 +187,9 @@ def main():
               + " (そのノードを起動していなければ想定どおり。起動していたのに欠けているなら"
                 " recorder が購読できていない — record_run.sh の購読チェックを見ること)"),
              warn=True)
+
+    # --- どのポリシーで走ったか (前進しない run の切り分けはここが起点) ---
+    check_policy(data, rep)
 
     # --- IMU ---
     if IMU_TOPIC not in data or len(data[IMU_TOPIC][0]) == 0:

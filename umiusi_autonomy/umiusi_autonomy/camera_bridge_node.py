@@ -67,6 +67,11 @@ class CameraBridge(Node):
         # --- ロギング: rosbag に残せる圧縮画像も出す (生 Image は 320x240 でも 3.5 MB/s ある) ---
         self.declare_parameter("publish_compressed", False)
         self.declare_parameter("jpeg_quality", 80)
+        # 圧縮画像だけのレート上限 [Hz]。0 = 画像と同じレート。**JPEG エンコードは perception と
+        # 同じ CPU を食う**ので、記録目的なら間引く。映像そのものは RTSP 直録 (record_camera.sh)
+        # が全フレーム持っているので、bag 側は「映像と bag を突き合わせる基準」と
+        # 「そのとき何が見えていたか」が分かれば足りる (docs/logging.md)。
+        self.declare_parameter("compressed_max_rate_hz", 0.0)
         # --- 自動追従: consumer_topic の実レートに publish レートを合わせる ---
         # 注意: これが減らせるのは publish/シリアライズ/DDS の分だけで、デコード負荷は
         # カメラ側の fps で決まる (cameras.yaml の framerate)。デコードごと減らしたい場合は
@@ -95,12 +100,18 @@ class CameraBridge(Node):
         self._last_reconnect = float("-inf")   # 初回は待たずに再接続する (sim time で 0 始まりでも)
 
         self._pub_c = None
+        self._c_dt = None            # 圧縮画像の間引き間隔 [s] (None = 間引かない)
+        self._c_last = float("-inf")
         if bool(self.get_parameter("publish_compressed").value):
             self._pub_c = self.create_publisher(
                 CompressedImage, str(self.get_parameter("image_topic").value) + "/compressed", qos)
             self._jpeg_q = int(self.get_parameter("jpeg_quality").value)
+            crate = float(self.get_parameter("compressed_max_rate_hz").value)
+            self._c_dt = (1.0 / crate) if crate > 0.0 else None
+            self._c_last = float("-inf")
             self.get_logger().info(
-                f"圧縮画像も publish します (JPEG q={self._jpeg_q}) — rosbag 用")
+                f"圧縮画像も publish します (JPEG q={self._jpeg_q}, "
+                f"{f'{crate:.1f} Hz 上限' if self._c_dt else 'レート制限なし'}) — rosbag 用")
 
         self._auto = bool(self.get_parameter("auto_rate").value)
         self._target_dt = None      # auto_rate 時の目標間隔 [s]。None = 無制限で開始
@@ -191,7 +202,7 @@ class CameraBridge(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self._frame_id
         self._pub.publish(msg)
-        if self._pub_c is not None:
+        if self._pub_c is not None and self._compressed_due():
             ok_enc, buf = cv2.imencode(".jpg", frame,
                                        [int(cv2.IMWRITE_JPEG_QUALITY), self._jpeg_q])
             if ok_enc:
@@ -203,6 +214,17 @@ class CameraBridge(Node):
         self._n += 1
         if self._n % 300 == 0:
             self.get_logger().info(f"{self._n} フレーム中継")
+
+    def _compressed_due(self) -> bool:
+        """圧縮画像を今フレーム出すか。**`cv2.imencode` を呼ぶ前**に判定すること —
+        CPU を食うのはエンコードであって publish ではない。"""
+        if self._c_dt is None:
+            return True
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now - self._c_last < self._c_dt * 0.98:   # 端数で 1 フレーム落とさないよう緩める
+            return False
+        self._c_last = now
+        return True
 
     def _retune(self) -> None:
         """consumer_topic の実レートを測り、publish レートをそれに合わせる。
