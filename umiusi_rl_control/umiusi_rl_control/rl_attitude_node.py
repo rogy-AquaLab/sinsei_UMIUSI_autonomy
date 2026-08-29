@@ -743,15 +743,7 @@ class RlAttitudeNode(Node):
                 self.get_logger().warning(
                     f"速度指令が {self._vel_timeout:.1f} s 更新されなかったので 0 に戻しました (デッドマン)")
         model, v_cmd = self._supervise()
-        if model is not self._active_model:
-            # 深度モードの切替でモデルが変わったら、**これから使うほうの積分器を 0 から始める**。
-            # モードの積分器はモデルごとに持つので、切替で待機していた側は「最後に使ったときの
-            # モードベクトル」を抱えたままになる。再選択の瞬間にその力がいきなり出るのは危険で、
-            # sim には対応する状況が無い (env は方策 1 個で積分器も 1 個)。
-            # 現状はどちらも direct 出力なので不活性だが、vert に modes 系を載せた瞬間に効く。
-            if getattr(model, "mode_action", None) is not None:
-                model.mode_action.reset()
-            self._active_model = model
+        self._select_model(model)
         # 鉛直指令インターロック (レビュー指摘): 鉛直速度が学習分布内のポリシー
         # (export/meta.json の vertical_ok, 3-D vectoring 系) 以外には z 成分を渡さない。
         # 水平専用ポリシーに鉛直指令が入ると姿勢が崩壊する (sim 実測 75〜122°)。
@@ -819,6 +811,22 @@ class RlAttitudeNode(Node):
             out.duty_cycle = 0.0
             out.angle = 0.0
             self._pubs[p].publish(out)
+
+    def _select_model(self, model):
+        """今 tick で使うモデルを確定する。**切り替わったら、これから使うほうの積分器を 0 に戻す。**
+
+        モードの積分器はモデルごとに持つので、深度モードの切替で待機していた側は
+        「最後に使ったときのモードベクトル」を抱えたままになる。再選択の瞬間にその力が
+        いきなり出るのは危険で、sim には対応する状況が無い (env は方策 1 個・積分器 1 個)。
+        リセットするのは**新しく選ばれたほう** — 出ていく側の状態は、それ自身が再選択される
+        ときにこの判定で消えるので触らなくてよい。
+        現状はどちらのモデルも direct 出力なので不活性だが、vert に modes 系を載せた瞬間に効く。
+        """
+        if model is self._active_model:
+            return
+        if model.mode_action is not None:
+            model.mode_action.reset()
+        self._active_model = model
 
     def _reset_mode_state(self):
         """レンチモードの積分器と前回サーボ角を初期化する (disarm / e-stop のたび)。
