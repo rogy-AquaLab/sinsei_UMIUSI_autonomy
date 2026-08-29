@@ -20,6 +20,8 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
+from umiusi_autonomy.launch_common import camera_bridge_node
+
 
 def generate_launch_description():
     params = PathJoinSubstitution([FindPackageShare("umiusi_autonomy"), "config", "autonomy.yaml"])
@@ -34,7 +36,8 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
-                              description="learned detector .pt checkpoint。空なら同梱の camp_mix.pt を使う。実際の水中は camp_real.pt のほうが強い (models/detector/README.md)"),
+                              description="learned detector .pt checkpoint。"
+                                          "空なら同梱のものを使う (models/detector/README.md)"),
         DeclareLaunchArgument("image_topic", default_value="/front_cam/image_raw",
                               description="onboard camera topic"),
         DeclareLaunchArgument("use_rosbridge", default_value="true",
@@ -54,20 +57,8 @@ def generate_launch_description():
                               description="ブリッジが読む RTSP URL (前方カメラ = cam1)"),
 
         # --- 実機カメラ映像を perception に渡す (umiusi_autonomy) ---
-        Node(
-            package="umiusi_autonomy",
-            executable="camera_bridge_node",
-            name="camera_bridge_node",
-            output="screen",
-            condition=IfCondition(use_camera_bridge),
-            parameters=[{
-                "rtsp_url": rtsp_url,
-                "image_topic": image_topic,
-                "width": 320, "height": 240,   # autonomy.yaml の frame_w/frame_h に合わせる
-                "max_rate_hz": 0.0,            # 制限をかけると取りこぼす (実測) — カメラ側で絞ること
-                "auto_rate": False,            # AIMD 追従は実験的。既定は無効
-            }],
-        ),
+        camera_bridge_node(condition=use_camera_bridge, rtsp_url=rtsp_url,
+                           image_topic=image_topic),
 
         # --- autonomy side (umiusi_autonomy) ---
         Node(

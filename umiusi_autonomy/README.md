@@ -72,13 +72,20 @@ source install/setup.bash
 
 ## Run
 ```bash
+ros2 launch umiusi_autonomy autonomy.launch.py            # 同梱の camp_real.pt を使う
 ros2 launch umiusi_autonomy autonomy.launch.py model_path:=/abs/path/to/detector.pt
 # FSM-only dry run (no thruster commands):
-ros2 launch umiusi_autonomy autonomy.launch.py model_path:=/abs/model.pt publish:=false
+ros2 launch umiusi_autonomy autonomy.launch.py publish:=false
+# sim / 別の image publisher から画像をもらうとき (実機カメラのブリッジを起動しない):
+ros2 launch umiusi_autonomy autonomy.launch.py use_camera_bridge:=false
 ```
 
+実機カメラ (gst_camera_node) は RTSP に流すだけで ROS トピックを出さないので、`camera_bridge_node`
+が要る。**以前この launch にはブリッジが無く、実機では画像が 1 枚も来ずに FSM が SEARCH から
+出られなかった** (8/25 の水中 run)。いまは既定で起動する。
+
 Parameters live in `config/autonomy.yaml` (topics, rates, camera FOV, calibration). `model_path`,
-`image_topic`, and `publish` are also launch arguments.
+`image_topic`, `publish`, `max_duty`, `use_camera_bridge`, `rtsp_url` are also launch arguments.
 
 ### RL attitude control + keyboard teleop
 Moved to the **`umiusi_rl_control`** package (builds independently of perception) — see

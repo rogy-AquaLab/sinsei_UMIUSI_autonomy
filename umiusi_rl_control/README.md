@@ -59,8 +59,9 @@ at load — a mismatch refuses to run (deploy-time verification, issue #15 A-5).
 ### 深度モード切替 (水圧センサ搭載時のみ)
 ```bash
 # 水圧の外側ループで水平巡航 (av_cal1_best) と降下バースト (av_cal5_3d) を切り替える。
-# **max_duty 0.4 が前提** — sim 実測では 0.2 だと下向き推力が浮力に負けて降下できない
-ros2 launch umiusi_rl_control rl_attitude.launch.py depth_supervisor:=true max_duty:=0.4
+# **max_duty 0.3 以上を推奨** — 0.2 で降下できないのは上限ではなく配分 (零空間に 41%) が原因。
+# 0.4 は零空間を潰してから (issue #19)。既定は 0.25
+ros2 launch umiusi_rl_control rl_attitude.launch.py depth_supervisor:=true max_duty:=0.3
 ros2 param set /rl_attitude_node target_depth 1.0     # 潜行 (m, 正=深い)
 ros2 service call /rl_attitude_node/zero_depth std_srvs/srv/Trigger   # 水面でゼロ点取り直し
 ros2 topic echo /rl_attitude_node/depth_mode          # horiz / brake / vert / ascend

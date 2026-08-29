@@ -52,15 +52,18 @@ def generate_launch_description():
                               description="yaw も保持する。false で roll/pitch だけ保つ "
                                           "(手で回したときに戻そうとして回り続けるのを避ける)。"
                                           "実行中も `ros2 param set` で切り替えられる"),
-        DeclareLaunchArgument("max_duty", default_value="0.2",
-                              description="duty_cycle の絶対値上限 (1.0 = 制限なし)。**0.2 で開始 → "
-                                          "問題なければ 0.4** (issue #15 A-3 のプロトコル)"),
+        DeclareLaunchArgument("max_duty", default_value="0.25",
+                              description="duty_cycle の絶対値上限 (1.0 = 制限なし)。**0.25 で開始**。"
+                                          "0.2 は 96% 飽和で比例制御にならず降下もできない "
+                                          "(8/25 の水中 run)。**0.4 は零空間を潰してから** — 上限は"
+                                          "力の次元で効くので 0.2→0.4 は 4 倍 (issue #19)"),
         DeclareLaunchArgument("vel_timeout", default_value="0.0",
                               description="デッドマン: 速度指令がこの秒数更新されなければ 0 に戻す "
                                           "(0 以下で無効)。狭いプールの巡航試験では 5.0 を推奨"),
         DeclareLaunchArgument("depth_supervisor", default_value="false",
                               description="深度モード切替を有効化 (水圧センサ搭載時のみ)。"
-                                          "**max_duty 0.4 が前提** — 0.2 では降下できない (sim 実測)。"
+                                          "**max_duty 0.3 以上を推奨** — 0.2 で降下できないのは "
+                                          "上限ではなく零空間への配分が原因 (issue #19)。"
                                           "詳細は depth_supervisor.py 冒頭"),
         DeclareLaunchArgument("target_depth", default_value="0.0",
                               description="目標深度 [m, 正=深い]。実行中に "
