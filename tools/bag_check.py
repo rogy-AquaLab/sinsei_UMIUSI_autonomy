@@ -44,6 +44,11 @@ RECORDED_TOPICS = (
 )
 ROSOUT_TOPIC = "/rosout"
 RL_NODE = "rl_attitude_node"
+# 主ポリシーの読み込みログ。**行頭一致で見ること。** 深度スーパーバイザは
+# 「depth supervisor: vert policy loaded from …」を**主ポリシーの直後に**出すので、
+# 部分一致にすると vert のほうで上書きされ、`att_only` が False に戻ってしまう
+# (= 14 次元 + 深度モードの run が黙って PASS する。この検査が防ぎたい失敗そのもの)。
+LOADED_PREFIX = "policy loaded from"
 # 「目標を更新: roll=… deg  速度=[0.40,0.00,0.00] m/s」の 3 成分
 VEL_RE = re.compile(r"速度=\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]")
 # ログは .2f なので、表示されうる最小の非ゼロは 0.01。その半分を閾値にする
@@ -117,7 +122,7 @@ def check_policy(data, rep):
     for i, ln in enumerate(lines):
         if "attitude タスクのポリシーです" in ln:
             seen_att = True          # この INFO は「policy loaded from」の直前に出る
-        elif "policy loaded from" in ln:
+        elif ln.startswith(LOADED_PREFIX):
             last, att_only, seen_att = i, seen_att, False
     if last is None:
         rep.line(False, "policy", "rl_attitude_node のポリシー読み込みログがありません "
