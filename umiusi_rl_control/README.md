@@ -51,7 +51,18 @@ Requires the controllers/bridge (`sinsei_umiusi_control` or `umiusi_sim_bridge`)
 
 **Policy bundles** (`models/`): `av_cal1_best_rep103` (default, 17-D attitude+velocity),
 `att_cal1_best_rep103` (14-D attitude-only fallback), `av_sim2real2_rep103` (17-D, plan B),
-`av_cal5_3d_rep103` (17-D 3-D vectoring, **EXPERIMENTAL / 深度モードの降下バースト専用**).
+`av_cal5_3d_rep103` (17-D 3-D vectoring, **EXPERIMENTAL / 深度モードの降下バースト専用**),
+`av_mode13` (18-D 観測 + **6 次元のレンチモードレート** `action_mode: modes`)。
+
+`av_mode13` は 8/25 実機で鉛直パワーの 41% を占めた零空間を、**それを表現できない action 基底へ
+張り替えて**構造的に潰したもの (sim 実測 5.7%)。出力が [servo x4, esc x4] ではないので、
+ノードが `meta.json` の `action_contract` に従って積分 → ミキサ → 折返しを再現する
+(`mode_action.py`)。**既定はまだ `av_cal1_best_rep103`** — 実機未検証のため、使うときは明示する:
+
+```bash
+UMIUSI_RL_MODEL=$(ros2 pkg prefix umiusi_rl_control)/share/umiusi_rl_control/models/av_mode13 \
+  ./tools/umiusi_stack.sh start --attitude
+```
 All consume **REP-103 body-frame** observations (`export/meta.json` `obs_frame: rep103` is
 enforced at load) and carry `golden.npz` sim-recorded obs→action vectors that the node replays
 at load — a mismatch refuses to run (deploy-time verification, issue #15 A-5).
