@@ -10,6 +10,9 @@
 #   ./record_camera.sh --url rtsp://localhost:8554/cam2 --dir ~/rec
 #   ./record_camera.sh --raw                 # 切り捨てに強い生 H264 で保存
 #   ./record_camera.sh --both --raw --mp4-cam2  # 前は生、下だけ mp4 (フレーム時刻を残す)
+#                                               # **--mp4-cam2 は --both のときだけ効く**
+#                                               # (cam2 を単独で録るなら --url で指定して
+#                                               #  --raw を付けなければ mp4 になる)
 #
 # 実測: CPU 15.5% / 800x600@15 で約 1.25 MB/s (4.3 GB/時)。
 set -o pipefail

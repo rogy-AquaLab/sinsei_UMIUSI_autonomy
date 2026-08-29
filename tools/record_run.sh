@@ -48,6 +48,7 @@ while [ $# -gt 0 ]; do
     --bag-only) BAG_ONLY=true; shift ;;
     --camera-only) CAM_ONLY=true; shift ;;
     --vision) VISION=true; shift ;;
+    # --bag-only とは併用できない (映像を録らないので mp4 も露光記録も出番が無い)
     --flow) FLOW=true; shift ;;
     --fix) FIX=true; shift ;;
     *) echo "使い方: $0 [--name 名前] [--dir DIR] [--bag-only|--camera-only] [--vision] [--flow] [--fix]"; exit 1 ;;
@@ -78,6 +79,10 @@ fi
 
 if [ "$BAG_ONLY" = true ] && [ "$CAM_ONLY" = true ]; then
   echo "--bag-only と --camera-only は同時に指定できません"; exit 1
+fi
+if [ "$FLOW" = true ] && [ "$BAG_ONLY" = true ]; then
+  # 黙って無視すると meta.txt に flow=true だけ残り、後の解析で「録ったはず」と誤読する
+  echo "--flow は映像が要るので --bag-only とは併用できません"; exit 1
 fi
 
 STAMP=$(date +%Y%m%d-%H%M%S)
@@ -177,11 +182,17 @@ save_cam_controls() {
     echo "  ⚠ v4l2-ctl がありません — 露光/ゲインを記録できません (sudo apt install v4l-utils)"
     return 0
   fi
+  # **必ず timeout を噛ませる。** これは recorder を起こす前に前景で走るので、USB カメラの
+  # ioctl が刺さるとスクリプト全体が固まる。`set -m` 下で前景の子を待っている間は
+  # **親の trap が走らない**ので、SIGINT で止められなくなり、このスクリプトが最も避けたい
+  # `kill -9` (bag と mp4 が閉じられない) に追い込まれる。非対話起動 (ssh 越し・
+  # umiusi_stack.sh 経由) では Ctrl-C で救うこともできない (A-10)。
   {
     echo "device=$CAM2_DEV"
     echo "captured_at=$(date -Is)"
     echo "--- --list-ctrls ---"
-    v4l2-ctl --device="$CAM2_DEV" --list-ctrls 2>&1
+    timeout 5 v4l2-ctl --device="$CAM2_DEV" --list-ctrls 2>&1 \
+      || echo "(v4l2-ctl が 5 s で返りませんでした — デバイスが応答していない可能性)"
   } > "$out"
   if grep -q "exposure" "$out"; then
     echo "  カメラ設定: $CAM2_DEV の露光/ゲインを記録 -> $(basename "$out")"
