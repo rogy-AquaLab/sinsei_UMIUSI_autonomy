@@ -72,7 +72,7 @@ source install/setup.bash
 
 ## Run
 ```bash
-ros2 launch umiusi_autonomy autonomy.launch.py            # 同梱の camp_real.pt を使う
+ros2 launch umiusi_autonomy autonomy.launch.py            # 同梱の camp_real2.pt を使う
 ros2 launch umiusi_autonomy autonomy.launch.py model_path:=/abs/path/to/detector.pt
 # FSM-only dry run (no thruster commands):
 ros2 launch umiusi_autonomy autonomy.launch.py publish:=false

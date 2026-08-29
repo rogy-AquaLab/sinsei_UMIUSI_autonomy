@@ -12,7 +12,7 @@ The heavy imports (torch, umiusi_perception) are deferred until the first image 
 
 Parameters
 ----------
-model_path      : learned detector checkpoint (.pt). 未指定なら同梱の camp_mix.pt。
+model_path      : learned detector checkpoint (.pt). 未指定なら同梱の camp_real2.pt。
 image_topic     : onboard camera topic (default /front_cam/image_raw).
 detections_topic: output topic (default ~/detections).
 image_timeout   : この秒数だけ画像が来なければ警告する (default 5.0, 0 = 無効)。
@@ -57,10 +57,14 @@ class PerceptionNode(Node):
 
         self._model_path = str(self.get_parameter("model_path").value).strip()
         if not self._model_path:
-            # 未指定なら同梱の検出器を使う (clone しただけで動くように)。
-            # models/detector/README.md 参照。
+            # 未指定なら同梱の検出器を使う (clone しただけで動くように)。既定は
+            # **camp_real2.pt** — 8/25 のプール実写をハードネガティブとして継続学習した版で、
+            # 実プールでの precision が 0.29 -> 0.78 (F1 0.44 -> 0.80)。旧 camp_real の
+            # 「4.6 個/枚の誤検出」「右下の固定誤検出」はこれで解消した。
+            # conf_thresh は checkpoint に 0.4 が入っているので指定不要。
+            # 旧版を使いたいときは model_path で明示する。models/detector/README.md 参照。
             self._model_path = str(Path(get_package_share_directory("umiusi_autonomy"))
-                                   / "models" / "detector" / "camp_mix.pt")
+                                   / "models" / "detector" / "camp_real2.pt")
         self._fovy = float(self.get_parameter("fovy_deg").value)
         self._sanitise = bool(self.get_parameter("sanitise_near").value)
         # 位相追従の間引き。素朴に「通した時刻から一定時間空ける」方式だと、入力が上限より

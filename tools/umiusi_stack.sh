@@ -19,7 +19,7 @@
 set -o pipefail
 
 WS="${UMIUSI_WS:-$HOME/ros2-ws}"
-# 空 = launch の既定 (同梱の models/detector/camp_mix.pt)。以前は $HOME/models を既定に
+# 空 = launch の既定 (同梱の models/detector/camp_real2.pt)。以前は $HOME/models を既定に
 # していたが、検出器を同梱した今は新しい機体に存在せず model_path が空振りする。
 MODEL="${UMIUSI_MODEL:-}"
 # umiusi_perception は pip で入れるのが正 (下記は入っていない場合の暫定フォールバック)

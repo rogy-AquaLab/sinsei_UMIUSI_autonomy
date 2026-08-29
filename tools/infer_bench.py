@@ -35,5 +35,8 @@ def run(nthreads: int, ckpt: str) -> None:
 
 
 if __name__ == "__main__":
-    ckpt = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/models/camp_mix.pt")
+    # 既定は同梱の検出器に合わせる (3 モデルとも同一アーキテクチャなので推論時間は変わらないが、
+    # 計測対象が既定とずれていると読む側が混乱する)
+    ckpt = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser(
+        "~/ros2-ws/install/umiusi_autonomy/share/umiusi_autonomy/models/detector/camp_real2.pt")
     run(int(os.environ.get("NT", "4")), ckpt)

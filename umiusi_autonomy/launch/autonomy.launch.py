@@ -35,7 +35,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("model_path", default_value="",
                               description="learned detector .pt checkpoint。"
-                                          "空なら同梱の camp_real.pt (models/detector/README.md)"),
+                                          "空なら同梱の camp_real2.pt (models/detector/README.md)"),
         DeclareLaunchArgument("image_topic", default_value="/front_cam/image_raw",
                               description="onboard camera topic"),
         DeclareLaunchArgument("publish", default_value="true",

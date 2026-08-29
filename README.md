@@ -166,7 +166,7 @@ unconfigured のまま）。
 | `autonomy` | `model_path` `image_topic` `publish` `max_duty` `use_camera_bridge` `rtsp_url` |
 | `rl_attitude` | `model_path` `vel_cmd` `publish` `start_armed` `hold_yaw` `max_duty` `vel_timeout` `depth_supervisor` `target_depth` |
 
-`model_path` は未指定なら同梱の検出器 (`models/detector/camp_mix.pt`) を使う。
+`model_path` は未指定なら同梱の検出器 (`models/detector/camp_real2.pt`) を使う。
 `publish` を `false` にすると計算だけしてスラスタに指令を出さない (ドライ試験)。
 `use_core` を `false` にすると core の BT スタックを起動せず、カメラブリッジ + perception だけになる
 (認識の単体実験用。`umiusi_stack.sh start --perception` がこれを使う)。
