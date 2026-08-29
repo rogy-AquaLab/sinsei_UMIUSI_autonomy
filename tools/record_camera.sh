@@ -9,6 +9,10 @@
 #   ./record_camera.sh --both                # 前(cam1)と下(cam2)を同時に録画
 #   ./record_camera.sh --url rtsp://localhost:8554/cam2 --dir ~/rec
 #   ./record_camera.sh --raw                 # 切り捨てに強い生 H264 で保存
+#   ./record_camera.sh --both --raw --mp4-cam2  # 前は生、下だけ mp4 (フレーム時刻を残す)
+#                                               # **--mp4-cam2 は --both のときだけ効く**
+#                                               # (cam2 を単独で録るなら --url で指定して
+#                                               #  --raw を付けなければ mp4 になる)
 #
 # 実測: CPU 15.5% / 800x600@15 で約 1.25 MB/s (4.3 GB/時)。
 set -o pipefail
@@ -20,6 +24,7 @@ URL="${UMIUSI_RTSP_URL:-rtsp://localhost:8554/cam1}"
 OUTROOT="${UMIUSI_REC_DIR:-$HOME/recordings}"
 SEG_SEC=30
 RAW=false
+RAW2=""          # 空 = 下カメラも $RAW に従う。--mp4-cam2 で false に固定する
 BOTH=false
 URL2="${UMIUSI_RTSP_URL2:-rtsp://localhost:8554/cam2}"
 
@@ -29,11 +34,18 @@ while [ $# -gt 0 ]; do
     --dir) OUTROOT="$2"; shift 2 ;;
     --seg) SEG_SEC="$2"; shift 2 ;;
     --raw) RAW=true; shift ;;
+    # 下カメラだけ mp4 セグメントにする。**オプティカルフロー用**: 生 H264 (Annex-B) は
+    # コンテナが無いのでフレーム時刻が 1 つも残らず、「15 fps 一定」を仮定するしかない。
+    # mp4 なら splitmuxsink が PTS を保持するので、フレーム間隔を実測で取れる
+    # (フロー [px/frame] -> 速度 [m/s] の換算に効く)。代償は電源断で最後のセグメントが
+    # 壊れること — 前カメラは --raw のまま残せるので、失うのは下カメラの最大 --seg 秒ぶん。
+    --mp4-cam2) RAW2=false; shift ;;
     --both) BOTH=true; shift ;;
     --url2) URL2="$2"; shift 2 ;;
-    *) echo "使い方: $0 [--url URL] [--url2 URL] [--both] [--dir DIR] [--seg 秒] [--raw]"; exit 1 ;;
+    *) echo "使い方: $0 [--url URL] [--url2 URL] [--both] [--dir DIR] [--seg 秒] [--raw] [--mp4-cam2]"; exit 1 ;;
   esac
 done
+[ -z "$RAW2" ] && RAW2="$RAW"
 
 STAMP=$(date +%Y%m%d-%H%M%S)
 OUT="$OUTROOT/$STAMP"
@@ -46,6 +58,10 @@ mkdir -p "$OUT"
   echo "rtsp_url=$URL"
   [ "$BOTH" = true ] && echo "rtsp_url2=$URL2"
   echo "segment_sec=$SEG_SEC"
+  # どちらの形式で録ったかは**解析側が最初に知りたい**こと (生 H264 はフレーム時刻を
+  # 持たないので 15 fps 一定を仮定するしかない。mp4 なら PTS が使える)
+  echo "format_cam1=$([ "$RAW" = true ] && echo raw_h264 || echo mp4_segments)"
+  [ "$BOTH" = true ] && echo "format_cam2=$([ "$RAW2" = true ] && echo raw_h264 || echo mp4_segments)"
   echo "host=$(hostname)"
 } > "$OUT/meta.txt"
 
@@ -108,7 +124,7 @@ MAX_FAILS="${UMIUSI_REC_MAX_FAILS:-5}"   # 連続で 0 バイトが続いたら�
 MAX_BACKOFF=30                           # 再起動間隔の上限 [s]
 
 start_one() {
-  local url="$1" tag="$2"
+  local url="$1" tag="$2" RAW="${3:-$RAW}"    # $3 でカメラ毎に生/mp4 を変えられる
   (
     # **監視シェルの中でジョブ制御を入れ直す。** bash はフォークしたサブシェルで job control を
     # 無効化するので、ここで起こす `gst-launch &` は非対話シェルの非同期子として SIGINT/SIGQUIT を
@@ -175,8 +191,8 @@ start_one() {
 if [ "$BOTH" = true ]; then
   echo "  前カメラ $URL  -> $OUT/cam1.*"
   start_one "$URL" cam1
-  echo "  下カメラ $URL2 -> $OUT/cam2.*"
-  start_one "$URL2" cam2
+  echo "  下カメラ $URL2 -> $OUT/cam2.*$([ "$RAW2" != "$RAW" ] && echo " (mp4 セグメント — フレーム時刻を残すため)")"
+  start_one "$URL2" cam2 "$RAW2"
 else
   start_one "$URL" cam
 fi

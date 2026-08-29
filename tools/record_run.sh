@@ -5,6 +5,8 @@
 #   ./record_run.sh                 # 前後カメラ + 状態/指令/検出の bag
 #   ./record_run.sh --name pool-01  # 名前を付ける
 #   ./record_run.sh --vision        # 画像も bag に入れる (視覚での位置固定を作るための素材)
+#   ./record_run.sh --flow          # 下カメラを mp4 (フレーム時刻) + 露光設定を記録
+#                                   # -> オフラインでオプティカルフローを試すための最小構成
 #   Ctrl-C で両方をきれいに停止する
 #   ./record_run.sh --fix           # 記録済み bag の metadata を後から復元する
 #
@@ -34,6 +36,10 @@ BAG_ONLY=false
 CAM_ONLY=false
 FIX=false
 VISION=false
+FLOW=false
+# 下カメラ (cam2) の V4L2 デバイス。露光/ゲインの実値を読むためだけに使う (書き換えない)。
+# cameras_deploy.yaml の usb_camera と揃えること
+CAM2_DEV="${UMIUSI_CAM2_DEV:-/dev/video4}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -42,8 +48,10 @@ while [ $# -gt 0 ]; do
     --bag-only) BAG_ONLY=true; shift ;;
     --camera-only) CAM_ONLY=true; shift ;;
     --vision) VISION=true; shift ;;
+    # --bag-only とは併用できない (映像を録らないので mp4 も露光記録も出番が無い)
+    --flow) FLOW=true; shift ;;
     --fix) FIX=true; shift ;;
-    *) echo "使い方: $0 [--name 名前] [--dir DIR] [--bag-only|--camera-only] [--vision] [--fix]"; exit 1 ;;
+    *) echo "使い方: $0 [--name 名前] [--dir DIR] [--bag-only|--camera-only] [--vision] [--flow] [--fix]"; exit 1 ;;
   esac
 done
 
@@ -71,6 +79,10 @@ fi
 
 if [ "$BAG_ONLY" = true ] && [ "$CAM_ONLY" = true ]; then
   echo "--bag-only と --camera-only は同時に指定できません"; exit 1
+fi
+if [ "$FLOW" = true ] && [ "$BAG_ONLY" = true ]; then
+  # 黙って無視すると meta.txt に flow=true だけ残り、後の解析で「録ったはず」と誤読する
+  echo "--flow は映像が要るので --bag-only とは併用できません"; exit 1
 fi
 
 STAMP=$(date +%Y%m%d-%H%M%S)
@@ -157,6 +169,39 @@ check_topics() {
 }
 
 
+# 下カメラの V4L2 設定 (露光・ゲイン) をそのまま残す。**読むだけで書き換えない。**
+#
+# 水中は暗いので自動露光は数十〜100 ms まで伸びる。cap 0.25 の物理上限 0.17 m/s・高度 1 m で
+# フローは約 118 px/s あり、**露光 50 ms なら 6 px ぶれる** — 特徴点が流れてフローが出ない。
+# ブレを 2 px 以内に収めたいなら露光 <= 17 ms。**設定するのは別作業だが、その回に何が
+# 使われていたかを残しておかないと「ブレで出なかったのか、床にテクスチャが無かったのか」を
+# 事後に切り分けられず、2 回目も同じ結果になる。**
+save_cam_controls() {
+  local out="$OUT/cam2_controls.txt"
+  if ! command -v v4l2-ctl > /dev/null; then
+    echo "  ⚠ v4l2-ctl がありません — 露光/ゲインを記録できません (sudo apt install v4l-utils)"
+    return 0
+  fi
+  # **必ず timeout を噛ませる。** これは recorder を起こす前に前景で走るので、USB カメラの
+  # ioctl が刺さるとスクリプト全体が固まる。`set -m` 下で前景の子を待っている間は
+  # **親の trap が走らない**ので、SIGINT で止められなくなり、このスクリプトが最も避けたい
+  # `kill -9` (bag と mp4 が閉じられない) に追い込まれる。非対話起動 (ssh 越し・
+  # umiusi_stack.sh 経由) では Ctrl-C で救うこともできない (A-10)。
+  {
+    echo "device=$CAM2_DEV"
+    echo "captured_at=$(date -Is)"
+    echo "--- --list-ctrls ---"
+    timeout 5 v4l2-ctl --device="$CAM2_DEV" --list-ctrls 2>&1 \
+      || echo "(v4l2-ctl が 5 s で返りませんでした — デバイスが応答していない可能性)"
+  } > "$out"
+  if grep -q "exposure" "$out"; then
+    echo "  カメラ設定: $CAM2_DEV の露光/ゲインを記録 -> $(basename "$out")"
+    grep -E "exposure|gain" "$out" | sed 's/^/    /'
+  else
+    echo "  ⚠ $CAM2_DEV から露光の項目が読めません (デバイス番号が違う? UMIUSI_CAM2_DEV で指定)"
+  fi
+}
+
 # **子プロセスを起こす前に** trap を張る。起動直後〜trap 設定前に Ctrl-C が入ると
 # 録画と bag が孤児として回り続けてしまうため。
 cleanup() {
@@ -216,9 +261,15 @@ trap on_signal INT TERM
 echo "記録先: $OUT"
 
 if [ "$BAG_ONLY" != true ]; then
-  "$HERE/record_camera.sh" --both --raw --dir "$OUT/video" > "$OUT/camera.log" 2>&1 < /dev/null &
+  camargs=(--both --raw)
+  [ "$FLOW" = true ] && camargs+=(--mp4-cam2)
+  "$HERE/record_camera.sh" "${camargs[@]}" --dir "$OUT/video" > "$OUT/camera.log" 2>&1 < /dev/null &
   PIDS="$PIDS $!"
   echo "  映像   : 前後カメラ (H264 そのまま) -> $OUT/video/"
+  if [ "$FLOW" = true ]; then
+    echo "    下カメラは mp4 セグメント (フレーム時刻を残す — オプティカルフロー用)"
+    save_cam_controls
+  fi
 fi
 
 if [ "$CAM_ONLY" != true ]; then
@@ -254,6 +305,7 @@ fi
   echo "host=$(hostname)"
   echo "name=${NAME:-（無し）}"
   echo "vision=$VISION"
+  echo "flow=$FLOW"
 } > "$OUT/meta.txt"
 
 echo ""
