@@ -30,6 +30,10 @@ class _Stub:
     """`_build_obs` が触る属性だけを持つスタブ (Node を立てずにレイアウトだけ見る)。"""
 
     _build_obs = N.RlAttitudeNode._build_obs
+    # 観測に入る duty 上限は**ミキサに渡す値と同じもの**でなければならない (レンチモードの
+    # 「モード 1.0 = その上限での全権限」という約束)。実装は 1 箇所に寄せてあるので、
+    # スタブもその 1 箇所を借りる。
+    _obs_max_duty = N.RlAttitudeNode._obs_max_duty
 
     def __init__(self, max_duty=0.25, hold_yaw=True):
         self._imu = type("Imu", (), {"quat": _CUR_QUAT, "gyro": (0.1, 0.2, 0.3)})()

@@ -13,6 +13,12 @@ SB3/mujoco 非依存: 同梱バンドルの ``export/`` (weights.pt + obs_norm.n
   * PUBLISH the four direct-override /cmd/direct/thruster_controller/output_{lf,lb,rb,rf}
     (ThrusterOutput, runnable=true), action [servo x4, esc x4] -> {angle, duty_cycle}.
 
+出力の契約は ``meta.json`` の ``action_mode`` で 2 通り。``"direct"`` (既定) は方策が
+[servo x4, esc x4] をそのまま出す。``"modes"`` は 6 次元の**レンチモードのレート**を出し、
+ノード側で積分 -> ミキサ -> 折返しを sim と同じ順で通して 8 次元に直す (``mode_action.py``)。
+**観測の契約は変わらない** (prev_action はミックス後の 8 次元)。**プラントのレート制限
+(``_command`` の servo/thrust slew) はどちらの方式でも掛ける** — 詳細は ``mode_action.py`` 冒頭。
+
 FRAME 契約: ポリシーは **REP-103 body-frame (x前/y左/z上) の観測を消費する**
 (``export/meta.json`` の ``obs_frame: rep103`` を起動時に検証する)。IMU の quat/gyro は
 **軸変換せずそのまま**観測に入れる。前提は「IMU が REP-103 で publish していること」 —
@@ -68,6 +74,7 @@ from std_srvs.srv import Trigger
 from umiusi_rl_control.arm import ArmState
 from umiusi_rl_control.depth_supervisor import HORIZ, VERT, DepthSupervisor
 from umiusi_rl_control.imu_sanity import ImuSanity
+from umiusi_rl_control.mode_action import MODE_DIM, ModeAction
 from umiusi_rl_control.thruster_limits import slew
 from umiusi_rl_control_msgs.msg import AttitudeTarget
 
@@ -85,6 +92,15 @@ CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
 # `ros2 param set /rl_attitude_node max_duty` で変えると観測にもそのまま反映される —
 # 「現場で上限を上げたら実際に速く動く」ようにするためで、これが 18 次元化の目的。
 ACT_DIM = 8
+# 方策の**出力**は 2 種類ある。`meta.json` の `action_mode` で決まる:
+#   "direct" (既定) … そのまま [servo x4, esc x4] (ACT_DIM)
+#   "modes"          … 6 次元のレンチモード **レート**。ノード側で積分 -> ミキサ -> 折返しを
+#                      sim と同じ順で通して 8 次元に直す (`mode_action.py`)。零空間を
+#                      表現できない基底に張り替えて 8/25 の「鉛直パワーの 41% が零空間」を
+#                      構造的に潰したもの (Umiusi_sim#3、sim 実測 5.7%)。
+# **どちらでも観測の契約 (prev_action 8 次元 = ミックス後) は変わらない。**
+ACTION_MODE_DIRECT = "direct"
+ACTION_MODE_MODES = "modes"
 OBS_DIM_CAP = 18
 OBS_DIM = 17
 OBS_DIM_NO_VEL = 14
@@ -263,6 +279,7 @@ class RlAttitudeNode(Node):
         self._sup.target_depth = float(self.get_parameter("target_depth").value)
         self._rho = float(self.get_parameter("water_density").value)
         self._vert_model = None            # 3-D ポリシー (深度モード有効時に読み込む)
+        self._active_model = None          # 直前の tick で使ったモデル (切替の検出用)
         self._depth = None                 # 現在深度 [m, 正=深い]。ゼロ点確定まで None
         self._depth_stamp = None           # 最終更新時刻 [s] (鮮度ガード)
         self._p_surface = None             # 水面の圧力 [Pa] (ゼロ点)
@@ -554,6 +571,10 @@ class RlAttitudeNode(Node):
         # meta.json に `obs_fields` を書いていれば、名前と幅で厳密に照合する。
         self._check_obs_fields(runner, export)
 
+        # 出力の契約 (action_mode)。ここも golden では検証できない — golden はネットの生出力を
+        # 突き合わせるだけで、**その 6 次元をどう 8 次元に直すか**は見ていない。
+        runner.mode_action = self._build_mode_action(runner, export)
+
         # 配備前検証 (issue #15 A-5): sim で記録した golden vectors を実機の推論経路で再生
         golden = d / "golden.npz"
         if golden.exists():
@@ -569,6 +590,56 @@ class RlAttitudeNode(Node):
         else:
             self.get_logger().warning(f"{golden} が無いので配備前検証をスキップします")
         return runner
+
+    def _build_mode_action(self, runner, export):
+        """`action_mode` を検証し、レンチモードなら `ModeAction` を、直接出力なら None を返す。
+
+        **ここで落とすのは配備前検証の一部**。6 次元の生出力を 8 次元と取り違えたまま走ると、
+        サーボ角と duty に無関係な値が入る (A-11 と同型の事故)。
+        """
+        mode = str(runner.meta.get("action_mode", ACTION_MODE_DIRECT))
+        act_dim = int(runner.meta.get("act_dim", ACT_DIM))
+        if mode == ACTION_MODE_DIRECT:
+            if act_dim != ACT_DIM:
+                raise ValueError(
+                    f"action_mode={mode!r} なのに act_dim={act_dim} です ({export}/meta.json)。"
+                    f"直接出力の方策は {ACT_DIM} 次元 [servo x4, esc x4] を出す約束です")
+            return None
+        if mode != ACTION_MODE_MODES:
+            raise ValueError(
+                f"未対応の action_mode={mode!r} です ({export}/meta.json)。"
+                f"{ACTION_MODE_DIRECT!r} か {ACTION_MODE_MODES!r} のみ対応します")
+        if act_dim != MODE_DIM:
+            raise ValueError(
+                f"action_mode={mode!r} なのに act_dim={act_dim} です ({export}/meta.json)。"
+                f"レンチモードの方策は {MODE_DIM} 次元のモードレートを出す約束です")
+        contract = runner.meta.get("action_contract")
+        if not isinstance(contract, dict):
+            raise ValueError(
+                f"{export}/meta.json に action_contract がありません。レンチモードの方策は "
+                "積分・ミキサ・折返しの係数を機械可読で持っている必要があります")
+        ma = ModeAction(contract, POSITIONS)
+        # ノードのパラメータと契約の食い違いは**黙って丸めない**。サーボ範囲がずれると
+        # ミキサの正規化と `_command` の逆正規化が食い違い、角度が別物になる。
+        if abs(ma.servo_range_deg - self._servo_range_deg) > 1e-6:
+            raise ValueError(
+                f"servo_range_deg がノード ({self._servo_range_deg}) と契約 "
+                f"({ma.servo_range_deg}) で食い違っています ({export}/meta.json)")
+        # 制御周期は物理時間で効く (m += a * slew * dt) ので dt は実測値を使う。ただし方策は
+        # 「1 tick = 1/control_rate_hz」で学習しているので、ずれていれば応答が変わる。
+        if ma.control_rate_hz > 0.0 and abs(ma.control_rate_hz - self._hz) > 1e-6:
+            self.get_logger().warning(
+                f"control_hz={self._hz:.1f} は学習時の {ma.control_rate_hz:.1f} Hz と違います。"
+                "モードの積分は実測 dt で行うので発散はしませんが、応答は学習時と変わります")
+        self.get_logger().info(
+            f"action_mode=modes: モードレートを積分してミキサに通します "
+            f"(slew {ma.mode_slew_per_s:.2f}/s, f_max = {ma.thrust_per_cmd:.0f} * "
+            f"max_duty^{ma.thrust_curve_exp:.0f})。指令のレート制限は従来どおり掛けます")
+        return ma
+
+    def _obs_max_duty(self) -> float:
+        """方策が観測する duty 上限。**ミキサにも同じ値を渡す** (モード 1.0 の意味を揃える)。"""
+        return float(np.clip(self._max_duty, *MAX_DUTY_OBS_RANGE))
 
     def _warn_if_max_duty_out_of_range(self):
         """18 次元ポリシーで `max_duty` が学習分布の外なら警告する。
@@ -606,7 +677,7 @@ class RlAttitudeNode(Node):
             # `ros2 param set` した値がそのまま方策に見える。ただし**学習分布の外は入れない**
             # (MAX_DUTY_OBS_RANGE)。クリップの実値は `_command` 側の `self._max_duty` のままで、
             # 観測に入る値だけを丸める。
-            parts.append(np.array([np.clip(self._max_duty, *MAX_DUTY_OBS_RANGE)], dtype=float))
+            parts.append(np.array([self._obs_max_duty()], dtype=float))
         obs = np.concatenate(parts)
         if obs.shape[0] != obs_dim:           # レイアウトの取り違えを黙って通さない
             raise ValueError(
@@ -678,6 +749,7 @@ class RlAttitudeNode(Node):
                 self.get_logger().warning(
                     f"速度指令が {self._vel_timeout:.1f} s 更新されなかったので 0 に戻しました (デッドマン)")
         model, v_cmd = self._supervise()
+        self._select_model(model)
         # 鉛直指令インターロック (レビュー指摘): 鉛直速度が学習分布内のポリシー
         # (export/meta.json の vertical_ok, 3-D vectoring 系) 以外には z 成分を渡さない。
         # 水平専用ポリシーに鉛直指令が入ると姿勢が崩壊する (sim 実測 75〜122°)。
@@ -688,15 +760,30 @@ class RlAttitudeNode(Node):
                 "(vertical_ok なし)。降下バーストは av_cal5_3d_rep103 で",
                 throttle_duration_sec=5.0)
             v_cmd = np.array([v_cmd[0], v_cmd[1], 0.0])
-        action = model.act(self._build_obs(v_cmd, model.obs_dim))
-        action = np.clip(np.asarray(action, dtype=float).reshape(ACT_DIM), -1.0, 1.0)
+        raw = model.act(self._build_obs(v_cmd, model.obs_dim))
+        if model.mode_action is None:
+            action = np.clip(np.asarray(raw, dtype=float).reshape(ACT_DIM), -1.0, 1.0)
+        else:
+            # レンチモード: 生出力は 6 次元の**レート**。積分 -> ミキサ -> 折返しで 8 次元にする。
+            # duty 上限は **方策が観測しているのと同じ値**を渡す (モード 1.0 = その上限での
+            # 全権限、という約束なので、食い違うと意図した力と実際の力がずれる)。
+            action = model.mode_action.step(raw, self._obs_max_duty(), self._dt)
         if self._publish:
             self._command(action)
+        # 観測に返すのは **ミックス後の 8 次元** (sim の prev_action と同じもの)
         self._prev_action = action
 
     def _command(self, action):
         # sim と同じレート制限を通してから出す。ポリシーは毎ステップ飽和した指令を出しうるが、
-        # sim ではここで平滑化されたものが物理に入り、観測にも返っていた
+        # sim ではここで平滑化されたものが物理に入り、観測にも返っていた。
+        #
+        # **レンチモードの方策でも掛ける。** `mode_action.py` の「折返し後を平滑化するな」は
+        # *モード座標のスルーの代わりに*出力側へ置くな、という意味で、こちらは **sim の
+        # プラントが持っているレート制限** (`simulator.py` の `track`/`slew` を毎サブステップ、
+        # 250 deg/s・4.0 esc/s) の再現。方策はその鈍った系を前提に学習している。
+        # **ESC 側は実機に等価物が無い** — control の `max_duty_step_per_sec` は `/cmd/direct`
+        # では素通りする (B-12) ので、ここで掛けなければ誰も掛けない。外すと A-11 と同型の
+        # sim2real ずれになる。
         servo_target = np.asarray(action[:4], dtype=float) * self._servo_range_deg
         duty_target = np.clip(np.asarray(action[4:], dtype=float), -self._max_duty, self._max_duty)
         self._servo_cmd = slew(self._servo_cmd, servo_target, self._servo_slew, self._dt)
@@ -714,6 +801,11 @@ class RlAttitudeNode(Node):
     def _detach_all(self):
         """DISARM: zero output + runnable false on every thruster -> the control stack detaches
         esc/servo (hardware-level not-allowed). The e-stop / disarm path for the direct loop."""
+        # レンチモードの積分器は **publish の有無によらず** 落とす。残したまま再武装すると、
+        # 最初の tick でいきなり disarm 直前のモードベクトルぶんの力が出る (契約の 1 段目:
+        # 「m はステップ間で保持し、disarm でゼロに戻す」)。compute-only でも観測に返る
+        # prev_action がずれるので、下の早期 return より前に置くこと。
+        self._reset_mode_state()
         if not self._publish:      # compute-only node never commands /cmd, so nothing to detach
             return
         # 停止はレート制限を通さない (安全側。次に武装したとき 0 から積み直す)
@@ -725,6 +817,38 @@ class RlAttitudeNode(Node):
             out.duty_cycle = 0.0
             out.angle = 0.0
             self._pubs[p].publish(out)
+
+    def _select_model(self, model):
+        """今 tick で使うモデルを確定する。**切り替わったら、これから使うほうの積分器を 0 に戻す。**
+
+        モードの積分器はモデルごとに持つので、深度モードの切替で待機していた側は
+        「最後に使ったときのモードベクトル」を抱えたままになる。再選択の瞬間にその力が
+        いきなり出るのは危険で、sim には対応する状況が無い (env は方策 1 個・積分器 1 個)。
+        リセットするのは**新しく選ばれたほう** — 出ていく側の状態は、それ自身が再選択される
+        ときにこの判定で消えるので触らなくてよい。
+        現状はどちらのモデルも direct 出力なので不活性だが、vert に modes 系を載せた瞬間に効く。
+        """
+        if model is self._active_model:
+            return
+        if model.mode_action is not None:
+            model.mode_action.reset()
+        self._active_model = model
+
+    def _reset_mode_state(self):
+        """レンチモードの積分器と前回サーボ角を初期化する (disarm / e-stop のたび)。
+
+        `prev_action` も 0 に戻す — 観測の proprio は「自分が直前に出した指令」なので、
+        指令を出していない間の値を残すと、再武装した最初の観測が実際とずれる。
+        """
+        reset_any = False
+        for m in (self._model, self._vert_model):
+            if m is not None and getattr(m, "mode_action", None) is not None:
+                m.mode_action.reset()
+                reset_any = True
+        self._active_model = None      # 再武装時に切替判定をやり直す
+        if reset_any:
+            # 直接出力の方策では従来どおり prev_action を触らない (挙動を変えない)
+            self._prev_action = np.zeros(ACT_DIM)
 
     def stop(self):
         self._detach_all()
