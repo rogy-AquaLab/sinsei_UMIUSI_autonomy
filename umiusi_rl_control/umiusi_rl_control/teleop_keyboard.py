@@ -31,7 +31,7 @@ from rclpy.node import Node
 from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable
 from std_msgs.msg import Bool
 
-from umiusi_rl_control.arm import ESTOP_QOS
+from umiusi_common.arm import ESTOP_QOS
 from umiusi_rl_control_msgs.msg import AttitudeTarget
 
 POSITIONS = ("lf", "lb", "rb", "rf")

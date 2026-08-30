@@ -20,7 +20,8 @@ layering (velocity/cmd_vel → allocator vs. AttitudeTarget → attitude-hold co
 | package | build type | contents |
 |---|---|---|
 | `umiusi_rl_control_msgs` | ament_cmake (rosidl) | `AttitudeTarget` (target attitude quaternion + feed-forward velocity + `type_mask`) |
-| `umiusi_rl_control` | ament_python | `rl_attitude_node`, `teleop_keyboard`, shared `arm` (e-stop), launch, bundled policy |
+| `umiusi_rl_control` | ament_python | `rl_attitude_node`, `teleop_keyboard`, launch, bundled policy |
+| `umiusi_common` | ament_python | 層をまたぐ共有部品 — `arm` (武装/解除・e-stop) と `imu_sanity`。ノードは持たない |
 
 ## The setpoint: `umiusi_rl_control_msgs/AttitudeTarget`
 An absolute attitude target + a feed-forward body velocity (modeled on `mavros_msgs/AttitudeTarget`):
@@ -132,7 +133,7 @@ ros2 run umiusi_rl_control teleop_keyboard
 setpoint; the e-stop both signals the controller to disarm **and** directly detaches the thrusters.
 
 ### Arm / disarm (e-stop)
-`rl_attitude_node` (and `umiusi_autonomy`'s `navigator_node`, which reuses this package's helper)
+`rl_attitude_node` (と `umiusi_autonomy` の `navigator_node`。共有ヘルパは `umiusi_common`)
 exposes a latched safety interface: publish `~/estop` (`std_msgs/Bool` `true`) or call `~/arm`
 (`std_srvs/SetBool` `data: false`) to DISARM — the node stops and asserts a **detach** every tick
 (`ThrusterOutput` `runnable.esc=servo=false` + zero, so the control stack releases esc/servo). Re-arm

@@ -57,7 +57,7 @@ from rclpy.node import Node
 from sinsei_umiusi_msgs.msg import Target, ThrusterOutput, ThrusterRunnable
 
 from umiusi_autonomy_msgs.msg import BalloonDetectionArray
-from umiusi_rl_control.arm import ArmState
+from umiusi_common.arm import ArmState
 
 from umiusi_autonomy.imu_source import ImuSource
 

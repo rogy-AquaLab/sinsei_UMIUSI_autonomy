@@ -6,10 +6,11 @@
 ``navigator_node`` だけ z に直され、``auto_target_generator`` は y のまま残っていた
 (issue #19-5)。ここに寄せて、両ノードは「ヨーレートを読む」だけにする。
 
-センサ解釈と運用はアクチュエータ層ではないので control には出せない。**autonomy 側で
-共有するのが正しい持ち主**。``umiusi_rl_control.rl_attitude_node`` も ``ImuSanity`` を
-使っているが、あちらは姿勢クォータニオンごと必要で形が違ううえ、パッケージを跨ぐと
-依存の向きが逆転する (#19-5 の「中立なパッケージへ移す」が済むまで別実装のまま)。
+センサ解釈と運用はアクチュエータ層ではないので control には出せない。**FSM 側の「ヨーレートを
+読む」用途を autonomy にまとめたのがこのクラス**で、化けサンプルの判定そのものは
+``umiusi_common.imu_sanity`` (層をまたぐ共有部品) が持つ。``rl_attitude_node`` も同じ
+``ImuSanity`` を使うが、あちらは姿勢クォータニオンごと必要で用途が違うので、この
+``ImuSource`` は共有しない (以前は共有物が制御層の中にあり依存が逆向きだった — #19-5 で解消)。
 
 Parameters (使う側のノードに宣言される)
 ---------------------------------------
@@ -26,7 +27,7 @@ imu_timeout        : この秒数来なければ「断」とみなす (default 1
 
 from __future__ import annotations
 
-from umiusi_rl_control.imu_sanity import ImuSanity
+from umiusi_common.imu_sanity import ImuSanity
 
 _AXIS = {"x": 0, "y": 1, "z": 2}
 _DEFAULT_AXIS = _AXIS["z"]        # REP-103 (x-fwd / y-left / z-up) のヨー軸

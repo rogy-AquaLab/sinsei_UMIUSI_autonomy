@@ -25,8 +25,9 @@
   <exec_depend>ament_index_python</exec_depend>   <!-- 同梱検出器のパス解決 -->
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-scipy</exec_depend>      <!-- umiusi_perception の FSM 連鎖が使う -->
-  <!-- navigator_node reuses the shared arm/disarm (e-stop) helper from the control layer -->
-  <exec_depend>umiusi_rl_control</exec_depend>
+  <!-- 共有部品 (arm/disarm と IMU サニティ)。**制御層 (umiusi_rl_control) には依存しない** —
+       以前は共有物が制御層の中にあり、上位のこちらが下位へ import しに行っていた (依存が逆) -->
+  <exec_depend>umiusi_common</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

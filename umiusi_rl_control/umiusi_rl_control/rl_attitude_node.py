@@ -71,9 +71,9 @@ from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable
 from std_msgs.msg import Float32, String
 from std_srvs.srv import Trigger
 
-from umiusi_rl_control.arm import ArmState
+from umiusi_common.arm import ArmState
 from umiusi_rl_control.depth_supervisor import HORIZ, VERT, DepthSupervisor
-from umiusi_rl_control.imu_sanity import ImuSanity
+from umiusi_common.imu_sanity import ImuSanity
 from umiusi_rl_control.mode_action import MODE_DIM, ModeAction
 from umiusi_rl_control.thruster_limits import slew
 from umiusi_rl_control_msgs.msg import AttitudeTarget
