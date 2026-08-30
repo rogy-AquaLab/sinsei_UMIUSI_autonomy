@@ -19,7 +19,7 @@
 `navigator_node` / `auto_target_generator` / `rl_attitude_node` はいずれも角速度を
 ヨーレートとして、姿勢をそのまま制御・観測に使うため、**1 発のスパイクで制御が跳ねる**。
 
-**実装済み**: `umiusi_rl_control/imu_sanity.py` の `ImuSanity`。3 ノードすべての IMU
+**実装済み**: `umiusi_common/imu_sanity.py` の `ImuSanity`。3 ノードすべての IMU
 コールバックに入れてある。
 
 > **2026-08-21 の方針変更 — 既定では捨てない (`imu_sanity_enforce: false`)。**

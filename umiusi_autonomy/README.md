@@ -37,7 +37,7 @@ Two thin rclpy nodes that run the **same** ROS-free perception + autonomy code a
 The **low-level control layer** (RL attitude controller, keyboard teleop, arm/e-stop) moved to the
 separate **`umiusi_rl_control`** package so it builds independently of perception — see its README. This
 package (`umiusi_autonomy`) is the perception + planner layer; `navigator_node` reuses
-`umiusi_rl_control`'s shared arm/e-stop helper.
+`umiusi_common` の共有 arm/e-stop ヘルパ。
 
 All detection/decision/allocation logic lives in the installable `umiusi_perception` package (detector +
 FSM + the numpy-only `umiusi_perception.control` allocation); these nodes only do topic plumbing + message

@@ -10,10 +10,11 @@ import pytest
 
 rclpy = pytest.importorskip("rclpy")
 
+from rclpy.qos import DurabilityPolicy  # noqa: E402
 from std_msgs.msg import Bool  # noqa: E402
 from std_srvs.srv import SetBool  # noqa: E402
 
-from umiusi_common.arm import ESTOP_QOS, ArmState  # noqa: E402
+from umiusi_common.arm import ArmState  # noqa: E402
 
 
 class _Node:
@@ -82,7 +83,11 @@ def test_estopトピックで解除と復帰ができる():
     n, a, calls = _make()
     (_, topic, cb, qos) = n.subs[0]
     assert topic == "~/estop"
-    assert qos is ESTOP_QOS, "**latch されていないと再起動時に e-stop を取りこぼす**"
+    # **同一性ではなく中身を見る。** `qos is ESTOP_QOS` だけだと、ESTOP_QOS の durability を
+    # VOLATILE に落とす変更が素通りする (= 守りたい性質そのものが壊れても気付けない)
+    assert qos.durability == DurabilityPolicy.TRANSIENT_LOCAL, \
+        "latch されていないと、e-stop 中に再起動したノードが武装状態で上がってくる"
+    assert qos.depth >= 1
     cb(Bool(data=True))
     assert a.armed is False and len(calls) == 1
     cb(Bool(data=False))
