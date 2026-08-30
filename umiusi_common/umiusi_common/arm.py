@@ -1,15 +1,15 @@
 """Shared arm / disarm (e-stop) state for the direct-drive autonomy nodes.
 
-A node that commands the thrusters wires an ``ArmState`` and, while disarmed, must stop driving and
-assert a DETACH — publish ``ThrusterOutput`` with ``runnable.esc = runnable.servo = false`` and zero
+A node that commands the thrusters wires an ArmState and, while disarmed, must stop driving and
+assert a DETACH — publish ThrusterOutput with runnable.esc = runnable.servo = false and zero
 output, which the control stack resolves to esc/servo *not allowed* (the hardware-level detach). This
 is the emergency-stop path for the direct-override control loop; core's power/mode gating is the other.
 
 Interface exposed on the owning node:
-  * ``~/estop`` (std_msgs/Bool)  — ``data: true`` DISARMs immediately; ``data: false`` re-arms.
+  * ~/estop (std_msgs/Bool)  — data: true DISARMs immediately; data: false re-arms.
     Latched (transient_local, reliable) QoS: a node that (re)starts while an e-stop is asserted picks
     up the last value and comes up DISARMED, provided the publisher is still alive.
-  * ``~/arm``   (std_srvs/SetBool) — ``data: true`` arms, ``data: false`` disarms (programmatic).
+  * ~/arm   (std_srvs/SetBool) — data: true arms, data: false disarms (programmatic).
 """
 
 from __future__ import annotations

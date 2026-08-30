@@ -7,27 +7,27 @@
   (32767/16 = 2047.9 deg/s = 35.74 rad/s) と一致する読み出し化け
 * 0.5 秒で -3° → -170° → -4° といった姿勢の跳躍 (運動中に出やすい)
 
-`navigator_node` / `auto_target_generator` / `rl_attitude_node` はいずれも角速度を
-ヨーレートとして、姿勢をそのまま制御に使うため、**1 発のスパイクで制御が跳ねる**。
+navigator_node / auto_target_generator / rl_attitude_node はいずれも角速度を
+ヨーレートとして、姿勢をそのまま制御に使うため、1 発のスパイクで制御が跳ねる。
 受信側でここを通してから使う。
 
-既定では **捨てない (`enforce=False`)**。判定と統計・ログだけを行い、値はそのまま通す。
-実機で 150 秒測ったところ、棄却対象は 0.44% しかないうえ、**フィルタ自身が誤爆したときの
-被害のほうが大きい**ことが分かったため (下記)。閾値を決めるにはまずデータが要るので、
-今は「観測するが介入しない」に倒している。`enforce=True` で従来どおり捨てるようになる。
+既定では 捨てない (enforce=False)。判定と統計・ログだけを行い、値はそのまま通す。
+実機で 150 秒測ったところ、棄却対象は 0.44% しかないうえ、フィルタ自身が誤爆したときの
+被害のほうが大きいことが分かったため (下記)。閾値を決めるにはまずデータが要るので、
+今は「観測するが介入しない」に倒している。enforce=True で従来どおり捨てるようになる。
 
-唯一の例外は **ノルムが 0 のクォータニオン**。これは閾値の問題ではなく
-正規化そのものが定義できない (0 除算) ので、`enforce` に関係なく直前の有効値を返す。
+唯一の例外は ノルムが 0 のクォータニオン。これは閾値の問題ではなく
+正規化そのものが定義できない (0 除算) ので、enforce に関係なく直前の有効値を返す。
 
 捨てるときは直前の有効値を返し、連続して捨て続けた場合は
-`stale` が True になるので、呼び出し側でフェイルセーフに落とせる。
+stale が True になるので、呼び出し側でフェイルセーフに落とせる。
 
-ただし **姿勢の跳躍だけは「捨て続ける」ことができない**。実機で、BNO055 の姿勢基準が
+ただし 姿勢の跳躍だけは「捨て続ける」ことができない。実機で、BNO055 の姿勢基準が
 一度だけ 169° 飛び、飛んだ先で正常に追従を続ける事象を観測した (2026-08-21、
-`|q|`=1.000 で角速度とも整合、以降なめらか)。跳躍は「最後に *採用* した値」との差分で
-見るので、比較対象が飛ぶ前の姿勢に固定されたままになり、**150 秒間ずっと棄却し続けて
-復帰しなかった** (棄却率 96%)。姿勢だけが古い値に貼り付くので、制御は effectively
-盲目になる。そこで `stale` に達したら跳躍チェックだけを解除して再同期する
+|q|=1.000 で角速度とも整合、以降なめらか)。跳躍は「最後に *採用* した値」との差分で
+見るので、比較対象が飛ぶ前の姿勢に固定されたままになり、150 秒間ずっと棄却し続けて
+復帰しなかった (棄却率 96%)。姿勢だけが古い値に貼り付くので、制御は effectively
+盲目になる。そこで stale に達したら跳躍チェックだけを解除して再同期する
 (絶対値で判定できるノルム異常とフルスケール化けは、そのまま弾き続ける)。
 """
 
@@ -43,14 +43,14 @@ GYRO_FULL_SCALE = 35.74
 
 @dataclass
 class ImuSample:
-    """検査を通った IMU 値。`quat` は (w, x, y, z) の正規化済みクォータニオン。"""
+    """検査を通った IMU 値。quat は (w, x, y, z) の正規化済みクォータニオン。"""
 
     quat: tuple[float, float, float, float]
     gyro: tuple[float, float, float]
 
 
 class ImuSanity:
-    """IMU サンプルの妥当性を検査する。`enforce=True` なら化けを弾いて直前の有効値を保持する。
+    """IMU サンプルの妥当性を検査する。enforce=True なら化けを弾いて直前の有効値を保持する。
 
     Parameters
     ----------
@@ -63,17 +63,17 @@ class ImuSanity:
     quat_tol:
         クォータニオンのノルムの許容誤差。
     stale_after:
-        連続して捨てた回数がこれを超えたら `stale` を True にする。
+        連続して捨てた回数がこれを超えたら stale を True にする。
     enforce:
-        True なら判定に引っかかったサンプルを捨てる。False (既定) なら**捨てずに通し**、
-        判定結果は `rejected` / `reasons` と戻り値の `reason` にだけ残す。閾値を決める
-        ためのデータ収集期間はこちら。ノルムが 0 のときだけは `enforce` によらず捨てる。
+        True なら判定に引っかかったサンプルを捨てる。False (既定) なら捨てずに通し、
+        判定結果は rejected / reasons と戻り値の reason にだけ残す。閾値を決める
+        ためのデータ収集期間はこちら。ノルムが 0 のときだけは enforce によらず捨てる。
     """
 
     # 正規化が定義できないノルムの下限。閾値ではなく数値上の限界なので設定にしない。
     MIN_NORM = 1e-6
 
-    # `enforce` によらず必ず捨てる理由。閾値を緩めても救えない — 値そのものが
+    # enforce によらず必ず捨てる理由。閾値を緩めても救えない — 値そのものが
     # 数値として使えない (正規化が 0 除算になる、NaN/Inf が混じる) ものだけを入れる。
     UNUSABLE = ("正規化できない", "NaN/Inf が含まれる", "値を float にできない")
 
@@ -106,7 +106,7 @@ class ImuSanity:
 
     @property
     def flag_ratio(self) -> float:
-        """判定に引っかかった割合。`enforce=False` でも増える (観測用)。"""
+        """判定に引っかかった割合。enforce=False でも増える (観測用)。"""
         total = self.accepted + self.rejected
         return self.flagged / total if total else 0.0
 
@@ -116,9 +116,9 @@ class ImuSanity:
         Returns
         -------
         (sample, reason)
-            `sample` は採用された値、または直前の有効値 (まだ 1 つも無ければ None)。
-            `reason` は判定に引っかかった理由の文字列、問題なしなら None。
-            **`enforce=False` のときは `reason` が付いていても `sample` は捨てられていない**
+            sample は採用された値、または直前の有効値 (まだ 1 つも無ければ None)。
+            reason は判定に引っかかった理由の文字列、問題なしなら None。
+            enforce=False のときは reason が付いていても sample は捨てられていない
             (通した値がそのまま返る)。
         """
         reason = self._check(quat_wxyz, gyro_xyz)
@@ -146,7 +146,7 @@ class ImuSanity:
         return self.last, reason
 
     def describe(self, reason: str) -> str:
-        """ログ 1 行。`enforce` の有無で「破棄した」のか「通した」のかが変わる。"""
+        """ログ 1 行。enforce の有無で「破棄した」のか「通した」のかが変わる。"""
         if self.enforce:
             return f"IMU サンプルを破棄: {reason} (棄却率 {self.reject_ratio:.1%})"
         return (f"IMU の異常サンプルを検出 (**破棄していません**): {reason}"
@@ -176,7 +176,7 @@ class ImuSanity:
             return (f"角速度が上限超過 ({gmax:.2f} rad/s)"
                     + (" — int16 フルスケール相当の化け" if near_fs else ""))
 
-        # `stale` の間は跳躍チェックを行わない。IMU の姿勢基準そのものが飛んだ場合、
+        # stale の間は跳躍チェックを行わない。IMU の姿勢基準そのものが飛んだ場合、
         # 飛ぶ前の値と比べ続ける限り永久に復帰できないため (モジュール冒頭の注記)。
         # 復帰までの遅れは stale_after + 1 サンプル (既定 6 = 50 Hz で 120 ms)。
         if self.last is not None and not self.stale:
@@ -189,7 +189,7 @@ class ImuSanity:
 def angle_between(qa, qb) -> float:
     """2 つの単位クォータニオン間の回転角 [rad]。符号の曖昧さ (q と -q) を吸収する。
 
-    診断ツール (`tools/imu_sanity_*.py`) が同じ計算を再現するために公開している。
+    診断ツール (tools/imu_sanity_*.py) が同じ計算を再現するために公開している。
     """
     dot = sum(a * b for a, b in zip(qa, qb))
     return 2.0 * math.acos(min(1.0, abs(dot)))

@@ -2,15 +2,15 @@
 
     ros2 launch umiusi_autonomy core_autonomy.launch.py model_path:=/abs/path/to/detector.pt
 
-This mirrors ``sinsei_umiusi_core``'s ``launch/main.yaml`` node-for-node, EXCEPT the AUTO-mode target
-source: instead of core's empty-Target placeholder ``auto_target_generator`` it starts umiusi_autonomy's
-FSM-driven lifecycle ``auto_target_generator`` (same node name + lifecycle contract, so core's behaviour
-tree activates it on entering AUTO). It also starts ``perception_node`` to feed the generator. Because
-this launch owns the whole strategy stack, ``sinsei_umiusi_core`` is left untouched — do NOT also run
-core's ``main.yaml`` (that would start a second generator racing on ``/cmd/target``).
+This mirrors sinsei_umiusi_core's launch/main.yaml node-for-node, EXCEPT the AUTO-mode target
+source: instead of core's empty-Target placeholder auto_target_generator it starts umiusi_autonomy's
+FSM-driven lifecycle auto_target_generator (same node name + lifecycle contract, so core's behaviour
+tree activates it on entering AUTO). It also starts perception_node to feed the generator. Because
+this launch owns the whole strategy stack, sinsei_umiusi_core is left untouched — do NOT also run
+core's main.yaml (that would start a second generator racing on /cmd/target).
 
 The controllers + hardware (sinsei_umiusi_control / the sim bridge) are launched separately, as usual.
-EXPERIMENTAL: validate on sim/hardware before use — see the ``auto_target_generator`` module docstring.
+EXPERIMENTAL: validate on sim/hardware before use — see the auto_target_generator module docstring.
 """
 
 from launch import LaunchDescription

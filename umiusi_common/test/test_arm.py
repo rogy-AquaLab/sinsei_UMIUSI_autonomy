@@ -1,10 +1,10 @@
-"""`ArmState` の単体テスト。**移設にあわせて新設** (それまでテストが 1 つも無かった)。
+"""ArmState の単体テスト。移設にあわせて新設 (それまでテストが 1 つも無かった)。
 
-ここは**緊急停止の経路**なので、契約を固定しておく価値が高い:
-  * disarm したら **毎回** detach コールバックを呼ぶ (「既に disarmed だから何もしない」は危険。
+ここは緊急停止の経路なので、契約を固定しておく価値が高い:
+  * disarm したら 毎回 detach コールバックを呼ぶ (「既に disarmed だから何もしない」は危険。
     ノードは tick ごとに detach を打ち直す設計で、その打ち直しがここを通る)
   * arm は状態を上げるだけで detach は呼ばない
-  * `~/estop` の true/false と `~/arm` サービスの両方から同じ状態機械に入る
+  * ~/estop の true/false と ~/arm サービスの両方から同じ状態機械に入る
 """
 import pytest
 
@@ -18,7 +18,7 @@ from umiusi_common.arm import ArmState  # noqa: E402
 
 
 class _Node:
-    """`ArmState` が触るぶんだけの偽ノード。rclpy のノードは立てない。"""
+    """ArmState が触るぶんだけの偽ノード。rclpy のノードは立てない。"""
 
     def __init__(self):
         self.subs, self.srvs, self.logs = [], [], []
@@ -62,7 +62,7 @@ def test_start_armed_falseなら解除状態で立ち上がる():
 
 
 def test_disarmは毎回detachを呼ぶ():
-    """**既に解除済みでも呼ぶ。** ノードは tick ごとに detach を打ち直す設計で、
+    """既に解除済みでも呼ぶ。 ノードは tick ごとに detach を打ち直す設計で、
     「もう解除済みだから省略」にすると指令が残ったままになりうる。"""
     _, a, calls = _make()
     a.disarm("test")
@@ -83,7 +83,7 @@ def test_estopトピックで解除と復帰ができる():
     n, a, calls = _make()
     (_, topic, cb, qos) = n.subs[0]
     assert topic == "~/estop"
-    # **同一性ではなく中身を見る。** `qos is ESTOP_QOS` だけだと、ESTOP_QOS の durability を
+    # 同一性ではなく中身を見る。 qos is ESTOP_QOS だけだと、ESTOP_QOS の durability を
     # VOLATILE に落とす変更が素通りする (= 守りたい性質そのものが壊れても気付けない)
     assert qos.durability == DurabilityPolicy.TRANSIENT_LOCAL, \
         "latch されていないと、e-stop 中に再起動したノードが武装状態で上がってくる"

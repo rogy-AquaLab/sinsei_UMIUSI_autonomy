@@ -11,16 +11,16 @@
         model_path:=$(ros2 pkg prefix umiusi_rl_control)/share/umiusi_rl_control/models/att_cal1_best_rep103
     ros2 launch umiusi_rl_control rl_attitude.launch.py publish:=false     # predict only (no thrusters)
 
-Runs just ``rl_attitude_node`` (no perception / FSM / core). 既定は同梱の
-``models/av_cal1_best_rep103`` (本命、姿勢+速度指令 17 次元)。読み込み時に frame 契約
+Runs just rl_attitude_node (no perception / FSM / core). 既定は同梱の
+models/av_cal1_best_rep103 (本命、姿勢+速度指令 17 次元)。読み込み時に frame 契約
 (rep103) と golden.npz を検証し、不一致なら動かさない。
 
-**既定は disarmed + vel_cmd 0** なので、起動しただけではスラスタに何も出ない。
-``~/arm`` (std_srvs/SetBool, data:true) で武装し、必要なら ``vel_cmd`` で前進させる。
+既定は disarmed + vel_cmd 0 なので、起動しただけではスラスタに何も出ない。
+~/arm (std_srvs/SetBool, data:true) で武装し、必要なら vel_cmd で前進させる。
 
 Needs torch + numpy in the ROS runtime env (SB3 は不要), and the controllers/bridge
-(sinsei_umiusi_control or umiusi_sim_bridge) providing ``/state/imu`` and consuming
-``/cmd/direct/...``.
+(sinsei_umiusi_control or umiusi_sim_bridge) providing /state/imu and consuming
+/cmd/direct/....
 """
 
 from launch import LaunchDescription

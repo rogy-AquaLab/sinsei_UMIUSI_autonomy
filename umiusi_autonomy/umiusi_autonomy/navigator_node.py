@@ -1,53 +1,53 @@
 """navigator_node — high-level balloon-popping navigation, a THIN rclpy wrapper around the FSM.
 
-Subscribes the per-frame detections (``BalloonDetectionArray`` from ``perception_node``) and the IMU
-(``sensor_msgs/Imu`` on ``/state/imu`` for the yaw rate), runs the shared behaviour FSM
-(``umiusi_perception.autonomy.BalloonBehavior`` — the SAME object driving ``tools/autonomy_run``) at a fixed
+Subscribes the per-frame detections (BalloonDetectionArray from perception_node) and the IMU
+(sensor_msgs/Imu on /state/imu for the yaw rate), runs the shared behaviour FSM
+(umiusi_perception.autonomy.BalloonBehavior — the SAME object driving tools/autonomy_run) at a fixed
 control rate, and converts its {surge, heave, yaw} drive command into the four per-thruster
 direct-override commands via the analytical feed-forward allocation
-(``umiusi_perception.control.feedforward_allocation``). It publishes on the SAME direct-override topics /
-message type that ``tools/ros_policy`` uses to drive the sim, so it drives the real
+(umiusi_perception.control.feedforward_allocation). It publishes on the SAME direct-override topics /
+message type that tools/ros_policy uses to drive the sim, so it drives the real
 sinsei_umiusi_control stack UNCHANGED (sim <-> real = the hardware behind those topics).
 
 The FSM holds the last detections between perception ticks and re-drives on them every control step,
-exactly as the in-sim run does (``fresh=True`` only on the step after a new detection message).
+exactly as the in-sim run does (fresh=True only on the step after a new detection message).
 
-COMMAND MODES (``command_mode`` parameter):
-  * ``"direct"`` (DEFAULT — unchanged behaviour): allocate here and publish per-thruster
-    ``ThrusterOutput`` on ``/cmd/direct/...`` (self-enabling, bypasses core).
-  * ``"target"`` (EXPERIMENTAL — "ride on core"): publish a ``sinsei_umiusi_msgs/Target``
-    (velocity + orientation) on ``/cmd/target`` and let ``sinsei_umiusi_control`` allocate, so
+COMMAND MODES (command_mode parameter):
+  * "direct" (DEFAULT — unchanged behaviour): allocate here and publish per-thruster
+    ThrusterOutput on /cmd/direct/... (self-enabling, bypasses core).
+  * "target" (EXPERIMENTAL — "ride on core"): publish a sinsei_umiusi_msgs/Target
+    (velocity + orientation) on /cmd/target and let sinsei_umiusi_control allocate, so
     autonomy plugs into the existing core power/mode pipeline instead of overriding thrusters.
-    The FSM's {surge, heave, yaw} maps to Target exactly as it feeds ``feedforward_allocation``
+    The FSM's {surge, heave, yaw} maps to Target exactly as it feeds feedforward_allocation
     (velocity.x=-surge, velocity.z=heave, orientation.z=yaw). NOT yet behaviour-equivalent to
-    ``"direct"`` — validate on sim/hardware first. Known control-side gaps to reconcile:
+    "direct" — validate on sim/hardware first. Known control-side gaps to reconcile:
       1. core must be POWERED-ON and in AUTO (a Target alone does not enable thrust — the
-         ``/cmd/thruster_runnable_all`` flag from core's AUTO node does), and the stock
-         ``auto_target_generator`` placeholder must be replaced/stopped or it races on /cmd/target.
+         /cmd/thruster_runnable_all flag from core's AUTO node does), and the stock
+         auto_target_generator placeholder must be replaced/stopped or it races on /cmd/target.
       2. sinsei_umiusi_control's C++ feed-forward emits servo in DEGREES and clamps/slews ESC duty
          (max 0.5), and its ESC thrust-sign differs from the Python port in the third force quadrant
          — so magnitudes/signs can diverge from the direct path until those are reconciled.
 
 DEPLOY CALIBRATION (verify on hardware, cannot be inferred from the sim):
   * sensor_msgs/Imu.angular_velocity is RAD/S (ROS standard), matching the sim FSM's body yaw rate.
-    ``yaw_rate_axis`` / ``yaw_rate_sign`` select and orient that component (default z, +, REP-103
+    yaw_rate_axis / yaw_rate_sign select and orient that component (default z, +, REP-103
     x-fwd/y-left/z-up — the whole stack's frame contract). Confirm the axis/sign against the
     mounted IMU (issue #15 A-4).
-  * ThrusterOutput.angle は msg コメントでは [rad] だが、**受け側の実装は DEGREES**。
+  * ThrusterOutput.angle は msg コメントでは [rad] だが、受け側の実装は DEGREES。
     sinsei_umiusi_control の thruster_controller.cpp が /cmd/direct の angle を単位変換なしで
-    vesc_model.cpp ``make_servo_angle_frame(deg)`` に渡し、そこで ``(deg + 90) / 180`` に写す。
-    ±90 の範囲外は clamp ではなく **CAN フレーム送信そのものが失敗**する。よって
-    ``servo_range_deg`` (既定 90) をそのまま度スケールとして掛ける — tools/thruster_cmd.py と
+    vesc_model.cpp make_servo_angle_frame(deg) に渡し、そこで (deg + 90) / 180 に写す。
+    ±90 の範囲外は clamp ではなく CAN フレーム送信そのものが失敗する。よって
+    servo_range_deg (既定 90) をそのまま度スケールとして掛ける — tools/thruster_cmd.py と
     umiusi_rl_control/rl_attitude_node.py も同じ規約。(以前ここは rad を送っており、フルスケール
     でも 1.57 deg にしかならずベクタリングが実質死んでいた。spec の "FF-frame sign reconcile"
     はこれで決着。ThrusterOutput.msg の "[rad]" コメント自体が誤りなので control 側で要訂正。)
-  * ``servo_sign`` — 実機のサーボは取り付けの都合で ch ごとに回転センスが反転しうる。sim 側の
-    アロケーションは 4 基同符号 (+角度 = 推力が上向き) 前提なので、**実機に出す直前**のここで
+  * servo_sign — 実機のサーボは取り付けの都合で ch ごとに回転センスが反転しうる。sim 側の
+    アロケーションは 4 基同符号 (+角度 = 推力が上向き) 前提なので、実機に出す直前のここで
     ch ごとに符号を合わせる。既定 [1,1,1,1] は従来どおりの挙動。
 
-SAFETY: ``~/estop`` (std_msgs/Bool, true) or ``~/arm`` (std_srvs/SetBool, data:false) DISARMs — the
+SAFETY: ~/estop (std_msgs/Bool, true) or ~/arm (std_srvs/SetBool, data:false) DISARMs — the
 control tick stops and asserts a detach every cycle (direct mode: runnable esc/servo = false + zero;
-target mode: zero Target). Re-arm via ``~/arm`` (data:true) or ``~/estop`` (false). ``start_armed``.
+target mode: zero Target). Re-arm via ~/arm (data:true) or ~/estop (false). start_armed.
 """
 
 from __future__ import annotations
@@ -84,15 +84,15 @@ class NavigatorNode(Node):
         # IMU 関連 (imu_topic / yaw_rate_axis / yaw_rate_sign / imu_max_gyro /
         # imu_max_step_deg / imu_sanity_enforce / imu_timeout) は ImuSource が宣言する。
         self.declare_parameter("publish", True)            # False = compute only, do not command
-        # duty の上限。**この経路には他にどこにも歯止めが無い** — /cmd/direct は control の
+        # duty の上限。この経路には他にどこにも歯止めが無い — /cmd/direct は control の
         # max_duty / スルーレート制限を素通りする (docs/known_issues.md B-12)。FSM は SPEED_CAP を
         # 掛けた {surge, heave, yaw} を出すが、アロケーションを通ると duty は最大 1.0 まで振れる
         # (surge と heave と yaw が同時に立つと飽和する)。rl_attitude_node と同じ既定。
         # 8/25 の水中 run の解析で 0.2 の根拠が崩れたため 0.25 に上げた: 実機の |duty| は p5〜p99 が
         # すべて 0.2000 (96% 飽和) で比例制御になっておらず、さらに鉛直パワーの 41.2% が
         # 零空間 (合力もモーメントも生まない対角モード) に流れていて 0.2 では降下できない。
-        # 0.25 でロール転覆余裕が 1.0 を超える (1.1x) ので、まずここまで。**0.4 は配分 (零空間)
-        # を直してから** — 上限は力の次元で効くので 0.2->0.4 は「倍」ではなく 4 倍 (F = |u|^2*30 N)。
+        # 0.25 でロール転覆余裕が 1.0 を超える (1.1x) ので、まずここまで。0.4 は配分 (零空間)
+        # を直してから — 上限は力の次元で効くので 0.2->0.4 は「倍」ではなく 4 倍 (F = |u|^2*30 N)。
         self.declare_parameter("max_duty", 0.25)
         # "direct" (default, unchanged): feed-forward allocate here -> /cmd/direct ThrusterOutput.
         # "target": ride on sinsei_umiusi_control -> publish a Target on /cmd/target and let the
@@ -212,7 +212,7 @@ class NavigatorNode(Node):
 
     def _log_fsm(self, cmd, info):
         """FSM の状態と drive 指令をログに出す。状態遷移は毎回、通常のティックは
-        ``publish:=false`` のドライ確認時のみ 1 Hz。実機の通常運用ではほぼ無音。
+        publish:=false のドライ確認時のみ 1 Hz。実機の通常運用ではほぼ無音。
         これが無いと publish:=false は「落ちない」ことしか確認できない (issue #18 P4)。"""
         state = info["state"]
         line = (f"FSM {state} target={info['target']} az={info['az']:+.3f} "
@@ -236,7 +236,7 @@ class NavigatorNode(Node):
         self._pub_target.publish(msg)
 
     def _command_thrusters(self, action):
-        # duty を上限に収める。**チャンネルごとに clip すると推力ベクトルの向きが変わる**ので、
+        # duty を上限に収める。チャンネルごとに clip すると推力ベクトルの向きが変わるので、
         # 飽和したら 4 基まとめて同じ比率で縮める (向きを保ったまま弱くする)。FSM は
         # 「どちらを向くか」で目標を追うので、向きが崩れるほうが挙動として危ない。
         # (rl_attitude_node は per-channel clip。あちらはポリシーが飽和込みで学習しているため。)

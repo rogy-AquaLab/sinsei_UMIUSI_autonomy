@@ -1,20 +1,20 @@
 """camera_bridge_node — 実機カメラの RTSP ストリームを ROS の Image トピックへ橋渡しする。
 
-``sinsei_umiusi_control`` の ``gst_camera_node`` は GStreamer パイプラインを起動するだけで、
-画像を ROS トピックに publish しない (パラメータは ``pipeline`` 文字列のみ)。一方 perception_node は
-``sensor_msgs/Image`` を購読するため、そのままでは実機カメラの映像が perception に届かない。
+sinsei_umiusi_control の gst_camera_node は GStreamer パイプラインを起動するだけで、
+画像を ROS トピックに publish しない (パラメータは pipeline 文字列のみ)。一方 perception_node は
+sensor_msgs/Image を購読するため、そのままでは実機カメラの映像が perception に届かない。
 このノードがその欠落を埋める。control 側には一切手を入れない。
 
-既定では GStreamer の **ハードウェア H.264 デコーダ** (``v4l2h264dec``) を使う。Raspberry Pi の
+既定では GStreamer の ハードウェア H.264 デコーダ (v4l2h264dec) を使う。Raspberry Pi の
 CPU で 720p を software デコードすると perception の取り分を食い潰すため、ここは重要。
-``videoscale`` で publish 前に縮小するのも同じ理由 (640x480 の生 Image は 921 kB/frame あり、
+videoscale で publish 前に縮小するのも同じ理由 (640x480 の生 Image は 921 kB/frame あり、
 RELIABLE QoS では転送だけで頭打ちになる)。
 
     ros2 run umiusi_autonomy camera_bridge_node --ros-args \
         -p rtsp_url:=rtsp://localhost:8554/cam1 -p width:=320 -p height:=240
 
 QoS は RELIABLE 固定。perception_node の購読が RELIABLE のため、BEST_EFFORT にすると
-``No messages will be received`` となって一切届かない。
+No messages will be received となって一切届かない。
 """
 
 from __future__ import annotations
@@ -67,8 +67,8 @@ class CameraBridge(Node):
         # --- ロギング: rosbag に残せる圧縮画像も出す (生 Image は 320x240 でも 3.5 MB/s ある) ---
         self.declare_parameter("publish_compressed", False)
         self.declare_parameter("jpeg_quality", 80)
-        # 圧縮画像だけのレート上限 [Hz]。0 = 画像と同じレート。**JPEG エンコードは perception と
-        # 同じ CPU を食う**ので、記録目的なら間引く。映像そのものは RTSP 直録 (record_camera.sh)
+        # 圧縮画像だけのレート上限 [Hz]。0 = 画像と同じレート。JPEG エンコードは perception と
+        # 同じ CPU を食うので、記録目的なら間引く。映像そのものは RTSP 直録 (record_camera.sh)
         # が全フレーム持っているので、bag 側は「映像と bag を突き合わせる基準」と
         # 「そのとき何が見えていたか」が分かれば足りる (docs/logging.md)。
         self.declare_parameter("compressed_max_rate_hz", 0.0)
@@ -216,7 +216,7 @@ class CameraBridge(Node):
             self.get_logger().info(f"{self._n} フレーム中継")
 
     def _compressed_due(self) -> bool:
-        """圧縮画像を今フレーム出すか。**`cv2.imencode` を呼ぶ前**に判定すること —
+        """圧縮画像を今フレーム出すか。cv2.imencode を呼ぶ前に判定すること —
         CPU を食うのはエンコードであって publish ではない。"""
         if self._c_dt is None:
             return True

@@ -1,14 +1,14 @@
 """perception_node — onboard balloon detection, a THIN rclpy wrapper around the shared library.
 
 Subscribes the onboard camera (sensor_msgs/Image), runs the learned detector
-(``umiusi_perception.learned_detector``) followed by the near-range red/blue colour
-re-confirmation (``umiusi_perception.sanitise_near_colours``) — EXACTLY the perception half of
-``tools/autonomy_run`` — and publishes the per-frame detections as ``BalloonDetectionArray``. All
-detection logic lives in the ROS-free ``umiusi_perception`` package; this node only does topic plumbing and
+(umiusi_perception.learned_detector) followed by the near-range red/blue colour
+re-confirmation (umiusi_perception.sanitise_near_colours) — EXACTLY the perception half of
+tools/autonomy_run — and publishes the per-frame detections as BalloonDetectionArray. All
+detection logic lives in the ROS-free umiusi_perception package; this node only does topic plumbing and
 message conversion, so the same detector runs bit-identically in sim and on the robot.
 
-The heavy imports (torch, umiusi_perception) are deferred until the first image so ``colcon build`` and
-``--help`` do not require them; on the Pi they are imported once at startup.
+The heavy imports (torch, umiusi_perception) are deferred until the first image so colcon build and
+--help do not require them; on the Pi they are imported once at startup.
 
 Parameters
 ----------
@@ -50,7 +50,7 @@ class PerceptionNode(Node):
         self.declare_parameter("fovy_deg", 60.0)
         self.declare_parameter("max_rate_hz", 10.0)
         self.declare_parameter("sanitise_near", True)
-        # 画像が来ていないことに気付けるようにする。**画像ゼロでも無言で回り続ける**ので、
+        # 画像が来ていないことに気付けるようにする。画像ゼロでも無言で回り続けるので、
         # 8/25 の水中 run では 15.6 分間ずっと検出ゼロ (= FSM が SEARCH から出られない) だった
         # ことに、bag を持ち帰るまで気付けなかった。0 以下で無効。
         self.declare_parameter("image_timeout", 5.0)
@@ -58,7 +58,7 @@ class PerceptionNode(Node):
         self._model_path = str(self.get_parameter("model_path").value).strip()
         if not self._model_path:
             # 未指定なら同梱の検出器を使う (clone しただけで動くように)。既定は
-            # **camp_real2.pt** — 8/25 のプール実写をハードネガティブとして継続学習した版で、
+            # camp_real2.pt — 8/25 のプール実写をハードネガティブとして継続学習した版で、
             # 実プールでの precision が 0.29 -> 0.78 (F1 0.44 -> 0.80)。旧 camp_real の
             # 「4.6 個/枚の誤検出」「右下の固定誤検出」はこれで解消した。
             # conf_thresh は checkpoint に 0.4 が入っているので指定不要。
@@ -96,7 +96,7 @@ class PerceptionNode(Node):
 
     def _check_image_flow(self):
         """画像が途切れていないか (そもそも来ているか) を見張る。実機カメラは RTSP なので
-        ``camera_bridge_node`` が居ないと 1 枚も来ない。沈黙で気付けないのが一番困る。"""
+        camera_bridge_node が居ないと 1 枚も来ない。沈黙で気付けないのが一番困る。"""
         now = self.get_clock().now().nanoseconds * 1e-9
         if self._last_image_t is None:
             self.get_logger().warning(
@@ -142,12 +142,12 @@ class PerceptionNode(Node):
         return True
 
     def _on_image(self, msg: Image):
-        # ウォッチドッグ用。**レート制限より前**に記録する — 落としたフレームも「来ている」ので。
+        # ウォッチドッグ用。レート制限より前に記録する — 落としたフレームも「来ている」ので。
         self._last_image_t = self.get_clock().now().nanoseconds * 1e-9
         self._n_images += 1
         # rate cap: drop frames that arrive faster than max_rate_hz (realistic Pi-4 detector timing).
-        # ヘッダの stamp を使うが、**設定していない publisher だと 0 のまま進まず全フレームが
-        # 落ちて perception が沈黙する**ので、その場合はノードの時計に切り替える。
+        # ヘッダの stamp を使うが、設定していない publisher だと 0 のまま進まず全フレームが
+        # 落ちて perception が沈黙するので、その場合はノードの時計に切り替える。
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         if stamp <= 0.0:
             if not self._warned_no_stamp:
@@ -168,7 +168,7 @@ class PerceptionNode(Node):
         if self._sanitise:
             dets = self._sanitise_fn(rgb, dets)
         self._pub.publish(self._to_msg(msg.header, dets))
-        # **末尾でも更新する。** 初回フレームでは `_ensure_detector()` が torch の import と
+        # 末尾でも更新する。 初回フレームでは _ensure_detector() が torch の import と
         # チェックポイント読み込みを同期実行し、Pi-4 ではこれが image_timeout を超える。
         # 単一スレッド executor なのでその間タイマーは走れず、復帰直後に
         # 「画像が 8 s 途切れています」という偽の警告が出る (起動直後でいちばん誤読される)。

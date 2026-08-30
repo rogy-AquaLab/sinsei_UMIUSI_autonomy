@@ -1,7 +1,7 @@
 """launch ファイルの共通部品。
 
-`autonomy.launch.py` と `core_autonomy.launch.py` はどちらもカメラブリッジを起動する。
-同じ Node ブロックを 2 箇所に書くと **片方だけ直る** (IMU の扱いを `ImuSource` に寄せたのと
+autonomy.launch.py と core_autonomy.launch.py はどちらもカメラブリッジを起動する。
+同じ Node ブロックを 2 箇所に書くと 片方だけ直る (IMU の扱いを ImuSource に寄せたのと
 同じ構図)。launch ディレクトリは Python パッケージではないので、共有するものは
 インストールされるこのパッケージ側に置く。
 """
@@ -17,10 +17,10 @@ def camera_bridge_node(*, condition, rtsp_url, image_topic, record_vision="false
 
     実機カメラ (gst_camera_node) は RTSP に流すだけで ROS トピックを出さないので、
     perception にはこれが必要。これが無いと画像が 1 枚も来ず、FSM が SEARCH から出られない
-    (8/25 の水中 run、`/perception_node/detections` が 15.6 分間ゼロ)。
+    (8/25 の水中 run、/perception_node/detections が 15.6 分間ゼロ)。
 
-    ``record_vision`` を true にすると圧縮画像 (``<image_topic>/compressed``) も出す。
-    **視覚での位置固定を作るための素材集め用** — `record_run.sh --vision` とセットで使う。
+    record_vision を true にすると圧縮画像 (<image_topic>/compressed) も出す。
+    視覚での位置固定を作るための素材集め用 — record_run.sh --vision とセットで使う。
     レートを絞るのは JPEG エンコードが perception と同じ CPU を食うため (docs/logging.md)。
     """
     return Node(
