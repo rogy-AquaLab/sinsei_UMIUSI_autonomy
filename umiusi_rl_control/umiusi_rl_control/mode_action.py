@@ -1,22 +1,18 @@
-"""レンチモード action (``action_mode: "modes"``) を [servo x4, esc x4] に直す。
+"""レンチモード action (action_mode: "modes") を [servo x4, esc x4] に直す。
 
-`av_mode13` 以降の方策は 6 次元の「機体レンチのモード**レート**」(REP-103) を出す。
-積分 -> ミキサ -> 折返しの 3 段を **sim と同じ順で**通す必要がある。
+av_mode13 以降の方策は 6 次元の「機体レンチのモードレート」を出す。
+積分 -> ミキサ -> 折返しの 3 段を、sim と同じ順で通す。
 
-契約は **バンドルの ``export/meta.json`` の ``action_contract``** が正。係数も符号表も
-そこから読むこと — ハードコードすると sim 側の変更と静かにずれる。
+契約:
+  * 係数も符号表も export/meta.json の action_contract から読む。ハードコードすると
+    sim 側の変更と静かにずれる
+  * disarm のたびに reset() する。積分器を残すと再武装の瞬間に前回の力が出る
+  * max_duty は方策が観測しているのと同じ値を渡す (モード 1.0 = その上限での全権限)
 
-呼び出し側の義務が 2 つある:
-  * **disarm のたびに `reset()`**。積分器を残すと再武装の瞬間に前回の力が出る。
-  * `max_duty` は**方策が観測しているのと同じ値**を渡す (モード 1.0 = その上限での全権限)。
-
-**バンバン制御を抑える平滑化は、折返し後の servo/esc 座標に置き換えてはいけない。**
-零空間の無い指令は per-unit (h, v) 力空間の線形部分空間を成し、モード座標はその線形座標
-なので、モードを滑らかに動かせば途中も零空間ゼロのまま。折返し後で内挿すると部分空間の
-外を通り、realized null が増える。
-
-プラントのレート制限 (`rl_attitude_node._command`) はこれとは別物で、**モード方策でも
-外さない** — 理由は known_issues A-11。
+禁止事項:
+  * 平滑化を折返し後の servo/esc 座標に置き換えない — 部分空間の外を通り零空間が増える
+  * プラントのレート制限 (rl_attitude_node._command) を外さない。これは上とは別物で、
+    モード方策でも要る (known_issues A-11)
 """
 
 from __future__ import annotations
@@ -59,8 +55,8 @@ class ModeAction:
                 raise ValueError(
                     f"mode_signs['{p}'] は {MODE_DIM} 要素必要ですが {len(signs[p])} 個です "
                     f"({signs[p]})。列の並びは mode_sign_columns を参照")
-        # 符号表は (h 3 列 | v 3 列)。**どのモード成分に掛かるかは mode_sign_columns が決める**
-        # ので、mode_names の順序を仮定せず名前で引く
+        # 符号表は (h 3 列 | v 3 列)。どのモード成分に掛かるかは mode_sign_columns が決めるので、
+        # mode_names の順序を仮定せず名前で引く
         s = np.array([[float(x) for x in signs[p]] for p in positions], dtype=float)
         if s.shape != (len(positions), MODE_DIM):
             raise ValueError(f"mode_signs の形が {s.shape} です ({len(positions)}, {MODE_DIM}) が必要")
@@ -78,7 +74,7 @@ class ModeAction:
         self.reset()
 
     def reset(self) -> None:
-        """**disarm のたびに呼ぶ。** 積分器と前回サーボ角を初期状態に戻す。"""
+        """disarm のたびに呼ぶ。積分器と前回サーボ角を初期状態に戻す。"""
         self._m = np.zeros(MODE_DIM)
         self._prev_servo = np.zeros(self._n)      # 正規化 (±1 = ±servo_range_deg)
 
@@ -90,8 +86,8 @@ class ModeAction:
     def step(self, raw, max_duty: float, dt: float) -> np.ndarray:
         """モードレート action -> [servo x4, esc x4] (各 [-1, 1])。
 
-        raw は**モードのレート**であって指令値ではない。`max_duty` は方策が観測している
-        値と同じものを渡すこと (冒頭の docstring 参照)。
+        raw はモードのレートであって指令値ではない。max_duty は方策が観測している値と
+        同じものを渡すこと (冒頭の docstring 参照)。
         """
         a = np.clip(np.asarray(raw, dtype=float).reshape(MODE_DIM), -1.0, 1.0)
         # 1. 積分 (レート制限は方策の内側)

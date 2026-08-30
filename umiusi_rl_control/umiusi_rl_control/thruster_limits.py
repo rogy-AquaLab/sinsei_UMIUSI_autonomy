@@ -1,8 +1,8 @@
 """スラスタ指令のレート制限。
 
-**値は sim (`configs/umiusi.yaml` の `servo_slew_deg_per_s` / `thrust_slew_per_s`) と
-揃えること。** 方策はこの制限を含むプラントを対象に学習しているので、外すと高周波成分が
-そのままサーボへ行く (経緯と実測は known_issues A-11)。
+  * 値は sim と揃えること (configs/umiusi.yaml の servo_slew_deg_per_s / thrust_slew_per_s)
+  * 外さないこと — 方策はこの制限を含むプラントを対象に学習している
+  * 経緯と実測: known_issues A-11
 """
 
 from __future__ import annotations

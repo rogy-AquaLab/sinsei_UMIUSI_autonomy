@@ -1,19 +1,17 @@
 """深度モード切替スーパーバイザ — 水圧の外側ループで 2 つの RL ポリシーを使い分ける。
 
-**規約: depth は正が深い** [m]。`depth_err = target - depth` が正なら「もっと潜る」。
-REP-103 body frame では下 = -z なので降下指令は `v_cmd = [0, 0, -vz]`。
+規約:
+  * depth: 正が深い [m]。depth_err = target - depth が正なら「もっと潜る」
+  * 降下指令: v_cmd = [0, 0, -vz] (下 = -z。frame は known_issues A-13)
 
-構造は sim 実測に縛られている。変える前に理由を確認すること:
-  * 水平ポリシーに鉛直指令を入れてはいけない (分布外・姿勢が崩壊する)。深度は別ポリシー。
-  * 3-D ポリシーは **降下専用**。純上指令はほぼ効かないので、**浮上は弱正浮力に任せる**
-    (受動浮上) — 上げようとして指令を足さないこと。
-  * 降下の前に必ずブレーキを入れる。**前進したまま降下バーストに入ると転覆する** (sim 実測)。
-  * バーストは稀に不発になるので watchdog で再試行する。
-  * **max_duty 0.2 では降下できない。原因は上限ではなく配分の無駄** (鉛直パワーの 41% が
-    零空間へ流れる)。**上げる前に零空間を潰すこと** — 上限だけ上げると転覆余裕を削る
-    (README「深度モード」節 / known_issues A-17)。
+禁止事項 (sim 実測。テストでは捕まらない):
+  * 水平ポリシーに鉛直指令を入れない — 分布外で姿勢が崩壊する
+  * 浮上に指令を足さない — 3-D ポリシーは降下専用。浮上は弱正浮力に任せる
+  * 前進したまま降下バーストに入らない — 転覆する。必ずブレーキを挟む
+  * max_duty を上げて降下させようとしない — 0.2 で降下できない原因は上限ではなく
+    配分 (零空間)。上限だけ上げると転覆余裕を削る (known_issues A-17)
 
-既定値と sim での検証結果は issue #15 のコメント (`tools/mode_switch_eval.py`)。
+既定値と sim での検証結果は issue #15 のコメント (tools/mode_switch_eval.py)。
 """
 from __future__ import annotations
 
@@ -31,7 +29,7 @@ class DepthSupervisor:
 
     毎 tick `update(now, depth)` を呼ぶ。返り値は (state, v_cmd_override):
       * state が HORIZ のとき v_cmd_override は None — 要求どおりの水平指令を使ってよい
-      * それ以外は補正中 — v_cmd_override (REP-103 body frame, np.ndarray(3)) をそのまま
+      * それ以外は補正中 — v_cmd_override (body frame, np.ndarray(3)) をそのまま
         ポリシーへ入れる (BRAKE/ASCEND は零ベクトル、VERT は純下)
     どのポリシーで推論すべきかは state で決まる (VERT だけ 3-D ポリシー)。
     """
