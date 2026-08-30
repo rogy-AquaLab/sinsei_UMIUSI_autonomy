@@ -10,7 +10,7 @@ import numpy as np
 
 
 def slew(current, target, max_rate: float, dt: float):
-    """`current` を `target` へ、1 ステップあたり最大 `max_rate * dt` だけ近づける。"""
+    """current を target へ、1 ステップあたり最大 max_rate * dt だけ近づける。"""
     target = np.asarray(target, dtype=float)
     if max_rate <= 0.0:
         return target

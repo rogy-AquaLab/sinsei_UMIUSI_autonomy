@@ -25,7 +25,7 @@ ASCEND = "ascend"   # 水平ポリシーでホールドし浮力で浮上 (受�
 class DepthSupervisor:
     """深度誤差の閾値で水平/鉛直モードを切り替える状態機械 (ヒステリシス + watchdog 付き)。
 
-    毎 tick `update(now, depth)` を呼ぶ。返り値は (state, v_cmd_override):
+    毎 tick update(now, depth) を呼ぶ。返り値は (state, v_cmd_override):
       * state が HORIZ のとき v_cmd_override は None — 要求どおりの水平指令を使ってよい
       * それ以外は補正中 — v_cmd_override (body frame, np.ndarray(3)) をそのまま
         ポリシーへ入れる (BRAKE/ASCEND は零ベクトル、VERT は純下)
@@ -94,7 +94,7 @@ class DepthSupervisor:
 
         if self.state == VERT:
             vz_down = float(np.clip(self.k_depth * err, 0.0, self.v_vert))
-            return self.state, np.array([0.0, 0.0, -vz_down])   # REP-103: 下 = -z
+            return self.state, np.array([0.0, 0.0, -vz_down])   # 下 = -z
         if self.state in (BRAKE, ASCEND):
             return self.state, np.zeros(3)                      # ホールド (巡航一時停止)
         return self.state, None                                 # 水平モード: 要求どおり

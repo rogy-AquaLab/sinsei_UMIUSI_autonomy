@@ -1,10 +1,10 @@
 """深度モードの切替でモードの積分器がどう扱われるかの単体テスト。
 
-**待機していたモデルは「最後に使ったときのモードベクトル」を抱えたままになる。** 再選択の
+待機していたモデルは「最後に使ったときのモードベクトル」を抱えたままになる。 再選択の
 瞬間にその力がいきなり出ると危険で、sim には対応する状況が無い (env は方策 1 個・積分器 1 個)。
-`_select_model` がそこを塞いでいる。
+_select_model がそこを塞いでいる。
 
-現状は水平・鉛直どちらのバンドルも direct 出力なのでこの経路は**不活性**だが、vert に
+現状は水平・鉛直どちらのバンドルも direct 出力なのでこの経路は不活性だが、vert に
 modes 系を載せた瞬間に効く。そのとき黙って壊れないようにするためのテスト。
 """
 import numpy as np
@@ -27,14 +27,14 @@ CONTRACT = {
 
 
 class _Model:
-    """`_select_model` が触る属性だけを持つ偽モデル。"""
+    """_select_model が触る属性だけを持つ偽モデル。"""
 
     def __init__(self, modes=False):
         self.mode_action = ModeAction(CONTRACT, POSITIONS) if modes else None
 
 
 class _Stub:
-    """`_select_model` / `_reset_mode_state` が触る状態だけを持つスタブ (Node を立てない)。"""
+    """_select_model / _reset_mode_state が触る状態だけを持つスタブ (Node を立てない)。"""
 
     _select_model = N.RlAttitudeNode._select_model
     _reset_mode_state = N.RlAttitudeNode._reset_mode_state
@@ -61,7 +61,7 @@ def test_初回選択でも積分器はゼロから始まる():
 
 
 def test_切替で新しく選ばれたほうの積分器がゼロに戻る():
-    """**これが本題。** 待機していた側を再選択した瞬間に古い力が出ないこと。"""
+    """これが本題。 待機していた側を再選択した瞬間に古い力が出ないこと。"""
     s, horiz, vert = _Stub(), _Model(modes=True), _Model(modes=True)
     s._select_model(horiz)
     _wind_up(vert)                      # vert は前に使ったときの状態を抱えている
@@ -80,7 +80,7 @@ def test_同じモデルが続く間は積分器を消さない():
 
 
 def test_直接出力のモデルでも落ちない():
-    """`mode_action` が None のモデル (従来のバンドル) を挟んでも例外にならない。"""
+    """mode_action が None のモデル (従来のバンドル) を挟んでも例外にならない。"""
     s, direct, modes = _Stub(), _Model(modes=False), _Model(modes=True)
     s._select_model(direct)
     _wind_up(modes)
@@ -90,13 +90,13 @@ def test_直接出力のモデルでも落ちない():
     assert s._active_model is direct
 
 
-# --- disarm で state が残らないこと (`_detach_all` -> `_reset_mode_state`) ------------------
+# --- disarm で state が残らないこと (_detach_all -> _reset_mode_state) ------------------
 
 def test_disarmで両方のモデルの積分器が消える():
     """武装したまま積んだ力が、再武装の最初の tick で出てはいけない。
 
     リセット漏れがあると、disarm 直前のモードベクトルぶんの力が次の武装でいきなり出る。
-    `_select_model` は「切り替わったほう」しか消さないので、disarm 側で両方消す必要がある。
+    _select_model は「切り替わったほう」しか消さないので、disarm 側で両方消す必要がある。
     """
     horiz, vert = _Model(modes=True), _Model(modes=True)
     s = _Stub(model=horiz, vert_model=vert)
@@ -108,7 +108,7 @@ def test_disarmで両方のモデルの積分器が消える():
 
 
 def test_disarmで再武装時の切替判定がやり直される():
-    """`_active_model` を残すと、再武装で同じモデルが選ばれたときリセットが飛ぶ。"""
+    """_active_model を残すと、再武装で同じモデルが選ばれたときリセットが飛ぶ。"""
     horiz = _Model(modes=True)
     s = _Stub(model=horiz)
     s._select_model(horiz)
