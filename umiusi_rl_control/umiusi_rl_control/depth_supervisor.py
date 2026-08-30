@@ -4,14 +4,12 @@
   * depth: 正が深い [m]。depth_err = target - depth が正なら「もっと潜る」
   * 降下指令: v_cmd = [0, 0, -vz] (下 = -z。frame は known_issues A-13)
 
-禁止事項 (テストでは捕まらない範囲):
+禁止事項 (どのテストでも捕まらない):
   * 水平ポリシーに鉛直指令を入れない — 分布外で姿勢が崩壊する。この分離がこの層の存在理由
-  * t_brake を 0 にしない — 前進慣性が残ったまま降下すると転覆する (sim 実測)
-  * max_duty を上げて降下させようとしない — 0.2 で降下できない原因は上限ではなく
-    配分 (零空間)。上限だけ上げると転覆余裕を削る (known_issues A-17)
+  * t_brake を 0 にしない — 前進慣性が残ったまま降下すると転覆する (sim 実測)。
+    テストは順序しか見ておらず、値は sup.t_brake を読むので守られない
 
-状態遷移そのものは test_depth_supervisor.py が固定している。
-既定値と sim での検証結果は issue #15 のコメント (tools/mode_switch_eval.py)。
+状態遷移は test_depth_supervisor.py、運用時の max_duty は README「深度モード切替」節。
 """
 from __future__ import annotations
 

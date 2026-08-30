@@ -34,12 +34,16 @@ class _Model:
 
 
 class _Stub:
-    """`_select_model` が触る状態だけを持つスタブ (Node を立てない)。"""
+    """`_select_model` / `_reset_mode_state` が触る状態だけを持つスタブ (Node を立てない)。"""
 
     _select_model = N.RlAttitudeNode._select_model
+    _reset_mode_state = N.RlAttitudeNode._reset_mode_state
 
-    def __init__(self):
+    def __init__(self, model=None, vert_model=None):
         self._active_model = None
+        self._model = model
+        self._vert_model = vert_model
+        self._prev_action = np.ones(N.ACT_DIM)
 
 
 def _wind_up(model, steps=25):
@@ -84,3 +88,45 @@ def test_直接出力のモデルでも落ちない():
     assert np.all(modes.mode_action.modes == 0.0)
     s._select_model(direct)             # 逆向きの切替
     assert s._active_model is direct
+
+
+# --- disarm で state が残らないこと (`_detach_all` -> `_reset_mode_state`) ------------------
+
+def test_disarmで両方のモデルの積分器が消える():
+    """武装したまま積んだ力が、再武装の最初の tick で出てはいけない。
+
+    リセット漏れがあると、disarm 直前のモードベクトルぶんの力が次の武装でいきなり出る。
+    `_select_model` は「切り替わったほう」しか消さないので、disarm 側で両方消す必要がある。
+    """
+    horiz, vert = _Model(modes=True), _Model(modes=True)
+    s = _Stub(model=horiz, vert_model=vert)
+    _wind_up(horiz)
+    _wind_up(vert)
+    s._reset_mode_state()
+    assert np.all(horiz.mode_action.modes == 0.0), "水平側の積分器が残っている"
+    assert np.all(vert.mode_action.modes == 0.0), "鉛直側の積分器が残っている"
+
+
+def test_disarmで再武装時の切替判定がやり直される():
+    """`_active_model` を残すと、再武装で同じモデルが選ばれたときリセットが飛ぶ。"""
+    horiz = _Model(modes=True)
+    s = _Stub(model=horiz)
+    s._select_model(horiz)
+    assert s._active_model is horiz
+    s._reset_mode_state()
+    assert s._active_model is None
+
+
+def test_disarmでprev_actionもゼロに戻る():
+    """観測の proprio は「自分が直前に出した指令」。指令を出していない間の値を残すと、
+    再武装した最初の観測が実際とずれる。"""
+    s = _Stub(model=_Model(modes=True))
+    s._reset_mode_state()
+    assert np.all(s._prev_action == 0.0)
+
+
+def test_直接出力だけならprev_actionを触らない():
+    """従来のバンドルの挙動を変えない (modes 系が 1 つも無ければ何もしない)。"""
+    s = _Stub(model=_Model(modes=False), vert_model=None)
+    s._reset_mode_state()
+    assert np.all(s._prev_action == 1.0), "direct のみなのに prev_action が消された"
