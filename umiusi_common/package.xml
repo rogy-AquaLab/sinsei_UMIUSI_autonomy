@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>umiusi_common</name>
+  <version>0.0.0</version>
+  <description>
+    UMIUSI の**層をまたいで共有する部品**だけを置く中立パッケージ。ノードは持たない。
+
+    これができる前は、共有したいものが umiusi_rl_control の中にあり、上位の umiusi_autonomy が
+    そこへ import しに行っていた (依存が逆向き)。「制御層は autonomy に依存しない」という
+    umiusi_rl_control の設計意図と食い違い、autonomy を動かすだけで制御層一式が必要になっていた。
+
+    ここに置いてよいのは **どの層からも使われ、どの層にも依存しないもの** に限る:
+      * arm.py       — 武装/解除 (e-stop) の共有状態。スラスタを駆動するノードが必ず使う
+      * imu_sanity.py — IMU の化けサンプル検出。姿勢を読むノードが必ず使う
+
+    将来 sinsei_UMIUSI_core へ移すことを想定している (arm は本来 core の責務)。そのとき
+    パッケージごと移せるよう、rclpy と標準 msgs 以外に依存しない状態を保つこと。
+  </description>
+  <maintainer email="satoimo3taro183@gmail.com">satoi</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>python3-setuptools</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

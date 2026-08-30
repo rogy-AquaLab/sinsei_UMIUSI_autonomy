@@ -33,7 +33,7 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Imu
 
-from umiusi_rl_control.imu_sanity import ImuSanity, angle_between
+from umiusi_common.imu_sanity import ImuSanity, angle_between
 
 MOVING_GYRO = 0.15   # これを超えたら「動かしている」とみなす [rad/s] (≒ 8.6 deg/s)
 

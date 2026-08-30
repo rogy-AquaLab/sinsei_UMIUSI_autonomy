@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from umiusi_rl_control.imu_sanity import GYRO_FULL_SCALE, ImuSanity
+from umiusi_common.imu_sanity import GYRO_FULL_SCALE, ImuSanity
 
 
 def q_identity():

@@ -5,7 +5,8 @@
   <version>0.0.0</version>
   <description>
     UMIUSI low-level control layer: a self-contained RL attitude(-velocity) controller
-    (rl_attitude_node), keyboard teleop, and shared arm/disarm (e-stop). Builds INDEPENDENTLY of the
+    (rl_attitude_node) と keyboard teleop。武装/解除 (e-stop) と IMU サニティは層をまたぐので
+    umiusi_common が持つ。Builds INDEPENDENTLY of the
     perception / autonomy stack — it does NOT depend on umiusi_perception; the RL policy needs only
     torch + numpy (pip) at runtime (no SB3/gymnasium). Consumes an umiusi_rl_control_msgs/AttitudeTarget
     setpoint and drives the sinsei_umiusi_control direct-override thrusters.
@@ -16,6 +17,7 @@
   <buildtool_depend>python3-setuptools</buildtool_depend>
 
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>umiusi_common</exec_depend>   <!-- arm/disarm と IMU サニティ (層をまたぐ共有部品) -->
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>

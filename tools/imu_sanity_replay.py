@@ -30,7 +30,7 @@ from rosidl_runtime_py.utilities import get_message
 
 import rosbag2_py
 
-from umiusi_rl_control.imu_sanity import ImuSanity, angle_between
+from umiusi_common.imu_sanity import ImuSanity, angle_between
 
 MOVING_GYRO = 0.15   # これを超えたら「動かしている」とみなす [rad/s]
 
