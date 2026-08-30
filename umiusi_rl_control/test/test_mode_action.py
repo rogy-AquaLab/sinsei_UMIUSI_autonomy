@@ -14,9 +14,8 @@ from umiusi_rl_control.mode_action import MODE_DIM, ModeAction
 
 POSITIONS = ("lf", "lb", "rb", "rf")
 
-# 零空間ベクトル。 ユニット順 (lf, lb, rb, rf) で (+,-,+,-) — 水平・鉛直とも同じ形。
-# 幾何から出るもので、実装から持ってこない: 符号表の 3 列 (fz, tx, ty) と (fx, fy, tz) は
-# それぞれ Walsh ベクトルで、この 4 本目だけがどの列とも直交する = どの指令でも作れない。
+# 零空間ベクトル。ユニット順 (lf, lb, rb, rf) で (+,-,+,-)。
+# 幾何から導くこと — 実装から持ってくると符号表を壊す mutation を検出できない
 NULL_VEC = np.array([+1.0, -1.0, +1.0, -1.0])
 
 # 契約の写し (sim の export と同じ値)。テストが実装の meta 読み出しに依存しないよう直に書く。

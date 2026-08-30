@@ -1,58 +1,18 @@
-"""rl_attitude_node — drive the thrusters with a trained RL attitude(-velocity) policy.
+"""rl_attitude_node — 学習済み RL 方策でスラスタを駆動する。
 
-SB3/mujoco 非依存: 同梱バンドルの export/ (weights.pt + obs_norm.npz + meta.json) を
-素 torch で推論する (policy_infer.PolicyRunner)。ループ:
+/state/imu を購読 -> 観測を組み立てて素 torch で推論 (SB3/mujoco 非依存) ->
+/cmd/direct/thruster_controller/output_{lf,lb,rb,rf} へ publish。
 
-  * SUBSCRIBE  /state/imu (sensor_msgs/Imu)
-  * ポリシーの観測を組み立てる — layout [ori_err(3), gyro(3), v_cmd(3), prev_action(8),
-    max_duty(1)] の 18 次元 (attitude_velocity + duty 上限) / max_duty を除いた 17 次元
-    (attitude_velocity) / さらに v_cmd を除いた 14 次元 (attitude)。max_duty は必ず末尾。
-    サーボ角・推力は観測に入れない (実機の /state/thruster_state_all は指令のエコーで、
-    正帰還に入る — known_issues A-11)。prev_action は自分が出した action をそのまま使う
-    (sim 側 proprio_mode: action と同じ)。
-  * PUBLISH the four direct-override /cmd/direct/thruster_controller/output_{lf,lb,rb,rf}
-    (ThrusterOutput, runnable=true), action [servo x4, esc x4] -> {angle, duty_cycle}.
+観測レイアウト、action_mode、golden.npz と obs_fields の役割分担、深度モード、
+起動方法は README を参照。
 
-出力の契約は meta.json の action_mode で 2 通り。"direct" (既定) は方策が
-[servo x4, esc x4] をそのまま出す。"modes" は 6 次元のレンチモードのレートを出し、
-ノード側で積分 -> ミキサ -> 折返しを sim と同じ順で通して 8 次元に直す (mode_action.py)。
-観測の契約は変わらない (prev_action はミックス後の 8 次元)。プラントのレート制限
-(_command の servo/thrust slew) はどちらの方式でも掛ける — 詳細は mode_action.py 冒頭。
-
-FRAME 契約: ポリシーは REP-103 body-frame (x前/y左/z上) の観測を消費する
-(export/meta.json の obs_frame: rep103 を起動時に検証する)。IMU の quat/gyro は
-軸変換せずそのまま観測に入れる。前提は「IMU が REP-103 で publish していること」 —
-実験前のドライ確認 (issue #15 A-4) でずれていたら IMU ドライバ側 (AXIS_MAP) を直す。
-
-配備前検証: バンドルに golden.npz (sim で記録した観測→行動ペア) があれば、読み込み時に
-全ベクトルを再生して一致確認する (issue #15 A-5)。不一致ならポリシーを動かさない —
-コピーか正規化統計が壊れている。ただし golden は「このノードが観測をどう組み立てるか」を
-検証しない — 記録済みの観測ベクトルをそのままネットに流すだけなので、並びを取り違えても
-PASS してしまう。組み立ての検証は export/meta.json の obs_fields と OBS_FIELDS
-の突き合わせが受け持つ (無いバンドルでは警告のみ)。
-
-Command: holds UPRIGHT (target = identity)。前進は 既定 0 (新ポリシーは停止保持も学習
-分布内)。目標は umiusi_rl_control_msgs/AttitudeTarget を setpoint_topic に publish
-して REAL TIME に上書きできる (type_mask で姿勢/速度を選択、last wins)。
-いま適用されている目標値は ~/current_setpoint に latch で出す (診断用):
-ros2 topic echo --once /rl_attitude_node/current_setpoint。
-
-SAFETY: ~/estop (std_msgs/Bool, true) or ~/arm (std_srvs/SetBool, data:false) DISARMs
-immediately — the loop stops predicting and asserts a DETACH every tick (ThrusterOutput runnable
-esc/servo = false, zero output), so the control stack releases the thrusters. Re-arm with the
-~/arm service (data:true)。既定は disarmed で起動する (start_armed:=true で
-起動と同時に武装)。
-
-深度モード切替 (depth_supervisor:=true, 水圧センサ搭載時のみ): 水圧 (depth_topic,
-sensor_msgs/FluidPressure) から深度を作り、target_depth との誤差が閾値を超えたら
-巡航を一時停止して深度補正に入る — 降下はブレーキ→同梱 3-D ポリシー
-(models/av_cal5_3d_rep103) の純下バースト、浮上は弱正浮力トリム任せの受動浮上。
-状態機械と検証済みパラメータは depth_supervisor.py 冒頭を参照 (sim リハーサル:
-issue #15 のコメント)。深度モードは max_duty 0.3 以上を推奨 (既定 0.25 では降下が遅い。
-0.2 で降下できないのは上限ではなく零空間への配分が原因 — issue #19)。
-深度ゼロ点は起動後の最初の水圧サンプル列で取る (水面で起動する前提)。潜った状態で
-再ゼロしたいときは ~/zero_depth (std_srvs/Trigger)。診断: ~/depth (Float32, m,
-正=深い) と ~/depth_mode (String: horiz/brake/vert/ascend)。
+実装上の注意:
+  * サーボ角・推力を観測に入れない。/state/thruster_state_all は指令のエコーで
+    正帰還に入る (known_issues A-11)
+  * IMU の quat/gyro は軸変換せずそのまま入れる。ずれていたら IMU ドライバ側
+    (AXIS_MAP) を直す (known_issues A-13)
+  * 既定は disarmed。disarm 中は毎 tick DETACH を assert し続ける (1 回では
+    取りこぼす)
 """
 
 from __future__ import annotations
@@ -80,25 +40,8 @@ from umiusi_rl_control_msgs.msg import AttitudeTarget
 
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
-# 観測の次元は ポリシーのタスクによって変わる:
-#   attitude_velocity + duty 上限 = 18 … [ori_err 3, gyro 3, v_cmd 3, prev_action 8, max_duty 1]
-#   attitude_velocity (巡航)      = 17 … 上から max_duty を除いたもの
-#   attitude          (姿勢のみ)  = 14 … さらに v_cmd を除いたもの
-# 読み込んだポリシーの入力次元から判断して、観測の組み立てを合わせる。
-#
-# max_duty は必ず末尾 (prev_action の後ろ)。sim 側の warm start (初層のゼロパディングで
-# 17 次元の学習済み重みを引き継ぐ) がこの位置を前提にしており、今後も不変の契約。
-# 値は正規化なしの生値 (0.2〜0.4 を想定、obs_norm.npz 側で素通し)。実行中に
-# ros2 param set /rl_attitude_node max_duty で変えると観測にもそのまま反映される —
-# 「現場で上限を上げたら実際に速く動く」ようにするためで、これが 18 次元化の目的。
+# 観測の次元でタスクを判別する。並びと max_duty 末尾の契約は README「観測レイアウト」
 ACT_DIM = 8
-# 方策の出力は 2 種類ある。meta.json の action_mode で決まる:
-#   "direct" (既定) … そのまま [servo x4, esc x4] (ACT_DIM)
-#   "modes"          … 6 次元のレンチモード レート。ノード側で積分 -> ミキサ -> 折返しを
-#                      sim と同じ順で通して 8 次元に直す (mode_action.py)。零空間を
-#                      表現できない基底に張り替えて 8/25 の「鉛直パワーの 41% が零空間」を
-#                      構造的に潰したもの (Umiusi_sim#3、sim 実測 5.7%)。
-# どちらでも観測の契約 (prev_action 8 次元 = ミックス後) は変わらない。
 ACTION_MODE_DIRECT = "direct"
 ACTION_MODE_MODES = "modes"
 OBS_DIM_CAP = 18
@@ -107,15 +50,8 @@ OBS_DIM_NO_VEL = 14
 # 速度指令を観測に持つ次元 (attitude タスクだけが持たない)
 OBS_DIMS_WITH_VEL = (OBS_DIM_CAP, OBS_DIM)
 OBS_DIMS_SUPPORTED = (OBS_DIM_CAP, OBS_DIM, OBS_DIM_NO_VEL)
-# 次元ごとの観測フィールド (名前, 幅)。export/meta.json の obs_fields と突き合わせる。
-# golden 検証はこれを見ていない — golden は記録済みの観測ベクトルをそのままネットに
-# 流すだけなので、重み・正規化統計は検証できるが、このノードが観測をどう組み立てるかは
-# 検証されない。並びを取り違えても golden は PASS してしまう。そこを埋めるための表。
-# 18 次元ポリシーの学習時 duty 上限の分布 (sim の domain randomization は U(0.2, 0.4))。
-# 観測に入れる値だけこの範囲にクランプする — 実際の duty クリップはオペレータが設定した
-# max_duty のまま。範囲外の値をそのまま観測に入れると、warm start でゼロパディングされた
-# 新次元へ学習時に一度も見ていない値が入り、出力全体が予測不能になる (17 次元時代は
-# 単にクリップが緩むだけの単調な変化だった)。
+# 18 次元ポリシーの学習時 duty 上限の分布。観測に入れる値だけここへクランプする
+# (実際の duty クリップはオペレータの max_duty のまま)。理由は README
 MAX_DUTY_OBS_RANGE = (0.2, 0.4)
 OBS_FIELDS = {
     OBS_DIM_CAP: (("ori_err", 3), ("gyro", 3), ("v_cmd", 3), ("prev_action", ACT_DIM),
@@ -188,27 +124,15 @@ class RlAttitudeNode(Node):
         self.declare_parameter("servo_sign", [1.0, 1.0, 1.0, 1.0])
         self.declare_parameter("imu_max_gyro", 10.0)       # IMU サニティ: 角速度上限 [rad/s]
         self.declare_parameter("imu_max_step_deg", 30.0)   # IMU サニティ: 姿勢跳躍上限 [deg]
-        # 既定は「検出するが破棄しない」。実機では該当が 0.44% しかないうえ、フィルタ自身の
-        # 誤爆 (姿勢基準が飛ぶと復帰できない) のほうが被害が大きかった。閾値を決めるための
-        # データが貯まるまでは観測に徹する。true にすると従来どおり破棄する。
+        # 既定は検出のみで破棄しない。理由は imu_sanity.py 冒頭
         self.declare_parameter("imu_sanity_enforce", False)
         self.declare_parameter("publish", True)            # False = predict only, do not command
-        # 姿勢保持のうち yaw だけを切れる。実験中に機体を手で回すと、yaw の目標が
-        # 起動時のままなので戻そうとして回り続ける (実機で踏んだ)。水中では磁気の影響や
-        # ドリフトもあるので、roll/pitch だけ保ちたい場面が多い。
-        # 実行中に ros2 param set /rl_attitude_node hold_yaw false で切り替えられる。
+        # yaw の保持だけ切る。手で機体を回すと起動時の yaw へ戻ろうとして回り続けるため
         self.declare_parameter("hold_yaw", True)
-        # duty_cycle の絶対値上限。1.0 = 制限なし。既定は 0.25。
-        # 8/25 の水中 run の解析で 0.2 の根拠が崩れたため 0.25 に上げた: 実機の |duty| は p5〜p99 が
-        # すべて 0.2000 (96% 飽和) で比例制御になっておらず、さらに鉛直パワーの 41.2% が
-        # 零空間 (合力もモーメントも生まない対角モード) に流れていて 0.2 では降下できない。
-        # 0.25 でロール転覆余裕が 1.0 を超える (1.1x) ので、まずここまで。0.4 は配分 (零空間)
-        # を直してから — 上限は力の次元で効くので 0.2->0.4 は「倍」ではなく 4 倍 (F = |u|^2*30 N)。
+        # duty_cycle の絶対値上限。1.0 = 制限なし。力は上限の 2 乗で効く (F = |u|^2 * 30 N)
+        # ので 0.2 -> 0.4 は倍ではなく 4 倍。既定 0.25 の根拠は known_issues A-17
         self.declare_parameter("max_duty", 0.25)
-        # 指令のレート制限。sim と同じ値を既定にする (configs/umiusi.yaml の
-        # servo_slew_deg_per_s / thrust_slew_per_s)。sim はポリシーの指令をこれで
-        # 平滑化してから物理に入れており、実機側に無いと sim2real ギャップになる。
-        # 新ポリシーは servo slew 100–500 deg/s の DR で学習済み。0 以下で無効。
+        # 指令のレート制限。sim と揃える理由は thruster_limits.py 冒頭。0 以下で無効
         self.declare_parameter("servo_slew_deg_per_s", 250.0)
         self.declare_parameter("thrust_slew_per_s", 4.0)
         # 既定は disarmed。起動と同時にスラスタへ指令が出るのを避ける。
@@ -216,10 +140,8 @@ class RlAttitudeNode(Node):
         self.declare_parameter("start_armed", False)       # True = 起動と同時に武装する
         # Real-time setpoint (hold last; until a message arrives, use the launch defaults below).
         self.declare_parameter("setpoint_topic", "~/setpoint")   # umiusi_rl_control_msgs/AttitudeTarget
-        # デッドマン: 速度指令が vel_timeout 秒更新されなかったら 0 に戻す (0 以下で無効、既定 off)。
-        # 狭いプールでの巡航試験向け — teleop が落ちた/操作者が手を離した/set_attitude --hold を
-        # Ctrl-C した後に、機体が壁まで巡航し続けるのを防ぐ。--hold (10 Hz) を使っていれば
-        # 通常運転では発動しない。姿勢目標は保持したまま (落とすのは速度だけ)
+        # デッドマン: 速度指令が vel_timeout 秒来なければ 0 に戻す (姿勢目標は保持)。
+        # 0 以下で無効、既定 off。使いどころは README
         self.declare_parameter("vel_timeout", 0.0)
         # --- 深度モード切替 (水圧センサ搭載時のみ。冒頭 docstring と depth_supervisor.py 参照) ---
         self.declare_parameter("depth_supervisor", False)  # true で有効化。max_duty 0.4 が前提
@@ -304,9 +226,7 @@ class RlAttitudeNode(Node):
         sp_topic = self.get_parameter("setpoint_topic").value
         self._sub_sp = self.create_subscription(AttitudeTarget, sp_topic, self._on_setpoint, 1)
         self._pubs = {p: self.create_publisher(ThrusterOutput, CMD_PREFIX + p, 10) for p in POSITIONS}
-        # いま何を目標にして動いているかを外から確認できるようにする。setpoint (購読側) は
-        # 「送る」ためのもので、type_mask で一部だけ更新されることもあるため、
-        # 実際に適用されている値をこちらに出す
+        # setpoint は type_mask で一部だけ更新されうるので、実際に適用中の値を別に出す
         self._pub_current_sp = self.create_publisher(
             AttitudeTarget, "~/current_setpoint", CURRENT_SETPOINT_QOS)
         self._arm = ArmState(self, self._detach_all,
@@ -314,9 +234,8 @@ class RlAttitudeNode(Node):
         self._timer = self.create_timer(self._dt, self._tick)
         self.add_on_set_parameters_callback(self._on_set_params)
         self._publish_current_setpoint()
-        # ポリシーはここで読む (レビュー指摘): torch の import に ~1.5 s (SBC では数秒)
-        # かかり、tick 内で読むと武装後の最初の周期で e-stop の処理が止まる窓ができる。
-        # spin 前ならまだ何も指令していないので安全
+        # ポリシーは spin 前に読む。torch の import に数秒かかるので、tick 内で読むと
+        # 武装後の最初の周期で e-stop が止まる窓ができる
         self._ensure_model()
         self.get_logger().info(
             f"rl_attitude_node: default target=upright v_cmd=[{self._vel:.3f},0,0] m/s @ {self._hz:.0f} Hz "
@@ -363,9 +282,7 @@ class RlAttitudeNode(Node):
         now = self.get_clock().now().nanoseconds * 1e-9
         p = float(msg.fluid_pressure)
         if self._p_surface is None:
-            # ゼロ点: 起動後の最初の ~25 サンプルの中央値を水面圧とする (水面で起動する前提)。
-            # 潜った状態で起動し直したときは ~/zero_depth で取り直すか、target_depth を
-            # 相対値として運用する
+            # ゼロ点は最初の ~25 サンプルの中央値 (水面で起動する前提)。取り直しは ~/zero_depth
             self._p_samples.append(p)
             if len(self._p_samples) >= 25:
                 self._p_surface = float(np.median(self._p_samples))
@@ -386,9 +303,7 @@ class RlAttitudeNode(Node):
         return res
 
     def _on_imu(self, msg):
-        # 実機の BNO055 は化けサンプルを混ぜてくる。姿勢と角速度を直接ポリシーの観測に
-        # 入れるので、1 発のスパイクで指令が跳ねる。ただし 既定では検出するだけで弾かない
-        # (imu_sanity_enforce)。理由は imu_sanity.py 冒頭。
+        # BNO055 の化けサンプル対策。観測に直接入るので 1 発で指令が跳ねる (known_issues A-1)
         q, g = msg.orientation, msg.angular_velocity
         resyncs = self._imu_sanity.resyncs
         sample, reason = self._imu_sanity.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
@@ -475,9 +390,7 @@ class RlAttitudeNode(Node):
              Path(get_package_share_directory("umiusi_rl_control")) / "models" / DEFAULT_VERT_MODEL)
         runner = self._load_bundle(d)
         if runner.obs_dim not in OBS_DIMS_WITH_VEL:
-            # 水平ポリシーと vert ポリシーで次元が違っていてよい (17 と 18 の混在)。
-            # 観測はモデルごとに model.obs_dim で組むので、prev_action の位置もずれない。
-            # 速度指令を持たない attitude タスク (14) だけは降下バーストに使えない。
+            # 水平と vert で次元が違ってよい。ただし 14 次元は速度指令を持たないので降下に使えない
             raise ValueError(
                 f"vert モデルは速度指令を観測に持つタスク "
                 f"({OBS_DIM} か {OBS_DIM_CAP} 次元) が必要です ({d}: {runner.obs_dim})")
@@ -566,9 +479,7 @@ class RlAttitudeNode(Node):
                 f"{OBS_DIM_NO_VEL} (attitude) のみ対応します "
                 "(servo/thrust を観測に含む旧 25/22 次元ポリシーは廃止 — A-11 のエコー問題)")
 
-        # 観測レイアウトの突き合わせ。golden ではここは検証できない (記録済みの観測を
-        # そのまま流すだけなので、このノードの組み立て順が違っても PASS する)。sim が
-        # meta.json に obs_fields を書いていれば、名前と幅で厳密に照合する。
+        # 観測の組み立て順の検証。golden では PASS してしまう領域 (理由は README)
         self._check_obs_fields(runner, export)
 
         # 出力の契約 (action_mode)。ここも golden では検証できない — golden はネットの生出力を
@@ -672,11 +583,8 @@ class RlAttitudeNode(Node):
             parts.append(v_cmd)
         parts.append(self._prev_action)
         if obs_dim == OBS_DIM_CAP:
-            # duty 上限を 末尾 に足す (契約は冒頭の OBS_DIM_CAP のコメント)。
-            # self._max_duty は _on_set_params で実行中も更新されるので、
-            # ros2 param set した値がそのまま方策に見える。ただし学習分布の外は入れない
-            # (MAX_DUTY_OBS_RANGE)。クリップの実値は _command 側の self._max_duty のままで、
-            # 観測に入る値だけを丸める。
+            # duty 上限は末尾に足す。観測に入れる値だけ MAX_DUTY_OBS_RANGE へ丸める
+            # (クリップの実値は _command 側の self._max_duty のまま)
             parts.append(np.array([self._obs_max_duty()], dtype=float))
         obs = np.concatenate(parts)
         if obs.shape[0] != obs_dim:           # レイアウトの取り違えを黙って通さない
@@ -697,10 +605,8 @@ class RlAttitudeNode(Node):
             return model, v_cmd
         now = self.get_clock().now().nanoseconds * 1e-9
         if self._depth is None or self._depth_stamp is None or now - self._depth_stamp > 1.0:
-            # 深度が来ていない/古い: 補正はしない。鉛直成分だけ落として水平運転を続ける。
-            # 状態機械もリセットする (レビュー指摘) — 補正の途中で止まった場合、古い
-            # brake/vert タイマーを残すと復帰時に watchdog が誤発火するし、~/depth_mode が
-            # 実挙動 (水平フォールバック) と食い違ったまま表示され続ける
+            # 深度が古い: 鉛直成分だけ落として水平運転を続ける。状態機械もリセットする —
+            # 古い brake/vert タイマーを残すと復帰時に watchdog が誤発火する
             if self._sup.state != HORIZ:
                 self._sup.state = HORIZ
             if self._depth_stamp is not None and now - self._depth_stamp > 1.0:
@@ -750,10 +656,8 @@ class RlAttitudeNode(Node):
                     f"速度指令が {self._vel_timeout:.1f} s 更新されなかったので 0 に戻しました (デッドマン)")
         model, v_cmd = self._supervise()
         self._select_model(model)
-        # 鉛直指令インターロック (レビュー指摘): 鉛直速度が学習分布内のポリシー
-        # (export/meta.json の vertical_ok, 3-D vectoring 系) 以外には z 成分を渡さない。
-        # 水平専用ポリシーに鉛直指令が入ると姿勢が崩壊する (sim 実測 75〜122°)。
-        # set_attitude --vel 0 0 -0.2 を間違ったポリシーで打っても機体は水平ホールドを続ける
+        # 鉛直指令インターロック: meta.json の vertical_ok が無いポリシーには z 成分を渡さない。
+        # 水平専用に鉛直指令が入ると姿勢が崩壊する (depth_supervisor.py 冒頭)
         if v_cmd[2] != 0.0 and not model.meta.get("vertical_ok", False):
             self.get_logger().warning(
                 "鉛直速度指令を 0 にクランプしました — このポリシーは水平専用です "
@@ -764,9 +668,8 @@ class RlAttitudeNode(Node):
         if model.mode_action is None:
             action = np.clip(np.asarray(raw, dtype=float).reshape(ACT_DIM), -1.0, 1.0)
         else:
-            # レンチモード: 生出力は 6 次元のレート。積分 -> ミキサ -> 折返しで 8 次元にする。
-            # duty 上限は 方策が観測しているのと同じ値を渡す (モード 1.0 = その上限での
-            # 全権限、という約束なので、食い違うと意図した力と実際の力がずれる)。
+            # レンチモード: 6 次元のレートを 8 次元に直す。max_duty は方策が観測しているのと
+            # 同じ値を渡すこと (README「レンチモード action を使う側のルール」)
             action = model.mode_action.step(raw, self._obs_max_duty(), self._dt)
         if self._publish:
             self._command(action)
@@ -774,16 +677,9 @@ class RlAttitudeNode(Node):
         self._prev_action = action
 
     def _command(self, action):
-        # sim と同じレート制限を通してから出す。ポリシーは毎ステップ飽和した指令を出しうるが、
-        # sim ではここで平滑化されたものが物理に入り、観測にも返っていた。
-        #
-        # レンチモードの方策でも掛ける。 mode_action.py の「折返し後を平滑化するな」は
-        # *モード座標のスルーの代わりに*出力側へ置くな、という意味で、こちらは sim の
-        # プラントが持っているレート制限 (simulator.py の track/slew を毎サブステップ、
-        # 250 deg/s・4.0 esc/s) の再現。方策はその鈍った系を前提に学習している。
-        # ESC 側は実機に等価物が無い — control の max_duty_step_per_sec は /cmd/direct
-        # では素通りする (B-12) ので、ここで掛けなければ誰も掛けない。外すと A-11 と同型の
-        # sim2real ずれになる。
+        # sim のプラントが持つレート制限の再現。レンチモードの方策でも外さない。
+        # control の max_duty_step_per_sec は /cmd/direct を素通りする (known_issues B-12)
+        # ので、ここで掛けなければ誰も掛けない (known_issues A-11)
         servo_target = np.asarray(action[:4], dtype=float) * self._servo_range_deg
         duty_target = np.clip(np.asarray(action[4:], dtype=float), -self._max_duty, self._max_duty)
         self._servo_cmd = slew(self._servo_cmd, servo_target, self._servo_slew, self._dt)
@@ -792,19 +688,16 @@ class RlAttitudeNode(Node):
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=True, servo=True)
             out.duty_cycle = float(self._duty_cmd[k])
-            # degrees, matching the plugin。ch 別のサーボ符号は ここ (実機に出す境界) でだけ
-            # 当てる — _servo_cmd は sim 規約のまま保つ。範囲外は CAN フレームが送れずに落ちる
-            # ので、ハードの ±90 に収めてから出す。
+            # 単位は度 (known_issues B-13)。ch 別のサーボ符号はこの境界でだけ当てる
+            # (_servo_cmd は sim 規約のまま保つ)。範囲外は CAN 送信が失敗するので ±90 に収める
             out.angle = max(-90.0, min(90.0, float(self._servo_cmd[k]) * self._servo_sign[k]))
             self._pubs[p].publish(out)
 
     def _detach_all(self):
         """DISARM: zero output + runnable false on every thruster -> the control stack detaches
         esc/servo (hardware-level not-allowed). The e-stop / disarm path for the direct loop."""
-        # レンチモードの積分器は publish の有無によらず 落とす。残したまま再武装すると、
-        # 最初の tick でいきなり disarm 直前のモードベクトルぶんの力が出る (契約の 1 段目:
-        # 「m はステップ間で保持し、disarm でゼロに戻す」)。compute-only でも観測に返る
-        # prev_action がずれるので、下の早期 return より前に置くこと。
+        # 下の早期 return より前に置くこと。compute-only でも prev_action がずれる
+        # (初期化の中身は test_model_switch.py が固定)
         self._reset_mode_state()
         if not self._publish:      # compute-only node never commands /cmd, so nothing to detach
             return

@@ -26,10 +26,8 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image
 
-# rtspsrc -> depay -> HW decode -> BGR へ変換して appsink。drop=true/max-buffers=1 で
-# 遅いコンシューマに引きずられず、常に最新フレームだけを渡す。
-# デコードとスケール/色変換の両方をハードウェアに逃がす。実測で software の
-# videoconvert+videoscale が 102% CPU だったのに対し、v4l2convert は 19.9% で済む。
+# drop=true/max-buffers=1 で遅いコンシューマに引きずられず常に最新フレームを渡す。
+# スケール/色変換も HW へ逃がすこと — software の videoconvert は CPU を 5 倍食う
 _HW_PIPELINE = (
     "rtspsrc location={url} latency={latency} protocols=tcp ! "
     "rtph264depay ! h264parse ! v4l2h264dec ! v4l2convert ! "
@@ -55,11 +53,8 @@ class CameraBridge(Node):
         self.declare_parameter("width", 320)          # publish する幅 (autonomy.yaml の frame_w と揃える)
         self.declare_parameter("height", 240)         # publish する高さ (frame_h と揃える)
         self.declare_parameter("frame_id", "front_cam_optical")
-        # 既定は 0 = 制限なし。実測では制限をかけるとフレームを取りこぼし、
-        # かえって perception のスループットが落ちた:
-        #   制限なし  -> 供給 13.96 Hz / 認識 6.08 Hz
-        #   12 Hz 制限 -> 供給  5.05 Hz / 認識 5.03 Hz
-        # 供給を絞りたい場合はカメラ側の framerate (cameras.yaml) を下げるのが確実。
+        # 既定 0 = 制限なし。ここで絞るとフレームを取りこぼして逆に認識が落ちる。
+        # 供給を減らしたいならカメラ側の framerate (cameras.yaml) を下げる
         self.declare_parameter("max_rate_hz", 0.0)
         self.declare_parameter("latency_ms", 100)     # rtspsrc のジッタバッファ
         self.declare_parameter("hw_decode", True)     # False -> software デコード (avdec_h264)
@@ -67,15 +62,11 @@ class CameraBridge(Node):
         # --- ロギング: rosbag に残せる圧縮画像も出す (生 Image は 320x240 でも 3.5 MB/s ある) ---
         self.declare_parameter("publish_compressed", False)
         self.declare_parameter("jpeg_quality", 80)
-        # 圧縮画像だけのレート上限 [Hz]。0 = 画像と同じレート。JPEG エンコードは perception と
-        # 同じ CPU を食うので、記録目的なら間引く。映像そのものは RTSP 直録 (record_camera.sh)
-        # が全フレーム持っているので、bag 側は「映像と bag を突き合わせる基準」と
-        # 「そのとき何が見えていたか」が分かれば足りる (docs/logging.md)。
+        # 圧縮画像だけのレート上限 [Hz]。0 = 画像と同じレート。JPEG は perception と同じ
+        # CPU を食うので記録目的なら間引く (全フレームは RTSP 直録側。docs/logging.md)
         self.declare_parameter("compressed_max_rate_hz", 0.0)
         # --- 自動追従: consumer_topic の実レートに publish レートを合わせる ---
-        # 注意: これが減らせるのは publish/シリアライズ/DDS の分だけで、デコード負荷は
-        # カメラ側の fps で決まる (cameras.yaml の framerate)。デコードごと減らしたい場合は
-        # カメラの framerate を目標認識周期の 1.5-2 倍程度に設定すること。
+        # 減るのは publish/DDS の分だけ。デコード負荷はカメラ側の framerate で決まる
         self.declare_parameter("auto_rate", False)
         self.declare_parameter("consumer_topic", "/perception_node/detections")
         self.declare_parameter("auto_rate_margin", 1.2)   # 消費レートの何倍を供給するか
@@ -126,10 +117,8 @@ class CameraBridge(Node):
             self.get_logger().info(f"auto_rate: '{ctopic}' の実レートに追従します")
 
         self._open()
-        # タイマ周期をそのまま目標レートにすると、カメラのフレーム到着周期とビートして
-        # 取りこぼす (15 fps のカメラに 10 Hz タイマ -> 実測 6.8 Hz)。一方 1 ms まで速めると
-        # read() を叩きすぎて逆にスループットが落ちる (実測 4.3 Hz)。
-        # そこで「取得は目標の 2 倍で回し、publish は時間ゲートで間引く」形にする。
+        # 取得は目標の 2 倍で回し、publish は時間ゲートで間引く。タイマ周期を目標レートに
+        # 合わせるとカメラの到着周期とビートして取りこぼし、速すぎても read() で落ちる
         self._fixed_dt = (1.0 / rate) if rate > 0 else None
         period = 1.0 / (rate * 2.0) if rate > 0 else 0.001
         self.create_timer(period, self._tick)

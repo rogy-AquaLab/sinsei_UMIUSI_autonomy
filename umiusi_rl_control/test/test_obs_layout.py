@@ -13,16 +13,12 @@ rclpy = pytest.importorskip("rclpy")
 from umiusi_rl_control import rl_attitude_node as N  # noqa: E402
 
 
-# 姿勢は identity にしない。 目標と現在姿勢を両方 identity にすると ori_err が恒等的に
-# ゼロになり、観測の先頭 3 次元が一度も検証されない。レビューで mutation を注入して実証された:
-# ori_err を zeros に置換 / YAW_IDX を間違える / mju_sub_quat の符号を反転 のどれでも
-# 全テストが緑のまま通っていた。golden が見ない穴を埋めるのがこのテストの主旨なので、
-# 一番安全側に効く次元 (姿勢誤差の符号) が素通りするのでは意味が無い。
+# 姿勢を identity にしないこと。両方 identity だと ori_err が恒等的にゼロになり、
+# 観測の先頭 3 次元が一度も検証されない (mutation 3 種が全部素通りした)
 _CUR_QUAT = (0.9689, 0.1435, 0.0958, 0.1794)      # roll/pitch/yaw いずれも非ゼロ
 _TARGET_QUAT = np.array([0.9950, 0.0, 0.0, 0.0998])   # yaw だけずれた目標
-# 契約を直接書く。 N.YAW_IDX を参照すると、定数を間違える mutation でテストの期待値も
-# 一緒に動いてしまい検出できない (実際に mutation で確認した)。REP-103 body frame は
-# x-fwd / y-left / z-up なので、回転ベクトルの yaw 成分は index 2。
+# 契約を直接書くこと。N.YAW_IDX を参照すると、定数を壊す mutation でテストの期待値も
+# 一緒に動いて検出できない。body frame は x-fwd/y-left/z-up なので yaw は index 2
 _YAW_IDX = 2
 
 
@@ -30,9 +26,8 @@ class _Stub:
     """_build_obs が触る属性だけを持つスタブ (Node を立てずにレイアウトだけ見る)。"""
 
     _build_obs = N.RlAttitudeNode._build_obs
-    # 観測に入る duty 上限はミキサに渡す値と同じものでなければならない (レンチモードの
-    # 「モード 1.0 = その上限での全権限」という約束)。実装は 1 箇所に寄せてあるので、
-    # スタブもその 1 箇所を借りる。
+    # 観測に入る duty 上限はミキサに渡す値と同じでなければならない。実装は 1 箇所に
+    # 寄せてあるので、スタブもそこを借りる
     _obs_max_duty = N.RlAttitudeNode._obs_max_duty
 
     def __init__(self, max_duty=0.25, hold_yaw=True):
@@ -123,8 +118,7 @@ def test_未対応の次元は黙って通さない():
 
 
 # --- OBS_FIELDS (meta.json との突き合わせ表) が実際の組み立てと一致していること ---
-# golden 検証は記録済みの観測をそのままネットに流すだけなので、組み立て順の取り違えを
-# 検出できない。その穴を埋めるのが OBS_FIELDS なので、表そのものがずれていたら無意味。
+# golden が見ない穴を埋める表なので、表そのものがずれていたら無意味
 
 @pytest.mark.parametrize("obs_dim", N.OBS_DIMS_SUPPORTED)
 def test_OBS_FIELDSの幅の合計が次元と一致する(obs_dim):

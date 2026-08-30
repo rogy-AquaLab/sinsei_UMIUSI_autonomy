@@ -67,9 +67,8 @@ class ImuSource:
     # ---- 購読の生成 / 破棄 (lifecycle ノード用に分けてある) ----
     def create_subscription(self, depth: int = 10):
         from sensor_msgs.msg import Imu       # ノードの起動パスから外す
-        # トピック名はここで読む。 lifecycle ノードは on_configure で購読を作るので、
-        # 構築時に固定してしまうと detections_topic / target_topic (configure 時読み出し)
-        # と評価時点が食い違い、unconfigured 中の ros2 param set imu_topic だけ効かなくなる。
+        # トピック名は購読を作るときに読み直す。構築時に固定すると、unconfigured 中の
+        # ros2 param set imu_topic だけ効かなくなる (他のトピックは configure 時読み出し)
         self.topic = str(self._node.get_parameter("imu_topic").value)
         self._sub = self._node.create_subscription(Imu, self.topic, self._on_imu, depth)
         return self._sub
@@ -78,19 +77,15 @@ class ImuSource:
         if self._sub is not None:
             self._node.destroy_subscription(self._sub)
             self._sub = None
-        # cleanup はノードを初期状態に戻す、という lifecycle の意図に合わせて状態も捨てる。
-        # 残すと再 activate 後の最初の tick で cleanup 前の古いヨーレートが FSM に入り、
-        # 探索の _swept に積算される。
+        # 状態も捨てる。残すと再 activate 直後の tick に古いヨーレートが FSM へ入る
         self.yaw_rate = 0.0
         self._last_t = None
 
     # ---- 受信 ----
     def _on_imu(self, msg) -> None:
         self._last_t = self._now()
-        # 実機の BNO055 は物理的にありえないサンプルを混ぜてくる (ゼロクォータニオン、
-        # 角速度の int16 フルスケール張り付き、姿勢の跳躍)。ヨーレートをそのまま制御に
-        # 使うので、1 発のスパイクで制御が跳ねる。ただし 既定では検出するだけで弾かない
-        # (imu_sanity_enforce)。理由は imu_sanity.py 冒頭。
+        # BNO055 の化けサンプル対策。ヨーレートを直接使うので 1 発で制御が跳ねる
+        # (known_issues A-1)。既定は検出のみで破棄しない — 理由は imu_sanity.py 冒頭
         q, g = msg.orientation, msg.angular_velocity
         sample, reason = self._sanity.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
         if reason is not None:

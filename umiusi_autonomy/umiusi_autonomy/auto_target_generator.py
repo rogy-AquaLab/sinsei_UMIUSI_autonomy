@@ -37,9 +37,7 @@ class AutoTargetGenerator(LifecycleNode):
         self.declare_parameter("frame_h", 240)
         self.declare_parameter("frame_w", 320)
         self.declare_parameter("fovy_deg", 60.0)
-        # IMU 関連 (imu_topic / yaw_rate_axis / yaw_rate_sign / imu_max_gyro /
-        # imu_max_step_deg / imu_sanity_enforce / imu_timeout) は ImuSource が宣言する。
-        # navigator_node と同じ扱いを 1 箇所に寄せてある (issue #19-5)。
+        # IMU 関連のパラメータは ImuSource が宣言する (navigator_node と共通)
         self._imu = ImuSource(self)
 
         self._dt = 1.0 / float(self.get_parameter("control_hz").value)

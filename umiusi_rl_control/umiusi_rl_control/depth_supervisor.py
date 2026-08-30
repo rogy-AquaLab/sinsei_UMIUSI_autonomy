@@ -81,10 +81,9 @@ class DepthSupervisor:
                 self.state = HORIZ
             elif ((now - self._vert_since > 2.5 and rate < -0.03)
                   or (now - self._vert_since > 4.0 and rate < 0.02)):
-                # 注: sim 版 (mode_switch_eval.py) と符号が逆に見えるのは正しい —
-                # あちらは y-up (rate 正=上昇)、こちらは深度 (rate 正=潜行)
-                # watchdog: バースト不発 (降下せず浮上/停滞)。2.5 s の猶予は正常な
-                # 「浮上ドリフトを殺す」過渡をカバーする (健全なバーストも最初 ~2 s は浮く)
+                # watchdog: バースト不発。2.5 s の猶予は健全なバーストの立ち上がり
+                # (最初 ~2 s は浮く) を誤検出しないため。
+                # sim 版 (mode_switch_eval.py) と符号が逆なのは正しい — あちらは y-up
                 self.state = BRAKE
                 self._brake_until = now + self.t_brake
                 self.retries += 1

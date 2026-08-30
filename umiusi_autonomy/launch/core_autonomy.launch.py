@@ -73,9 +73,7 @@ def generate_launch_description():
             name="perception_node",
             output="screen",
             parameters=[params, {"model_path": model_path, "image_topic": image_topic}],
-            # 実機では torch のスレッドを 1 に固定する。他ノードと CPU を奪い合うと
-            # スレッドを増やすほど遅くなる (実測: 負荷下で 4 スレッド 142 ms/frame に対し
-            # 1 スレッド 113.9 ms/frame。エンドツーエンドでも 5.32 -> 6.34 Hz)。
+            # torch は 1 スレッドに固定する。他ノードと CPU を奪い合うので増やすほど遅くなる
             additional_env={"OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"},
         ),
         Node(
