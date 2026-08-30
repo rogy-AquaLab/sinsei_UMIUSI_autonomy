@@ -47,10 +47,7 @@ class ImuSource:
         node.declare_parameter("imu_max_step_deg", 30.0)
         # 既定は「検出するが破棄しない」。理由は imu_sanity.py 冒頭。
         node.declare_parameter("imu_sanity_enforce", False)
-        # IMU が途切れたことに気付けるようにする。ヨーレートは直近値を保持するので、
-        # 断が起きると「回っているつもり」のまま制御が進む。8/25 の水中 run では autonomy
-        # 区間だけで 15.44 s + 11.10 s の欠落があり (残り 800 s は 0.5 s 超の欠落ゼロ)、
-        # コンソールにも bag にも痕跡が無かった。
+        # 断の検出用。yaw_rate は直近値を保持するので、無いと「回っているつもり」で進む
         node.declare_parameter("imu_timeout", 1.0)
 
         self._axis = _AXIS.get(

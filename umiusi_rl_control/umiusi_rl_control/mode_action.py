@@ -1,15 +1,7 @@
 """レンチモード action (action_mode: "modes") を [servo x4, esc x4] に直す。
 
-av_mode13 以降の方策は 6 次元の「機体レンチのモードレート」を出す。
-積分 -> ミキサ -> 折返しの 3 段を、sim と同じ順で通す。
-
-呼び出し側の義務 (どのテストでも捕まらない):
-  * 係数も符号表も export/meta.json の action_contract から読む。ハードコードすると
-    sim 側の変更と静かにずれる
-  * max_duty は方策が観測しているのと同じ値を渡す (モード 1.0 = その上限での全権限)
-  * 平滑化を折返し後の servo/esc 座標に置き換えない — 部分空間の外を通り零空間が増える
-
-3 段の変換は test_mode_action.py、disarm での初期化は test_model_switch.py が固定している。
+6 次元のモードレートを積分 -> ミキサ -> 折返しの 3 段で 8 次元に直す。
+呼び出す側のルールは README「レンチモード action を使う側のルール」。
 """
 
 from __future__ import annotations

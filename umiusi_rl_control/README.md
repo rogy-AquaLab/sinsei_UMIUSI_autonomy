@@ -146,5 +146,13 @@ power-off / Standby is the other, stack-wide stop.)
   (issue #15 A-4); if it is off, fix the IMU driver (AXIS_MAP), not this node.
 - servo output `ThrusterOutput.angle` is published in DEGREES (= action × `servo_range_deg`); msg documents rad.
 
+## レンチモード action (`action_mode: "modes"`) を使う側のルール
+`mode_action.ModeAction` を呼ぶノードが守ること。どれも各リポのテストでは捕まらない。
+- 係数も符号表も `export/meta.json` の `action_contract` から読む。ハードコードすると sim 側の
+  変更と静かにずれる。
+- `max_duty` は方策が観測しているのと同じ値を渡す（モード 1.0 = その上限での全権限）。
+- 平滑化を折返し後の servo/esc 座標に置き換えない。部分空間の外を通り零空間が増える
+  （プラントのレート制限は別物で、そちらは外さない — known_issues A-11）。
+
 ## License
 MIT.
