@@ -146,7 +146,8 @@ power-off / Standby is the other, stack-wide stop.)
   (issue #15 A-4); if it is off, fix the IMU driver (AXIS_MAP), not this node.
 - servo output `ThrusterOutput.angle` is published in DEGREES (= action × `servo_range_deg`); msg documents rad.
 
-## レンチモード action (`action_mode: "modes"`) を使う側のルール
+## レンチモード action を使う側のルール
+`action_mode: "modes"` のバンドルを載せたときだけ効く。
 `mode_action.ModeAction` を呼ぶノードが守ること。どれも各リポのテストでは捕まらない。
 - 係数も符号表も `export/meta.json` の `action_contract` から読む。ハードコードすると sim 側の
   変更と静かにずれる。
