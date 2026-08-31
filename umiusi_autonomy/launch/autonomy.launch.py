@@ -5,9 +5,8 @@
 This is the standalone (no-core) path: navigator_node drives /cmd/direct itself. To ride on
 core's power/mode pipeline instead, use core_autonomy.launch.py.
 
-実機カメラ (gst_camera_node) は RTSP に流すだけで ROS トピックを出さないので、camera_bridge_node
-が要る。以前ここにブリッジが無く、実機では画像が 1 枚も来ずに perception が沈黙し、FSM が
-SEARCH から出られなかった (8/25 の水中 run、/perception_node/detections が 15.6 分間ゼロ)。
+実機カメラ (gst_camera_node) は RTSP に流すだけなので camera_bridge_node が要る。
+無いと perception が沈黙し FSM が SEARCH から出られない (known_issues A-18)。
 sim やオフラインの image publisher を使うときは use_camera_bridge:=false。
 
 Nodes load their parameters from config/autonomy.yaml; the common overrides are exposed as launch

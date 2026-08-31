@@ -40,8 +40,7 @@ class PerceptionNode(Node):
         self.declare_parameter("fovy_deg", 60.0)
         self.declare_parameter("max_rate_hz", 10.0)
         self.declare_parameter("sanitise_near", True)
-        # 断の検出用。画像ゼロでも無言で回り続けるので、8/25 の run では 15.6 分の
-        # 検出ゼロに現場で気付けなかった。0 以下で無効
+        # 断の検出用。画像ゼロでも無言で回り続ける (known_issues A-18)。0 以下で無効
         self.declare_parameter("image_timeout", 5.0)
 
         self._model_path = str(self.get_parameter("model_path").value).strip()

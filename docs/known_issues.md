@@ -242,6 +242,20 @@ thrust_slew_per_s: 4.0        # ESC のレート制限
 つまり **`vel_cmd 0.4` は cap を 0.4 にしても物理的に出ない**。プールで「指令したのに遅い」と
 判断する前にこの表を見ること (較正は calibration plan 3 のベンチ推力測定が効く)。
 
+### A-18. 【解決済み】画像・IMU の断が無言で進む — 現場で気付けなかった
+
+8/25 の水中 run で 2 件。どちらも**エラーを出さずに動き続ける**のが問題で、bag を持ち帰る
+まで分からなかった。
+
+| 断 | 実測 | 何が起きたか |
+|---|---|---|
+| 画像 | `/perception_node/detections` が **15.6 分間ゼロ** | 実機カメラ (`gst_camera_node`) は RTSP に流すだけで ROS トピックを出さない。`camera_bridge_node` が無く perception が沈黙し、FSM が SEARCH から出られなかった |
+| IMU | autonomy 区間だけで **15.44 s + 11.10 s の欠落** (残り 800 s は 0.5 s 超の欠落ゼロ) | `yaw_rate` は直近値を保持するので「回っているつもり」のまま探索が進む |
+
+**修正**: `image_timeout` (既定 5.0 s) と `imu_timeout` (既定 1.0 s) で警告を出す。どちらも
+検出と警告だけで制御は止めない — 止めると探索が進まなくなり、打ち切りは FSM の責務のため。
+`autonomy.launch.py` は `camera_bridge_node` を既定で起動する (`use_camera_bridge:=false` で無効)。
+
 ### A-13. 【解決済み】IMU (BNO055) の frame は REP-103 で確定
 
 実機で 1 軸ずつ動かして確認した (2026-08-25、#18 の実験 2)。**3 軸とも REP-103**
@@ -722,7 +736,11 @@ pi  -  memlock unlimited
 
 > **上流に修正あり (未マージ)**: `sinsei_UMIUSI_control` 側で対応中 (issue #19-5)。
 > アクチュエータの歯止めを `ThrusterLimits` に切り出し、**指令の出所によらず必ず通す**ように
-> した (duty 上限 / スルーレート / `servo_sign` / サーボ角 ±90 クランプ)。
+> した (duty 上限 / `servo_sign` / サーボ角 ±90 クランプ)。
+> **スルーレート制限は意図的に含まれない。** `thruster_limits.hpp` が理由を明記している —
+> ステートレスな範囲強制だけを置く方針で、状態を持つ制限を素通し経路に挟むと (a) 生指令を
+> ラッチしないと二重に掛かる (b) 実効レートが publisher のレートに依存する (c) 較正ツールが
+> 生指令を出せない。持ち主は指令を出す側 (autonomy の `thruster_limits.py`) と宣言されている。
 > `is_forward` と `duty_per_thrust` は「推力[N] → duty の換算」なので Logic 側に残っている
 > — 直接指令はすでに duty で届くため、掛け直すと二重換算になる (A-12 で符号補正不要と確定)。
 > **マージされて実機へ入るまで、下記の実態は変わらない。** 入ったら autonomy 側の暫定シム
@@ -762,10 +780,13 @@ max_duty 0.4 プロトコルは `thruster_cmd.py` の自主チェックだけで
 当てる方式で吸収している。ESC 側の向き補正は不要と確定した (A-12: 左舷=前向き / 右舷=後向きの
 2-2 分割で、ソフトの前提と一致)。
 
-**上流の修正が入ると変わる点**: `max_duty_step_per_sec` が直接指令にも掛かるようになるため、
-実機の値を sim の `thrust_slew_per_s` と揃える必要がある (`controllers.yaml` で 1.0 → 4.0)。
-方策は平滑化された指令を前提に学習しているので、ここがずれるとそのまま sim2real ギャップになる
-(A-11 と同じ話)。autonomy 側の `thruster_limits.slew` はそのとき撤去できる。
+**上流の修正が入っても変わらない点**: `max_duty_step_per_sec` は `/cmd/direct` に掛からないまま
+になる (上の設計判断)。したがって **autonomy 側の `thruster_limits.slew` は撤去しない** —
+これが唯一のレート制限であり、外すと A-11 と同型の sim2real ギャップになる。
+`controllers.yaml` の値を sim に揃える作業も不要。
+
+**撤去するのは `servo_sign` だけ** (両側で掛かると符号が二度反転する)。`max_duty` と ±90
+クランプはべき等なので重なったままでよい。
 
 ### B-13. 【中】`ThrusterOutput.angle` の単位コメントが実装と逆
 
