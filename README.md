@@ -146,12 +146,6 @@ unconfigured のまま）。
 > デバイス番号は USB の挿し順で変わります。`v4l2-ctl --device=/dev/video4 --list-formats` で
 > H264 が出ることを確認してください。
 
-## コントリビュート
-
-コメント / docstring の基準は [docs/comment_policy.md](docs/comment_policy.md)。
-既知の落とし穴と実測は [docs/known_issues.md](docs/known_issues.md) が正で、
-コードからは ID (`known_issues A-11` など) で参照する。
-
 ## launch ファイルの使い分け
 
 ワークスペース全体で launch が 6 本あり、**どれを組み合わせるかで挙動が変わる**。
