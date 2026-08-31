@@ -1,22 +1,22 @@
 """ImuSource — IMU の購読・軸解釈・サニティ・断検出を 1 箇所にまとめる。
 
-``navigator_node`` と ``auto_target_generator`` は同じ IMU の扱いを別々に実装していた
-(``_AXIS`` / ``yaw_rate_axis`` / ``yaw_rate_sign`` / ``ImuSanity`` / 断検出)。**同じものが
-2 箇所にあると片方だけ直る** — 実際 ``yaw_rate_axis`` の不正値フォールバックは
-``navigator_node`` だけ z に直され、``auto_target_generator`` は y のまま残っていた
+navigator_node と auto_target_generator は同じ IMU の扱いを別々に実装していた
+(_AXIS / yaw_rate_axis / yaw_rate_sign / ImuSanity / 断検出)。同じものが
+2 箇所にあると片方だけ直る — 実際 yaw_rate_axis の不正値フォールバックは
+navigator_node だけ z に直され、auto_target_generator は y のまま残っていた
 (issue #19-5)。ここに寄せて、両ノードは「ヨーレートを読む」だけにする。
 
-センサ解釈と運用はアクチュエータ層ではないので control には出せない。**FSM 側の「ヨーレートを
-読む」用途を autonomy にまとめたのがこのクラス**で、化けサンプルの判定そのものは
-``umiusi_common.imu_sanity`` (層をまたぐ共有部品) が持つ。``rl_attitude_node`` も同じ
-``ImuSanity`` を使うが、あちらは姿勢クォータニオンごと必要で用途が違うので、この
-``ImuSource`` は共有しない (以前は共有物が制御層の中にあり依存が逆向きだった — #19-5 で解消)。
+センサ解釈と運用はアクチュエータ層ではないので control には出せない。FSM 側の「ヨーレートを
+読む」用途を autonomy にまとめたのがこのクラスで、化けサンプルの判定そのものは
+umiusi_common.imu_sanity (層をまたぐ共有部品) が持つ。rl_attitude_node も同じ
+ImuSanity を使うが、あちらは姿勢クォータニオンごと必要で用途が違うので、この
+ImuSource は共有しない (以前は共有物が制御層の中にあり依存が逆向きだった — #19-5 で解消)。
 
 Parameters (使う側のノードに宣言される)
 ---------------------------------------
 imu_topic          : 購読するトピック (default /state/imu)。
 yaw_rate_axis      : ヨーレートを載せている IMU 軸 (default "z", REP-103)。
-                     **不正な軸名は z にフォールバックする** — 1 文字の typo で無言の
+                     不正な軸名は z にフォールバックする — 1 文字の typo で無言の
                      誤軸になるのを避けるため。
 yaw_rate_sign      : 上記の符号 (default 1.0)。
 imu_max_gyro       : サニティ: 角速度の閾値 [rad/s] (default 10.0, 0 以下で無効)。
@@ -35,7 +35,7 @@ _DEFAULT_AXIS = _AXIS["z"]        # REP-103 (x-fwd / y-left / z-up) のヨー軸
 
 class ImuSource:
     """1 ノードぶんの IMU 購読。パラメータ宣言と購読の生成を分けてあるので、
-    lifecycle ノード (``on_configure`` で購読を作る) からも使える。"""
+    lifecycle ノード (on_configure で購読を作る) からも使える。"""
 
     def __init__(self, node, default_topic: str = "/state/imu") -> None:
         self._node = node
@@ -47,10 +47,7 @@ class ImuSource:
         node.declare_parameter("imu_max_step_deg", 30.0)
         # 既定は「検出するが破棄しない」。理由は imu_sanity.py 冒頭。
         node.declare_parameter("imu_sanity_enforce", False)
-        # IMU が途切れたことに気付けるようにする。**ヨーレートは直近値を保持する**ので、
-        # 断が起きると「回っているつもり」のまま制御が進む。8/25 の水中 run では autonomy
-        # 区間だけで 15.44 s + 11.10 s の欠落があり (残り 800 s は 0.5 s 超の欠落ゼロ)、
-        # コンソールにも bag にも痕跡が無かった。
+        # 断の検出用。yaw_rate は直近値を保持するので、無いと「回っているつもり」で進む
         node.declare_parameter("imu_timeout", 1.0)
 
         self._axis = _AXIS.get(
@@ -70,9 +67,8 @@ class ImuSource:
     # ---- 購読の生成 / 破棄 (lifecycle ノード用に分けてある) ----
     def create_subscription(self, depth: int = 10):
         from sensor_msgs.msg import Imu       # ノードの起動パスから外す
-        # **トピック名はここで読む。** lifecycle ノードは `on_configure` で購読を作るので、
-        # 構築時に固定してしまうと `detections_topic` / `target_topic` (configure 時読み出し)
-        # と評価時点が食い違い、unconfigured 中の `ros2 param set imu_topic` だけ効かなくなる。
+        # トピック名は購読を作るときに読み直す。構築時に固定すると、unconfigured 中の
+        # ros2 param set imu_topic だけ効かなくなる (他のトピックは configure 時読み出し)
         self.topic = str(self._node.get_parameter("imu_topic").value)
         self._sub = self._node.create_subscription(Imu, self.topic, self._on_imu, depth)
         return self._sub
@@ -81,19 +77,15 @@ class ImuSource:
         if self._sub is not None:
             self._node.destroy_subscription(self._sub)
             self._sub = None
-        # cleanup はノードを初期状態に戻す、という lifecycle の意図に合わせて状態も捨てる。
-        # 残すと再 activate 後の最初の tick で **cleanup 前の古いヨーレート**が FSM に入り、
-        # 探索の `_swept` に積算される。
+        # 状態も捨てる。残すと再 activate 直後の tick に古いヨーレートが FSM へ入る
         self.yaw_rate = 0.0
         self._last_t = None
 
     # ---- 受信 ----
     def _on_imu(self, msg) -> None:
         self._last_t = self._now()
-        # 実機の BNO055 は物理的にありえないサンプルを混ぜてくる (ゼロクォータニオン、
-        # 角速度の int16 フルスケール張り付き、姿勢の跳躍)。ヨーレートをそのまま制御に
-        # 使うので、1 発のスパイクで制御が跳ねる。ただし **既定では検出するだけで弾かない**
-        # (`imu_sanity_enforce`)。理由は imu_sanity.py 冒頭。
+        # BNO055 の化けサンプル対策。ヨーレートを直接使うので 1 発で制御が跳ねる
+        # (known_issues A-1)。既定は検出のみで破棄しない — 理由は imu_sanity.py 冒頭
         q, g = msg.orientation, msg.angular_velocity
         sample, reason = self._sanity.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
         if reason is not None:
@@ -111,9 +103,9 @@ class ImuSource:
     def stale_for(self) -> float:
         """IMU が何秒途切れているか。0.0 = 生きている / -1.0 = まだ 1 つも来ていない。
 
-        検出と警告だけを行う — **ヨーレートは直近値のまま**にする。ゼロにすると FSM の
-        探索 (``_swept += |yaw_rate|·dt``) が進まなくなり、その場旋回から抜けられない。
-        探索の打ち切り自体は FSM (``umiusi_perception``) の責務。
+        検出と警告だけを行う — ヨーレートは直近値のままにする。ゼロにすると FSM の
+        探索 (_swept += |yaw_rate|·dt) が進まなくなり、その場旋回から抜けられない。
+        探索の打ち切り自体は FSM (umiusi_perception) の責務。
         """
         if self._timeout <= 0.0:
             return 0.0
@@ -123,7 +115,7 @@ class ImuSource:
         return gap if gap > self._timeout else 0.0
 
     def warn_if_stale(self, throttle_sec: float = 2.0) -> bool:
-        """断なら警告を出して True を返す。制御は止めない (上記 ``stale_for`` の理由)。"""
+        """断なら警告を出して True を返す。制御は止めない (上記 stale_for の理由)。"""
         stale = self.stale_for()
         if stale == 0.0:
             return False

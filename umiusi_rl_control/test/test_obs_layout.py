@@ -1,7 +1,7 @@
 """観測レイアウトの単体テスト。
 
-観測の並びは **sim との契約** で、ずれると方策が黙って別の入力を読む (golden 検証で
-起動時には落ちるが、ここで早く気付けるようにする)。特に `max_duty` は末尾固定 —
+観測の並びは sim との契約 で、ずれると方策が黙って別の入力を読む (golden 検証で
+起動時には落ちるが、ここで早く気付けるようにする)。特に max_duty は末尾固定 —
 sim 側の warm start (初層のゼロパディングで 17 次元の重みを引き継ぐ) がこの位置を
 前提にしている。
 """
@@ -13,26 +13,21 @@ rclpy = pytest.importorskip("rclpy")
 from umiusi_rl_control import rl_attitude_node as N  # noqa: E402
 
 
-# **姿勢は identity にしない。** 目標と現在姿勢を両方 identity にすると `ori_err` が恒等的に
-# ゼロになり、観測の先頭 3 次元が一度も検証されない。レビューで mutation を注入して実証された:
-# `ori_err` を zeros に置換 / `YAW_IDX` を間違える / `mju_sub_quat` の符号を反転 のどれでも
-# 全テストが緑のまま通っていた。**golden が見ない穴を埋めるのがこのテストの主旨**なので、
-# 一番安全側に効く次元 (姿勢誤差の符号) が素通りするのでは意味が無い。
+# 姿勢を identity にしないこと。両方 identity だと ori_err が恒等的にゼロになり、
+# 観測の先頭 3 次元が一度も検証されない (mutation 3 種が全部素通りした)
 _CUR_QUAT = (0.9689, 0.1435, 0.0958, 0.1794)      # roll/pitch/yaw いずれも非ゼロ
 _TARGET_QUAT = np.array([0.9950, 0.0, 0.0, 0.0998])   # yaw だけずれた目標
-# **契約を直接書く。** `N.YAW_IDX` を参照すると、定数を間違える mutation でテストの期待値も
-# 一緒に動いてしまい検出できない (実際に mutation で確認した)。REP-103 body frame は
-# x-fwd / y-left / z-up なので、回転ベクトルの yaw 成分は index 2。
+# 契約を直接書くこと。N.YAW_IDX を参照すると、定数を壊す mutation でテストの期待値も
+# 一緒に動いて検出できない。body frame は x-fwd/y-left/z-up なので yaw は index 2
 _YAW_IDX = 2
 
 
 class _Stub:
-    """`_build_obs` が触る属性だけを持つスタブ (Node を立てずにレイアウトだけ見る)。"""
+    """_build_obs が触る属性だけを持つスタブ (Node を立てずにレイアウトだけ見る)。"""
 
     _build_obs = N.RlAttitudeNode._build_obs
-    # 観測に入る duty 上限は**ミキサに渡す値と同じもの**でなければならない (レンチモードの
-    # 「モード 1.0 = その上限での全権限」という約束)。実装は 1 箇所に寄せてあるので、
-    # スタブもその 1 箇所を借りる。
+    # 観測に入る duty 上限はミキサに渡す値と同じでなければならない。実装は 1 箇所に
+    # 寄せてあるので、スタブもそこを借りる
     _obs_max_duty = N.RlAttitudeNode._obs_max_duty
 
     def __init__(self, max_duty=0.25, hold_yaw=True):
@@ -44,7 +39,7 @@ class _Stub:
 
 
 def _expected_ori_err(hold_yaw=True):
-    """実装と独立に期待値を作る (`mju_sub_quat` は MuJoCo と bit 一致が検証済みの実装)。"""
+    """実装と独立に期待値を作る (mju_sub_quat は MuJoCo と bit 一致が検証済みの実装)。"""
     err = N.mju_sub_quat(_TARGET_QUAT, np.array(_CUR_QUAT, dtype=float))
     if not hold_yaw:
         err[_YAW_IDX] = 0.0
@@ -70,7 +65,7 @@ def test_ori_errが先頭3次元に入る():
 
 def test_YAW_IDXがREP103のz軸を指している():
     """回転ベクトルの yaw 成分は REP-103 (x-fwd / y-left / z-up) では index 2。
-    ここを間違えると `hold_yaw=false` が別の軸を潰す。"""
+    ここを間違えると hold_yaw=false が別の軸を潰す。"""
     assert N.YAW_IDX == _YAW_IDX
 
 
@@ -93,7 +88,7 @@ def test_max_dutyは末尾に入る():
 
 @pytest.mark.parametrize(("setting", "want"), [(0.1, 0.2), (0.25, 0.25), (0.5, 0.4)])
 def test_観測のmax_dutyは学習分布にクランプされる(setting, want):
-    """クリップの実値はオペレータ設定のまま、**観測に入る値だけ**を学習分布へ丸める。
+    """クリップの実値はオペレータ設定のまま、観測に入る値だけを学習分布へ丸める。
     範囲外をそのまま入れると、warm start でゼロ padding された新次元へ学習時に一度も
     見ていない値が入る。"""
     stub = _Stub(max_duty=setting)
@@ -123,8 +118,7 @@ def test_未対応の次元は黙って通さない():
 
 
 # --- OBS_FIELDS (meta.json との突き合わせ表) が実際の組み立てと一致していること ---
-# golden 検証は記録済みの観測をそのままネットに流すだけなので、**組み立て順の取り違えを
-# 検出できない**。その穴を埋めるのが OBS_FIELDS なので、表そのものがずれていたら無意味。
+# golden が見ない穴を埋める表なので、表そのものがずれていたら無意味
 
 @pytest.mark.parametrize("obs_dim", N.OBS_DIMS_SUPPORTED)
 def test_OBS_FIELDSの幅の合計が次元と一致する(obs_dim):
@@ -155,7 +149,7 @@ class _Runner:
 
 
 class _Checker:
-    """`_check_obs_fields` はロガーしか使わないので、それだけ差し替える。"""
+    """_check_obs_fields はロガーしか使わないので、それだけ差し替える。"""
 
     _check_obs_fields = N.RlAttitudeNode._check_obs_fields
 

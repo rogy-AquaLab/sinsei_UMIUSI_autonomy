@@ -1,10 +1,10 @@
-"""レンチモード action (`action_mode: "modes"`) の単体テスト。
+"""レンチモード action (action_mode: "modes") の単体テスト。
 
-**この方策の存在理由は「零空間を表現できないこと」**なので、そこを直接見る。8/25 の実機 run は
+この方策の存在理由は「零空間を表現できないこと」なので、そこを直接見る。8/25 の実機 run は
 鉛直パワーの 41% が零空間 (どのユニットも打ち消し合って推進に寄与しないパターン) に流れており、
-報酬整形では ~22% までしか落ちなかった。モード基底はそのパターンを**構造的に持たない**。
+報酬整形では ~22% までしか落ちなかった。モード基底はそのパターンを構造的に持たない。
 
-期待値は **契約 (meta.json の action_contract) の式から独立に**組み立てる。実装の定数を
+期待値は 契約 (meta.json の action_contract) の式から独立に組み立てる。実装の定数を
 参照すると、定数を間違える mutation でテストの期待値も一緒に動いて検出できない。
 """
 import numpy as np
@@ -14,9 +14,8 @@ from umiusi_rl_control.mode_action import MODE_DIM, ModeAction
 
 POSITIONS = ("lf", "lb", "rb", "rf")
 
-# **零空間ベクトル。** ユニット順 (lf, lb, rb, rf) で (+,-,+,-) — 水平・鉛直とも同じ形。
-# 幾何から出るもので、実装から持ってこない: 符号表の 3 列 (fz, tx, ty) と (fx, fy, tz) は
-# それぞれ Walsh ベクトルで、この 4 本目だけがどの列とも直交する = どの指令でも作れない。
+# 零空間ベクトル。ユニット順 (lf, lb, rb, rf) で (+,-,+,-)。
+# 幾何から導くこと — 実装から持ってくると符号表を壊す mutation を検出できない
 NULL_VEC = np.array([+1.0, -1.0, +1.0, -1.0])
 
 # 契約の写し (sim の export と同じ値)。テストが実装の meta 読み出しに依存しないよう直に書く。
@@ -45,7 +44,7 @@ def _forces(action, max_duty=MAX_DUTY):
     """出力 [servo x4, esc x4] からユニット毎の (h, v) 力 [N] を復元する。
 
     折返しの逆: esc の符号が向きを、|esc| が大きさを持つ。
-        |f| = thrust_per_cmd * |esc| ** thrust_curve_exp,  向き = servo 角 (esc 符号込み)
+        |f| = thrust_per_cmd * |esc|  thrust_curve_exp,  向き = servo 角 (esc 符号込み)
     """
     servo, esc = np.asarray(action[:4]), np.asarray(action[4:])
     phi = servo * np.radians(90.0)
@@ -54,7 +53,7 @@ def _forces(action, max_duty=MAX_DUTY):
 
 
 def _drive(ma, raw, steps, max_duty=MAX_DUTY):
-    """同じレートを `steps` 回入れて、最後の action を返す。"""
+    """同じレートを steps 回入れて、最後の action を返す。"""
     out = None
     for _ in range(steps):
         out = ma.step(raw, max_duty, DT)

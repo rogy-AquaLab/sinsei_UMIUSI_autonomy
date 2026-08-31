@@ -1,19 +1,19 @@
 """auto_target_generator — AUTO-mode target source for sinsei_umiusi_core, driven by the FSM.
 
-A drop-in **lifecycle** replacement for core's placeholder ``auto_target_generator``: same node name
+A drop-in lifecycle replacement for core's placeholder auto_target_generator: same node name
 and lifecycle contract, so core's behaviour tree activates/deactivates it via
-``/auto_target_generator/change_state`` when entering/leaving AUTO. Instead of empty Targets it runs
-the shared balloon-popping FSM (``umiusi_perception.autonomy.BalloonBehavior`` — the SAME object as
-``tools/autonomy_run`` and ``navigator_node``) and publishes its ``{surge, heave, yaw}`` command as a
-``sinsei_umiusi_msgs/Target`` on ``/cmd/target``; ``sinsei_umiusi_control`` does the allocation.
+/auto_target_generator/change_state when entering/leaving AUTO. Instead of empty Targets it runs
+the shared balloon-popping FSM (umiusi_perception.autonomy.BalloonBehavior — the SAME object as
+tools/autonomy_run and navigator_node) and publishes its {surge, heave, yaw} command as a
+sinsei_umiusi_msgs/Target on /cmd/target; sinsei_umiusi_control does the allocation.
 
 This is how autonomy "rides on core": power / mode / thruster-enable stay in core's hands (a Target
 alone does not move thrusters — core's AUTO node also publishes the runnable flag, and power must be
 on); this node only produces the setpoint while its lifecycle is active. Perception + FSM are the
-ROS-free ``umiusi_perception`` code, so behaviour is identical to the in-sim run.
+ROS-free umiusi_perception code, so behaviour is identical to the in-sim run.
 
 Target mapping mirrors the direct feed-forward allocation exactly (velocity.x = -surge,
-velocity.z = heave, orientation.z = yaw). See ``navigator_node`` for the standalone (no-core) drive
+velocity.z = heave, orientation.z = yaw). See navigator_node for the standalone (no-core) drive
 path and the deploy-calibration notes.
 """
 
@@ -37,9 +37,7 @@ class AutoTargetGenerator(LifecycleNode):
         self.declare_parameter("frame_h", 240)
         self.declare_parameter("frame_w", 320)
         self.declare_parameter("fovy_deg", 60.0)
-        # IMU 関連 (imu_topic / yaw_rate_axis / yaw_rate_sign / imu_max_gyro /
-        # imu_max_step_deg / imu_sanity_enforce / imu_timeout) は ImuSource が宣言する。
-        # navigator_node と同じ扱いを 1 箇所に寄せてある (issue #19-5)。
+        # IMU 関連のパラメータは ImuSource が宣言する (navigator_node と共通)
         self._imu = ImuSource(self)
 
         self._dt = 1.0 / float(self.get_parameter("control_hz").value)

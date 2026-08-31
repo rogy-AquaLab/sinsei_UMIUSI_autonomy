@@ -17,6 +17,6 @@ setup(
     description="UMIUSI の層をまたいで共有する部品 (arm / imu_sanity)。ノードは持たない",
     license="MIT",
     tests_require=["pytest"],
-    # **entry_points は持たない。** ここはライブラリだけを置く場所で、ノードを足したくなったら
+    # entry_points は持たない。 ここはライブラリだけを置く場所で、ノードを足したくなったら
     # それは「層をまたいで共有する部品」ではないので、置き場所を間違えている合図になる。
 )

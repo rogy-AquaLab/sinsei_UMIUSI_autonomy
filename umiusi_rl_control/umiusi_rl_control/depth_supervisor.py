@@ -1,34 +1,15 @@
 """深度モード切替スーパーバイザ — 水圧の外側ループで 2 つの RL ポリシーを使い分ける。
 
-sim でリハーサル済みの状態機械 (Umiusi_sim `tools/mode_switch_eval.py`、検証結果は
-sinsei_UMIUSI_autonomy#15 のコメント参照) の実機移植。ROS 非依存の純ロジックなので
-そのまま単体テストできる。
+規約:
+  * depth: 正が深い [m]。depth_err = target - depth が正なら「もっと潜る」
+  * 降下指令: v_cmd = [0, 0, -vz] (下 = -z。frame は known_issues A-13)
 
-背景 (sim 実測、duty 0.4):
-  * 水平ポリシー (av_cal1_best) に鉛直指令は分布外 — 姿勢が崩壊する。深度は別ポリシーで。
-  * 3-D ポリシー (av_cal5_3d) は **降下専用**: 純下指令で -0.16 m/s 出るが、純上指令は
-    +0.02 m/s と浮力ドリフト以下 (指令の大きさにも無反応 — 速度は非観測で方向のみ制御)。
-  * 両ポリシーとも系統的な**浮上ドリフト** (~0.05 m/s hold / ~0.08 m/s 巡航) が残る
-    (弱正浮力トリムを低 duty では打ち消し切れない)。よって:
-      - 降下 = ブレーキ (1 s ホールドで前進慣性を殺す) → av_cal5_3d に純下バースト。
-        前進したままドローンモードに入れると sim では転覆した (attitude 180 deg)。
-      - 浮上 = 水平ポリシーでホールドし**浮力に任せる** (受動浮上)。
-      - 巡航中は浮上ドリフトで深度が単調にずれる → 補正 (降下バースト) は巡航に
-        割り込む必要がある (スーパーバイザが水平指令をゼロにする)。
-  * バーストはまれに不発になる (降下せず前進+上昇 — マルチモーダルの脆さ)。
-    watchdog で検出して再ブレーキ→リトライする。
-  * **max_duty 0.2 では降下できない**。ただし理由は上限そのものではなく**配分の無駄**で、
-    8/25 の水中 run では鉛直パワーの 41.2% が零空間 (合力もモーメントも生まない対角モード)
-    に流れていた。既定は 0.25 (転覆余裕 1.1x)。深度モードの実験は 0.3 以上を推奨し、
-    **0.4 は零空間を潰してから** (issue #19 / Umiusi_sim#3)。
+禁止事項 (どのテストでも捕まらない):
+  * 水平ポリシーに鉛直指令を入れない — 分布外で姿勢が崩壊する。この分離がこの層の存在理由
+  * t_brake を 0 にしない — 前進慣性が残ったまま降下すると転覆する (sim 実測)。
+    テストは順序しか見ておらず、値は sup.t_brake を読むので守られない
 
-規約: depth は **正が深い** [m] (水圧から換算)。depth_err = target - depth が
-正なら「もっと潜る」。REP-103 body frame では下 = -z なので、降下指令は
-v_cmd = [0, 0, -vz] になる。
-
-sim 検証済みパラメータ (既定値): d_enter 0.25 / d_exit 0.15 (降下側 exit 0.20) /
-k_depth 0.7 / v_vert 0.2 / rate_gate 0.08 / t_brake 1.0。
-1 m 潜行 12.6 s・浮上 13.8 s・保持平均誤差 0.15 m・巡航割合 60%。
+状態遷移は test_depth_supervisor.py、運用時の max_duty は README「深度モード切替」節。
 """
 from __future__ import annotations
 
@@ -44,9 +25,9 @@ ASCEND = "ascend"   # 水平ポリシーでホールドし浮力で浮上 (受�
 class DepthSupervisor:
     """深度誤差の閾値で水平/鉛直モードを切り替える状態機械 (ヒステリシス + watchdog 付き)。
 
-    毎 tick `update(now, depth)` を呼ぶ。返り値は (state, v_cmd_override):
+    毎 tick update(now, depth) を呼ぶ。返り値は (state, v_cmd_override):
       * state が HORIZ のとき v_cmd_override は None — 要求どおりの水平指令を使ってよい
-      * それ以外は補正中 — v_cmd_override (REP-103 body frame, np.ndarray(3)) をそのまま
+      * それ以外は補正中 — v_cmd_override (body frame, np.ndarray(3)) をそのまま
         ポリシーへ入れる (BRAKE/ASCEND は零ベクトル、VERT は純下)
     どのポリシーで推論すべきかは state で決まる (VERT だけ 3-D ポリシー)。
     """
@@ -100,10 +81,9 @@ class DepthSupervisor:
                 self.state = HORIZ
             elif ((now - self._vert_since > 2.5 and rate < -0.03)
                   or (now - self._vert_since > 4.0 and rate < 0.02)):
-                # 注: sim 版 (mode_switch_eval.py) と符号が逆に見えるのは正しい —
-                # あちらは y-up (rate 正=上昇)、こちらは深度 (rate 正=潜行)
-                # watchdog: バースト不発 (降下せず浮上/停滞)。2.5 s の猶予は正常な
-                # 「浮上ドリフトを殺す」過渡をカバーする (健全なバーストも最初 ~2 s は浮く)
+                # watchdog: バースト不発。2.5 s の猶予は健全なバーストの立ち上がり
+                # (最初 ~2 s は浮く) を誤検出しないため。
+                # sim 版 (mode_switch_eval.py) と符号が逆なのは正しい — あちらは y-up
                 self.state = BRAKE
                 self._brake_until = now + self.t_brake
                 self.retries += 1
@@ -113,7 +93,7 @@ class DepthSupervisor:
 
         if self.state == VERT:
             vz_down = float(np.clip(self.k_depth * err, 0.0, self.v_vert))
-            return self.state, np.array([0.0, 0.0, -vz_down])   # REP-103: 下 = -z
+            return self.state, np.array([0.0, 0.0, -vz_down])   # 下 = -z
         if self.state in (BRAKE, ASCEND):
             return self.state, np.zeros(3)                      # ホールド (巡航一時停止)
         return self.state, None                                 # 水平モード: 要求どおり

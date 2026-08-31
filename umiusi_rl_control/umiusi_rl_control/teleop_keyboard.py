@@ -1,7 +1,7 @@
 """teleop_keyboard — keyboard teleop for the RL attitude(-velocity) controller (experiments).
 
-Publishes an ``umiusi_rl_control_msgs/AttitudeTarget`` (target attitude quaternion + target velocity in
-the target-body frame) to ``rl_attitude_node`` — designed for 3-D motion (separate keys per axis),
+Publishes an umiusi_rl_control_msgs/AttitudeTarget (target attitude quaternion + target velocity in
+the target-body frame) to rl_attitude_node — designed for 3-D motion (separate keys per axis),
 unlike teleop_twist_keyboard. Includes an EMERGENCY STOP that both signals the controller to disarm
 AND directly detaches the thrusters (independent of the controller staying alive).
 
