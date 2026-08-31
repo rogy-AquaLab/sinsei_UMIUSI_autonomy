@@ -37,6 +37,29 @@ NODES="ros2_control_node gst_camera_node camera_bridge_node perception_node
        auto_target_generator robot_strategy manual_target_generator
        low_power_health_check rosbridge_websocket rl_attitude"
 
+# 段の切り替えを sleep ではなくシグナルで待つ。
+# 待っているのは依存関係ではなく起動時の CPU 競合 (Pi で torch を 2 回読む間に
+# controller_manager と xacro が走る)。sleep は速い機体では無駄に待ち、遅い機体では
+# 足りない。UMIUSI_STAGE_WAIT=sleep で従来の固定待ちに戻せる。
+wait_topic() {  # <topic> <timeout> [--best-effort]
+  local topic=$1 timeout=$2; shift 2
+  if [ "${UMIUSI_STAGE_WAIT:-signal}" = "sleep" ]; then sleep "$timeout"; return; fi
+  echo "  待機: $topic (最大 ${timeout}s)"
+  ros2 run umiusi_autonomy wait_for_topic \
+    --topic "$topic" --timeout "$timeout" --allow-timeout "$@" 2>&1 | tail -1
+}
+
+wait_log() {   # <logfile> <regex> <timeout> — ログに完了行が出るまで待つ
+  local log=$1 pat=$2 timeout=$3 waited=0
+  if [ "${UMIUSI_STAGE_WAIT:-signal}" = "sleep" ]; then sleep "$timeout"; return; fi
+  echo "  待機: $(basename "$log") に /$pat/ (最大 ${timeout}s)"
+  while [ "$waited" -lt "$timeout" ]; do
+    grep -qE "$pat" "$log" 2>/dev/null && { echo "  完了 (${waited}s)"; return; }
+    sleep 1; waited=$((waited + 1))
+  done
+  echo "  警告: ${timeout}s 待っても /$pat/ が出ませんでした。続行します"
+}
+
 setup_env() {
   # shellcheck disable=SC1091
   source /opt/ros/jazzy/setup.bash
@@ -100,7 +123,8 @@ start() {
   fi
   setsid nohup ros2 launch sinsei_umiusi_control main.yaml "${camargs[@]}" \
     > "$LOGDIR/control.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
-  sleep 20
+  # controller_manager の spawner が終わると /state/imu が出はじめる
+  wait_topic /state/imu 20 --best-effort
 
   local modelargs=()
   [ -n "$MODEL" ] && modelargs+=("model_path:=$MODEL")
@@ -115,7 +139,7 @@ start() {
         "${modelargs[@]}" use_core:=false use_rosbridge:=false \
         use_camera_bridge:=true rtsp_url:="$RTSP_URL" \
         > "$LOGDIR/core.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
-      sleep 35
+      wait_log "$LOGDIR/core.log" "detector loaded from" 35
       ;;
     *)
       echo "[autonomy] core + autonomy (BT / perception / カメラブリッジ$([ "$ui" = true ] && echo " / UI"))"
@@ -123,7 +147,7 @@ start() {
         "${modelargs[@]}" use_rosbridge:=$ui \
         use_camera_bridge:=true rtsp_url:="$RTSP_URL" \
         > "$LOGDIR/core.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
-      sleep 35
+      wait_log "$LOGDIR/core.log" "detector loaded from" 35
       ;;
   esac
 
@@ -151,7 +175,7 @@ start() {
     setsid nohup ros2 run umiusi_rl_control rl_attitude_node --ros-args \
       -p control_hz:=50.0 -p publish:=$publish "${rlmodel[@]}" \
       > "$LOGDIR/rl.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
-    sleep 10
+    wait_log "$LOGDIR/rl.log" "policy loaded from" 10
   else
     echo "[rl] 起動しない (--with-rl / --attitude で有効)"
   fi
