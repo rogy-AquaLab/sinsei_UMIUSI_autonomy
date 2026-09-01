@@ -79,9 +79,21 @@ def generate_launch_description():
     publish = LaunchConfiguration("publish")
     use_ui = LaunchConfiguration("use_ui")
 
+    # カメラ設定は既定で同梱の cameras_deploy.yaml を渡す。渡さないと実機既定の
+    # /dev/video2 (H264 非対応) が使われてカメラが開かない (known_issues B-1)
+    cameras_param_file = PythonExpression([
+        "'", LaunchConfiguration("cameras_param_file"), "' or '",
+        PathJoinSubstitution([FindPackageShare("umiusi_autonomy"), "config",
+                              "cameras_deploy.yaml"]), "'"])
     control = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare("sinsei_umiusi_control"), "launch", "main.yaml"])),
+        launch_arguments={
+            # attitude はカメラを上げない (CPU を空ける)
+            "enable_cameras": PythonExpression(
+                ["'false' if '", mode, "' == 'attitude' else 'true'"]),
+            "cameras_param_file": cameras_param_file,
+        }.items(),
         condition=IfCondition(use_control))
 
     # mode=perception は「カメラブリッジ + 認識だけ」。core の BT も UI も上げない
@@ -126,6 +138,9 @@ def generate_launch_description():
                               description="カメラブリッジの入力"),
         DeclareLaunchArgument("publish", default_value="true",
                               description="false で RL の指令をスラスタへ出さない (ドライ試験)"),
+        DeclareLaunchArgument("cameras_param_file", default_value="",
+                              description="空なら同梱の cameras_deploy.yaml。実機既定の "
+                                          "/dev/video2 は H264 非対応 (known_issues B-1)"),
         DeclareLaunchArgument("use_ui", default_value="true",
                               description="false で rosbridge を上げない (CPU を空ける)。"
                                           "mode=perception では常に上げない"),

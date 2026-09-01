@@ -140,3 +140,33 @@ def test_modeごとにcoreとUIの起動可否が変わる(ld, mode, want_core, 
     args = {k: perform_substitutions(ctx, [raw[k]]) for k in ("use_core", "use_rosbridge")}
     assert args["use_core"] == want_core, f"mode={mode}: use_core={args['use_core']}"
     assert args["use_rosbridge"] == want_ui, f"mode={mode}: use_rosbridge={args['use_rosbridge']}"
+
+
+# --- control に渡す引数 ---------------------------------------------------------
+
+def _control_include(ld):
+    for a in _includes(ld.entities):
+        if "main.yaml" in _loc(a):
+            return a
+    return None
+
+
+@pytest.mark.parametrize("mode,want_cams", [("full", "true"), ("attitude", "false")])
+def test_attitudeではカメラを上げない(ld, mode, want_cams):
+    from launch import LaunchContext
+    from launch.utilities import perform_substitutions
+    ctx = LaunchContext()
+    ctx.launch_configurations.update({"mode": mode, "cameras_param_file": ""})
+    raw = dict(_control_include(ld).launch_arguments)
+    assert perform_substitutions(ctx, [raw["enable_cameras"]]) == want_cams
+
+
+def test_カメラ設定を渡さないと実機のカメラが開かない(ld):
+    """/dev/video2 は H264 非対応 (known_issues B-1)。既定で同梱の設定を渡す。"""
+    from launch import LaunchContext
+    from launch.utilities import perform_substitutions
+    ctx = LaunchContext()
+    ctx.launch_configurations.update({"mode": "full", "cameras_param_file": ""})
+    raw = dict(_control_include(ld).launch_arguments)
+    got = perform_substitutions(ctx, [raw["cameras_param_file"]])
+    assert got.endswith("cameras_deploy.yaml"), got

@@ -160,7 +160,7 @@ start() {
 
   if [ "$rl" = true ]; then
     echo "[rl] RL 姿勢制御 (publish=$publish、**disarmed で起動**)"
-    echo "     武装: ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool \"{data: true}\""
+    echo "     arm: ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool \"{data: true}\""
     echo "     前進させるなら ros2 param set /rl_attitude_node vel_cmd 0.4 (既定 0 = 姿勢保持)"
     # 既定は同梱の av_cal1_best_rep103 (本命 17 次元)。--attitude-policy で姿勢保持専用の
     # att_cal1_best_rep103 (14 次元、フォールバック) に差し替える。

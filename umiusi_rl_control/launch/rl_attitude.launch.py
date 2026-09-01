@@ -2,7 +2,7 @@
 
     ros2 launch umiusi_rl_control rl_attitude.launch.py                    # 姿勢保持のみ (disarmed で起動)
     ros2 launch umiusi_rl_control rl_attitude.launch.py vel_cmd:=0.4       # 巡航 (前進 0.4 m/s)
-    ros2 launch umiusi_rl_control rl_attitude.launch.py start_armed:=true  # 起動と同時に武装
+    ros2 launch umiusi_rl_control rl_attitude.launch.py start_armed:=true  # 起動と同時にarm
     ros2 launch umiusi_rl_control rl_attitude.launch.py hold_yaw:=false    # roll/pitch だけ保つ
     ros2 launch umiusi_rl_control rl_attitude.launch.py max_duty:=0.4      # 出力上限を上げる
 
@@ -16,7 +16,7 @@ models/av_cal1_best_rep103 (本命、姿勢+速度指令 17 次元)。読み込�
 (rep103) と golden.npz を検証し、不一致なら動かさない。
 
 既定は disarmed + vel_cmd 0 なので、起動しただけではスラスタに何も出ない。
-~/arm (std_srvs/SetBool, data:true) で武装し、必要なら vel_cmd で前進させる。
+~/arm (std_srvs/SetBool, data:true) でarm し、必要なら vel_cmd で前進させる。
 
 Needs torch + numpy in the ROS runtime env (SB3 は不要), and the controllers/bridge
 (sinsei_umiusi_control or umiusi_sim_bridge) providing /state/imu and consuming
@@ -69,8 +69,8 @@ def generate_launch_description():
                               description="目標深度 [m, 正=深い]。実行中に "
                                           "`ros2 param set /rl_attitude_node target_depth 1.0` で変更"),
         DeclareLaunchArgument("start_armed", default_value="false",
-                              description="起動と同時に武装する。**既定 false** — 起動しただけで "
-                                          "スラスタへ指令が出るのを避けるため。`~/arm` で武装する"),
+                              description="起動と同時にarmする。**既定 false** — 起動しただけで "
+                                          "スラスタへ指令が出るのを避けるため。`~/arm` でarmする"),
         Node(
             package="umiusi_rl_control",
             executable="rl_attitude_node",

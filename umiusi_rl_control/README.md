@@ -21,7 +21,7 @@ layering (velocity/cmd_vel → allocator vs. AttitudeTarget → attitude-hold co
 |---|---|---|
 | `umiusi_rl_control_msgs` | ament_cmake (rosidl) | `AttitudeTarget` (target attitude quaternion + feed-forward velocity + `type_mask`) |
 | `umiusi_rl_control` | ament_python | `rl_attitude_node`, `teleop_keyboard`, launch, bundled policy |
-| `umiusi_common` | ament_python | 層をまたぐ共有部品 — `arm` (武装/解除・e-stop) と `imu_sanity`。ノードは持たない |
+| `umiusi_common` | ament_python | 層をまたぐ共有部品 — `arm` (arm/解除・e-stop) と `imu_sanity`。ノードは持たない |
 
 ## The setpoint: `umiusi_rl_control_msgs/AttitudeTarget`
 An absolute attitude target + a feed-forward body velocity (modeled on `mavros_msgs/AttitudeTarget`):

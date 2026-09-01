@@ -157,14 +157,14 @@ ros2 topic echo /cmd/direct/thruster_controller/output_lf       # duty_cycle / a
 ### 1-4. 実際に回す
 
 モータを繋いで起動する。**既定は disarmed + 前進 0 なので、起動しただけでは何も出ない。**
-武装して初めて姿勢保持が始まる。**必ず e-stop を手元に**:
+arm して初めて姿勢保持が始まる。**必ず e-stop を手元に**:
 
 ```bash
 ./tools/umiusi_stack.sh stop
 ./tools/umiusi_stack.sh start --attitude
 # 手で組む場合: ros2 launch umiusi_rl_control rl_attitude.launch.py
 
-# 武装して初めて動き出す
+# arm して初めて動き出す
 ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"
 
 # 前進もさせるなら (既定は 0 = 姿勢保持のみ)
@@ -180,8 +180,8 @@ ros2 topic pub --once --qos-durability transient_local \
 ros2 topic pub --once --qos-durability transient_local \
     /rl_attitude_node/estop std_msgs/msg/Bool "{data: false}"
 
-ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: false}"   # 武装解除
-ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"    # 再武装
+ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: false}"   # disarm
+ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"    # 再度 arm
 ```
 
 > **`--qos-durability transient_local` は必須。** `estop` の購読側は latch するために
@@ -192,8 +192,8 @@ ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"    #
 > 手打ちは間違えるので、**回すときは `teleop_keyboard` を開いておくほうが安全**:
 > `ros2 run umiusi_rl_control teleop_keyboard`（正しい QoS で e-stop を打てる）。
 
-どちらも同じ武装フラグを操作するだけで**インターロックは無い**（`estop true` のあとでも
-`arm true` を呼べば武装する）。混乱を避けるため、**止めた経路と同じ経路で戻す**こと。
+どちらも同じarm フラグを操作するだけで**インターロックは無い**（`estop true` のあとでも
+`arm true` を呼べばarm する）。混乱を避けるため、**止めた経路と同じ経路で戻す**こと。
 
 `estop` は latched (transient_local) だが、`ros2 topic pub --once` は送信後に終了するため
 **latch は残らない**。その状態でノードを再起動すると ARMED で立ち上がる（`start_armed:=false`
