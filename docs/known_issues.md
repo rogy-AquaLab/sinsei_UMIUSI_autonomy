@@ -731,36 +731,35 @@ pi  -  memlock unlimited
 
 ### B-12. 【高】`/cmd/direct` は `is_forward` / `max_duty` / スルーレート制限を素通りする
 
-> **上流に修正あり (未マージ)**: `sinsei_UMIUSI_control` 側で対応中 (issue #19-5)。
+> **上流に修正あり (push 済み・未マージ)**: `sinsei_UMIUSI_control` の
+> `fix/actuator-limits-on-direct-cmd` (`8ae6ee7`)。issue #19-5。
 > アクチュエータの歯止めを `ThrusterLimits` に切り出し、**指令の出所によらず必ず通す**ように
 > した (duty 上限 / `servo_sign` / サーボ角 ±90 クランプ)。
 >
-> **⚠ スルーレート制限をどちらが持つかは未確定。** 2 つの設計が行き来しており、
-> **push 済みなのは A のほうだけ**なので、A を前提に読むこと:
+> **スルーレート制限は `ThrusterLimits` に置かない** (2026-09-01 に push されて確定)。
+> ヘッダが理由を明記している — ステートレスな範囲強制だけを置く方針で、状態を持つ制限を
+> 素通し経路に挟むと (a) 生指令をラッチしないと二重に掛かる (b) 実効レートが publisher の
+> レートに依存する (c) 較正ツールが生指令を出せない。**持ち主は指令を出す側**
+> (autonomy の `thruster_limits.py`)。したがって **autonomy 側の `slew` は撤去しない** —
+> これが `/cmd/direct` 経路で唯一のレート制限になる。
 >
-> | | A: `origin` の先端 (`742407d`) | B: ローカルのみ (`8ae6ee7`、未 push・PR 無し) |
-> |---|---|---|
-> | `ThrusterLimits` | スルーレートを**含む** (`max_duty_step_per_sec` 引数 + テスト) | **含まない** |
-> | `controllers.yaml` | `max_duty_step_per_sec: 4.0` (sim に合わせる) | `1.0` (据え置き) |
-> | 理由 | 直接指令にも歯止めを掛ける | ステートレスな範囲強制だけを置く。状態を持つ制限は
->   (a) 生指令をラッチしないと二重に掛かる (b) 実効レートが publisher のレート依存
->   (c) 較正ツールが生指令を出せない |
+> (以前ここには、スルーレートを `ThrusterLimits` に含める版 `742407d` を前提にした記述が
+> あった。その版は force-push で置き換えられ remote には残っていない。)
 >
-> **どちらでも autonomy 側の `thruster_limits.slew` は残す。** A なら同じ値 (4.0) の直列に
-> なるだけで、レート制限は実務上ほぼ**べき等** (control の周期は autonomy の publish 周期より
-> 十分速いので、定常的には同じ軌跡に収束する)。B なら唯一のレート制限になる。
-> **危険なのは混ざった場合** — control が「掛ける」側になったまま `controllers.yaml` が
-> `1.0` だと、実効レートが学習時 (4.0) より遅くなり sim2real ギャップになる。control 側を
-> マージする際は `ThrusterLimits` の実装と `controllers.yaml` の値が揃っていることを必ず
-> 確認すること。
+> **⚠ ただし `controllers.yaml` の `max_duty_step_per_sec` は 1.0 のまま。** この値は
+> `logic::thruster::LinearAcceleration` にも渡っており、`/cmd/direct` に publisher が
+> 居ない経路 — つまり `command_mode: "target"` — のスルーレートを決める。**sim の
+> `thrust_slew_per_s` は 4.0** なので揃っていない。方策は 4.0 で平滑化されたプラントを
+> 前提に学習しており、しかも実測ではその上限に張り付いている (リミッタ有効時 4.24/s に対し
+> 無効時 25.46/s、A-11)。`command_mode: "target"` を使うと A-11 と同型のギャップが出る
+> (既定の `"direct"` では `LinearAcceleration` ごとスキップされるので効かない)。
 >
-> **⚠ `controllers.yaml` の値は A/B と独立に core 経路を律速する。** `max_duty_step_per_sec`
-> は `logic::thruster::LinearAcceleration` にも渡っており (A でも B でも)、`/cmd/direct` に
-> publisher が居ない経路 — つまり `command_mode: "target"` — のスルーレートを決める。
-> **main の現在値は `1.0` で、sim の `thrust_slew_per_s` (4.0) と揃っていない。** 方策は
-> 4.0 で平滑化されたプラントを前提に学習しているので、`command_mode: "target"` を使うと
-> A-11 と同型の sim2real ギャップが出る (`command_mode: "direct"` の既定では効かない)。
-> これは A/B の議論とは別の、いま存在する差。
+> **4.0 に揃えるのが当面の推奨。** ただし sim 側で `thrust_slew_per_s` は domain
+> randomization されておらず (サーボは `servo_slew_range_deg_s: [100, 500]` で振っている)、
+> 4.0 という値自体もベンチ実測に基づいていない。本命は ESC 側も DR して、control 側の値が
+> 何であれ方策が有効になるようにすること。範囲を決めるには VESC が CAN で返している
+> 実 duty / 電流を control が state に出す必要がある (いま `vesc_model.cpp` でデコードした
+> まま捨てている)。
 >
 > `is_forward` と `duty_per_thrust` は「推力[N] → duty の換算」なので Logic 側に残っている
 > — 直接指令はすでに duty で届くため、掛け直すと二重換算になる (A-12 で符号補正不要と確定)。
