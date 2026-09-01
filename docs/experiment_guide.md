@@ -35,48 +35,22 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
 
 ---
 
-## 0-2. 次回実験のチェックリストと新ツール
+## 0-2. 次回実験
 
-当日の実行チェックリストは **issue #18**（実験 1〜8 の順番・合否条件）を見ること。ここでは
-新しく増えた道具だけを挙げる。
+当日の実行チェックリスト (実験 1〜8 の順番と合否条件) は **issue #18**。
+フロー計測の準備と露光の話は `logging.md`「対地速度をフローで測る準備」。
 
-* `tools/thruster_cmd.py` — 較正実験 1/3/4/6/8 のためのスラスタ直接指令（spin/step/sweep/
-  steady/excite）。**`rl_attitude_node` と同時に動かさない**（同じトピックを奪い合う）。
-* `tools/bag_check.py` — 取った bag のその場検品（前後静止 5 s・IMU 化け・衝突スパイク・
-  励起カバレッジ）。撤収前に必ず通す。
-* `vel_timeout:=5.0` — 速度指令が更新されないと 0 に戻すデッドマン。狭いプールでは推奨。
-* 深度モード（`depth_supervisor:=true`、`target_depth` で目標深度）— **水圧センサ搭載後**、
-  `max_duty 0.3` 以上を推奨（既定 0.25）。詳細は `umiusi_rl_control/README.md`。
-* navigator の FSM をドライで確認するなら
-  `ros2 launch umiusi_autonomy autonomy.launch.py publish:=false`
-  （`experiment_test.sh` は navigator を起動しない）。
+この手順書に無い道具:
 
-### 次回**必ず**持ち帰るもの
+* `tools/thruster_cmd.py` — 較正用のスラスタ直接指令。
+  **`rl_attitude_node` と同時に動かさないこと** (同じトピックを奪い合う)。
+* `tools/bag_check.py` — bag のその場検品。撤収前に通す。
 
-1. **`rl.log`（`~/umiusi_logs/`）。** 8/25 は「巡航を指令したのに出なかったのか、そもそも
-   指令していないのか」が確定できなかった。起動直後の 2 行（`policy loaded from … (obs NN-D)`
-   と「attitude タスクのポリシーです」の有無）だけで**どのポリシーで走ったかが決まる**。
-   いまは `/rosout` も bag に入るので、`bag_check.py` が 14 次元 + 速度指令を FAIL にする。
-2. **`record_run.sh --flow` で 1 本。** 下向きカメラでの対地速度（オプティカルフロー）を
-   試すための素材。下カメラが mp4（フレーム時刻つき）になり、露光/ゲインの実値も残る。
-   **プール底のテクスチャが出るかの判定も、この 1 本で PC 側からできる**（専用の作業は不要）。
-3. **走行後に `record_run.sh --fix`**、その場で `bag_check.py`。
+持ち帰るもの:
 
-### 次回の確認項目（フロー関連。**カメラを下に向けてから泳ぐ**）
-
-* `[未検証]` **露光を 20 ms 以下に固定できるか。** まず `v4l2-ctl --device=/dev/video4
-  --list-ctrls` で**実際のコントロール名を確認**する（`exposure_auto` か `auto_exposure` かは
-  デバイス依存）。高度 1 m・0.17 m/s でフローは約 118 px/s あり、**自動露光が 100 ms まで
-  伸びると 12 px ぶれてフローが出ない**。名前が分かればパイプラインに焼き込める。
-  → 手順と根拠は `docs/logging.md`「対地速度をフローで測る準備」。
-* `[未検証]` **プール底に特徴点が出るか。** 単色タイルだと出ない可能性がある。出なければ
-  壁面・コース仕切り・ゲート脚が入る向きにカメラを振るか、マーカーを数枚貼る。
-* `[未検証]` **既知距離を一定深度で泳ぐ。** フロー → 速度の換算に要るのは `fx` と高度では
-  なく**合成定数 `K = fx/h` ひとつ**で、既知距離とフローの積分値を突き合わせれば決まる。
-  カメラ較正板も画角の実測も要らない（**A-14 の較正を待たなくてよい**）。
-* `[未検証]` **巡航の再試験。** `vel_cmd 0.4` を明示し、**起動ログでポリシーの次元を確認**
-  してから測る。到達可能速度は `v_max ≈ 0.68 × max_duty` なので、**cap 0.25 では 0.17 m/s が
-  上限**（`vel_cmd 0.4` は cap 0.4 でも出ない）。「指令したのに遅い」と誤診しないこと。
+1. `rl.log` (`~/umiusi_logs/`)。起動直後の 2 行でどのポリシーで走ったかが決まる。
+2. `record_run.sh --flow` で 1 本 (下カメラの mp4 + 露光の実値)。
+3. 走行後に `record_run.sh --fix`、その場で `bag_check.py`。
 
 ---
 
@@ -85,7 +59,7 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
 ### 1-1. まず指令を出さずに見る
 
 ```bash
-./tools/umiusi_stack.sh start --attitude --no-publish   # 計算だけ。カメラも上げない
+ros2 launch umiusi_autonomy stack.launch.py mode:=attitude publish:=false   # 計算だけ。カメラも上げない
 ```
 
 手で組む場合はこちら（内容は同じ）:
@@ -107,39 +81,33 @@ python3 tools/imu_monitor.py                                   # 傾けて姿勢
 
 ### 1-2. 目標姿勢の与え方
 
-既定は **水平 (identity) + 前進 0 (姿勢保持)**。実行中に変えるには
+既定は水平 (identity) + 前進 0。実行中に変えるには
 `umiusi_rl_control_msgs/AttitudeTarget` を `~/setpoint` に publish する。
-クォータニオンを手で組むのは面倒なので、度で指定できるツールを用意した:
+
+**普段は `teleop_keyboard` を使う。** 目標入力と e-stop が同じ端末に揃う:
+
+```bash
+ros2 run umiusi_rl_control teleop_keyboard
+```
+
+**数値を決めて再現したいとき**は `set_attitude.py`。度で指定できる:
 
 ```bash
 python3 tools/set_attitude.py --level              # 水平・停止
-python3 tools/set_attitude.py --yaw 90 --hold      # 右に 90 度 (押し続ける)
-python3 tools/set_attitude.py --roll 20 --hold
+python3 tools/set_attitude.py --yaw 90 --hold      # 右に 90 度
 python3 tools/set_attitude.py --vel 0.3            # 前進速度だけ変える
 python3 tools/set_attitude.py --vel 0 0 -0.2       # 3 成分指定 (X Y Z) = 純下降
-python3 tools/set_attitude.py --yaw 45 --attitude-only --hold   # 速度は無視させる
 ```
 
-`--vel X Y Z` の 3 成分形は **3-D ポリシー `av_cal5_3d_rep103` 限定**。それ以外のバンドルでは
-node 側の interlock が z を 0 にクランプする。
+`--hold` を付けること。QoS の depth が 1 なので 1 発だと取りこぼす。
+DDS が通っていれば PC 側からでも打てる。
+`--vel X Y Z` の 3 成分形は 3-D ポリシー `av_cal5_3d_rep103` 限定で、それ以外の
+バンドルではノード側の interlock が z を 0 にクランプする。
 
-いま何を目標にして動いているかは、こちらで確認できる（latch しているのでいつでも読める）:
+いま何を目標にしているかは latch されているのでいつでも読める:
 
 ```bash
 ros2 topic echo --once /rl_attitude_node/current_setpoint
-```
-
-目標が更新されると、ノードのログにも `目標を更新: roll=... pitch=... yaw=... deg` と度で出る。
-
-**`--hold` を使うこと。** QoS の depth が 1 なので、1 発だけだと取りこぼす。
-DDS が通っていれば **PC 側からでも打てる**（Pi に入り直さなくてよい）。
-`--vel` を付けなければ**速度指令は変更しない**（launch の `vel_cmd` のまま）。
-止めたいときは `--level` か `--vel 0`。
-
-launch 時に既定を変えることもできる:
-
-```bash
-ros2 launch umiusi_rl_control rl_attitude.launch.py vel_cmd:=0.0 publish:=false
 ```
 
 ### 1-3. 出力を見る
@@ -160,8 +128,8 @@ ros2 topic echo /cmd/direct/thruster_controller/output_lf       # duty_cycle / a
 arm して初めて姿勢保持が始まる。**必ず e-stop を手元に**:
 
 ```bash
-./tools/umiusi_stack.sh stop
-./tools/umiusi_stack.sh start --attitude
+# Ctrl-C で止めてから publish 付きで上げ直す
+ros2 launch umiusi_autonomy stack.launch.py mode:=attitude
 # 手で組む場合: ros2 launch umiusi_rl_control rl_attitude.launch.py
 
 # arm して初めて動き出す
@@ -204,8 +172,7 @@ ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"    #
 ## 2. `perception` を単独で
 
 ```bash
-./tools/umiusi_stack.sh stop
-./tools/umiusi_stack.sh start --perception   # カメラブリッジ + perception だけ
+ros2 launch umiusi_autonomy stack.launch.py mode:=perception   # カメラブリッジ + perception だけ
 ```
 
 手で組む場合はこちら:
@@ -223,7 +190,8 @@ ros2 launch umiusi_autonomy core_autonomy.launch.py use_core:=false use_rosbridg
 > `usb_camera` が `/dev/video2`（unicam = H264 非対応）を指しており、pipeline が開けず RTSP に
 > 映像が来ない（`known_issues.md` の B-1）。その状態だと `camera_bridge_node` が
 > `ハードウェア経路 ... software に落とします` / `接続できません` を出し続ける。
-> `umiusi_stack.sh` は同梱の `cameras_deploy.yaml`（`/dev/video4`）を自動で渡す。
+> `stack.launch.py` は同梱の `cameras_deploy.yaml`（`/dev/video4`）を既定で渡す。
+> 別のデバイスなら `cameras_param_file:=<path>`。
 > デバイス番号は挿し順で変わるので `v4l2-ctl --device=/dev/video4 --list-formats` で確認すること。
 
 ```bash
@@ -290,23 +258,17 @@ UI (WebRTC) 側でも映像は見えるが、そちらは MediaMTX 経由の生�
 
 ## 5. 実測値 (2026-08-21、`tools/experiment_test.sh` で確認)
 
-| 項目 | 見かた | 実測 |
-|---|---|---|
-| **IMU の化けサンプル** | ノードのログに `IMU の異常サンプルを検出` | 手で 150 秒振って **0.44%** (ノルム異常 24 / 角速度スパイク 9)。いずれも読み出し化けで、速い運動ではない。**既定では検出のみで破棄しない** (`imu_sanity_enforce:=true` で破棄。`known_issues.md` A-1) |
-| **IMU の姿勢基準の飛び** | `IMU の姿勢基準が飛んだので再同期` | 150 秒に 1 回、169°。**飛んだら目標姿勢を与え直すこと** (飛ぶ前の基準で与えているため) |
-| **認識周期が 10 Hz に張り付くか** | `ros2 topic hz /perception_node/detections` | **単体 10.01 Hz で張り付く**（以前は 7.9 Hz）。BT を載せた本番構成では 9.26 Hz / CPU 74.8% |
-| **Ctrl-C で録画が閉じるか** | 停止後に `ls ~/runs/*/video/` と `pgrep gst-launch` | **閉じる**。bag の `metadata.yaml` も書かれ reindex 不要、孤児プロセスも残らない |
-| **RL の実機での復元** | 傾けて `/cmd/direct/...` の duty | **未確認** — `publish:=false` でしか回していない。手順 1-4 で確認すること |
+| 項目 | 実測 |
+|---|---|
+| 認識周期 | 単体 **10.01 Hz** で張り付く。BT を載せた本番構成では 9.26 Hz / CPU 74.8% |
+| Ctrl-C で録画が閉じるか | 閉じる。`metadata.yaml` も書かれ、孤児プロセスも残らない |
+| RL の実機での復元 | **未確認** — `publish:=false` でしか回していない。手順 1-4 で確認する |
+| その他 | `/front_cam/image_raw` 15.1 Hz / `/state/imu` 50.2 Hz / VESC 4 台応答 / CPU 42〜48°C |
 
-> **記録は 30 秒以上録ること。** カメラの立ち上げと `ros2 bag record` の discovery に数秒かかる。
-> 15 秒だと **bag に `/tf` しか入らない**（実機で踏んだ）。30 秒あれば `/state/imu` が 50 Hz、
-> `detections` が 10 Hz で入る。
->
-> **`record_run.sh` はスタックより先に起動してよい。** recorder は録りながら discovery を回すので
-> 後から現れたトピックも拾う（以前はここで `ros2 topic list` に無いものを落としており、8/25 の run は
-> 19 指定のうち 12 しか録れていなかった）。起動から `UMIUSI_REC_VERIFY_S` 秒（既定 20）後に
-> 「何を購読できたか」を出すので、欠けていればその場で気付ける。
+IMU の化けサンプルと姿勢基準の飛びは `known_issues.md` A-1。
 
-その他の実測: `/front_cam/image_raw` 15.1 Hz / `/state/imu` 50.2 Hz /
-`/state/thruster_state_all` 50.0 Hz / VESC 4 台すべて応答 / CPU 温度 42〜48°C (throttle なし)。
+> **記録は 30 秒以上録ること。** カメラの立ち上げと `ros2 bag record` の discovery に
+> 数秒かかる。15 秒だと bag に `/tf` しか入らない (実機で踏んだ)。
+
+`record_run.sh` の起動タイミングと購読の確認については、そのスクリプトの冒頭を読むこと。
 数値の基準は `performance_tuning.md`、確認項目の全体像は `competition_checklist.md`。
