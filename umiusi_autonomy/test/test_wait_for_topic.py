@@ -95,3 +95,18 @@ def test_既定のtimeoutは60秒():
 def test_allow_timeoutは既定で無効():
     assert _parse(["--topic", "/x"]).allow_timeout is False
     assert _parse(["--topic", "/x", "--allow-timeout"]).allow_timeout is True
+
+
+def test_launchが付けるROS引数を落とせる():
+    """launch の Node(name=...) は --ros-args -r __node:=... を付ける。
+
+    これを argparse に渡すと即死し、OnProcessExit は異常終了でも発火するので
+    「待ったふりをして素通りする」状態になる。実際に一度そうなった。
+    """
+    from rclpy.utilities import remove_ros_args
+    argv = ["wait_for_topic", "--topic", "/state/imu", "--timeout", "20",
+            "--allow-timeout", "--best-effort", "--ros-args", "-r", "__node:=wait_control"]
+    args = _parse(remove_ros_args(argv)[1:])
+    assert args.topic == "/state/imu"
+    assert args.timeout == 20.0
+    assert args.best_effort is True

@@ -110,3 +110,33 @@ def test_認識の待ちの後にRLが上がる(ld):
 def test_controlは最初に上げる(ld):
     """イベントの中ではなく LaunchDescription の直下 = 起動と同時。"""
     assert any("main.yaml" in _loc(a) for a in _includes(ld.entities))
+
+
+# --- include に渡す引数 (mode ごと) --------------------------------------------
+
+def _autonomy_include(ld):
+    from launch.actions import RegisterEventHandler
+    for h in (a for a in ld.entities if isinstance(a, RegisterEventHandler)):
+        for a in _includes(_on_exit(h)):
+            if "core_autonomy" in _loc(a):
+                return a
+    return None
+
+
+@pytest.mark.parametrize("mode,want_core,want_ui", [
+    ("full", "true", "true"),
+    ("perception", "false", "false"),
+])
+def test_modeごとにcoreとUIの起動可否が変わる(ld, mode, want_core, want_ui):
+    """mode=perception は「カメラブリッジ + 認識だけ」。既定のまま include すると
+    core の BT と rosbridge まで起動してしまい、umiusi_stack.sh --perception と食い違う。"""
+    from launch import LaunchContext
+    from launch.utilities import perform_substitutions
+    inc = _autonomy_include(ld)
+    assert inc is not None, "core_autonomy の include が見つからない"
+    ctx = LaunchContext()
+    ctx.launch_configurations.update({"mode": mode, "use_ui": "true"})
+    raw = dict(inc.launch_arguments)
+    args = {k: perform_substitutions(ctx, [raw[k]]) for k in ("use_core", "use_rosbridge")}
+    assert args["use_core"] == want_core, f"mode={mode}: use_core={args['use_core']}"
+    assert args["use_rosbridge"] == want_ui, f"mode={mode}: use_rosbridge={args['use_rosbridge']}"

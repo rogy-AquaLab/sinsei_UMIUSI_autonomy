@@ -77,17 +77,25 @@ def generate_launch_description():
     model_path = LaunchConfiguration("model_path")
     rtsp_url = LaunchConfiguration("rtsp_url")
     publish = LaunchConfiguration("publish")
+    use_ui = LaunchConfiguration("use_ui")
 
     control = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare("sinsei_umiusi_control"), "launch", "main.yaml"])),
         condition=IfCondition(use_control))
 
+    # mode=perception は「カメラブリッジ + 認識だけ」。core の BT も UI も上げない
+    # (umiusi_stack.sh --perception と同じ)。既定のまま include すると BT が起動する
+    only_full = PythonExpression(["'true' if '", mode, "' == 'full' else 'false'"])
     autonomy = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare("umiusi_autonomy"), "launch", "core_autonomy.launch.py"])),
         launch_arguments={"model_path": model_path, "rtsp_url": rtsp_url,
-                          "use_camera_bridge": "true"}.items(),
+                          "use_camera_bridge": "true",
+                          "use_core": only_full,
+                          "use_rosbridge": PythonExpression(
+                              ["'true' if '", mode, "' == 'full' and '", use_ui, "' == 'true' "
+                               "else 'false'"])}.items(),
         condition=_mode_is(mode, *PERCEPTION_MODES))
 
     def _rl(condition):
@@ -118,6 +126,9 @@ def generate_launch_description():
                               description="カメラブリッジの入力"),
         DeclareLaunchArgument("publish", default_value="true",
                               description="false で RL の指令をスラスタへ出さない (ドライ試験)"),
+        DeclareLaunchArgument("use_ui", default_value="true",
+                              description="false で rosbridge を上げない (CPU を空ける)。"
+                                          "mode=perception では常に上げない"),
 
         control,
         wait_control,

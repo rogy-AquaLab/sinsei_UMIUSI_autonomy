@@ -25,6 +25,7 @@ import sys
 
 import rclpy
 from rclpy.node import Node
+from rclpy.utilities import remove_ros_args
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 
 
@@ -94,8 +95,11 @@ def wait(topic: str, timeout: float, best_effort: bool = False, node=None) -> bo
 
 
 def main(argv=None) -> int:
-    args = _parse(sys.argv[1:] if argv is None else argv)
-    rclpy.init()
+    # launch から Node(name=...) で起動されると --ros-args -r __node:=... が付く。
+    # argparse に渡す前に落とさないと unrecognized arguments で即死する。
+    # OnProcessExit は異常終了でも発火するので、段は「待った」ように見えて素通りする
+    rclpy.init(args=sys.argv)
+    args = _parse(remove_ros_args(sys.argv)[1:] if argv is None else argv)
     try:
         node = _Waiter(args.topic, args.best_effort)
         ok = wait(args.topic, args.timeout, args.best_effort, node=node)
