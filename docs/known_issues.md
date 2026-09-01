@@ -747,11 +747,20 @@ pi  -  memlock unlimited
 >   (c) 較正ツールが生指令を出せない |
 >
 > **どちらでも autonomy 側の `thruster_limits.slew` は残す。** A なら同じ値 (4.0) の直列に
-> なるだけで、レート制限は 1 段目の出力が既に条件を満たすので**べき等**。B なら唯一の
-> レート制限になる。**危険なのは混ざった場合** — control が「掛ける」側になったまま
-> `controllers.yaml` が `1.0` だと、実効レートが学習時 (4.0) より遅くなり sim2real ギャップに
-> なる。control 側をマージする際は `ThrusterLimits` の実装と `controllers.yaml` の値が
-> 揃っていることを必ず確認すること。
+> なるだけで、レート制限は実務上ほぼ**べき等** (control の周期は autonomy の publish 周期より
+> 十分速いので、定常的には同じ軌跡に収束する)。B なら唯一のレート制限になる。
+> **危険なのは混ざった場合** — control が「掛ける」側になったまま `controllers.yaml` が
+> `1.0` だと、実効レートが学習時 (4.0) より遅くなり sim2real ギャップになる。control 側を
+> マージする際は `ThrusterLimits` の実装と `controllers.yaml` の値が揃っていることを必ず
+> 確認すること。
+>
+> **⚠ `controllers.yaml` の値は A/B と独立に core 経路を律速する。** `max_duty_step_per_sec`
+> は `logic::thruster::LinearAcceleration` にも渡っており (A でも B でも)、`/cmd/direct` に
+> publisher が居ない経路 — つまり `command_mode: "target"` — のスルーレートを決める。
+> **main の現在値は `1.0` で、sim の `thrust_slew_per_s` (4.0) と揃っていない。** 方策は
+> 4.0 で平滑化されたプラントを前提に学習しているので、`command_mode: "target"` を使うと
+> A-11 と同型の sim2real ギャップが出る (`command_mode: "direct"` の既定では効かない)。
+> これは A/B の議論とは別の、いま存在する差。
 >
 > `is_forward` と `duty_per_thrust` は「推力[N] → duty の換算」なので Logic 側に残っている
 > — 直接指令はすでに duty で届くため、掛け直すと二重換算になる (A-12 で符号補正不要と確定)。
@@ -796,8 +805,7 @@ max_duty 0.4 プロトコルは `thruster_cmd.py` の自主チェックだけで
 唯一のレート制限、設計 A でもべき等な重ね掛けにしかならない (上表)。外すと設計 B のとき
 A-11 と同型の sim2real ギャップになる。
 
-**撤去するのは `servo_sign` だけ** (両側で掛かると符号が二度反転する)。`max_duty` と ±90
-クランプはべき等なので重なったままでよい。
+撤去の優先順位は冒頭の引用ブロックのとおり (`servo_sign` だけが急ぎ)。
 
 ### B-13. 【中】`ThrusterOutput.angle` の単位コメントが実装と逆
 
