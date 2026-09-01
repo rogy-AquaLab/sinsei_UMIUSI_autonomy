@@ -49,9 +49,10 @@ wait_topic() {  # <topic> <timeout> [--best-effort]
     --topic "$topic" --timeout "$timeout" --allow-timeout "$@" 2>&1 | tail -1
 }
 
-# ログに完了行が出るまで待つ。呼ぶ前にそのログを親シェルで空にしておくこと —
-# 背景プロセス側の > は fork 後に効くので、前回の起動の完了行が残っていると
-# 最初の grep がそれを拾う。CPU 負荷下で 300 回中 4 回 再現した
+# ログに完了行が出るまで待つ。トピックで待てない段だけに使う (rl の「ポリシーを読み終えた」
+# は、それを表すトピックが無い — current_setpoint は torch のロード前に出る)。
+# 呼ぶ前にそのログを親シェルで空にしておくこと: 背景プロセス側の > は fork 後に効くので、
+# 前回の起動の完了行が残っていると最初の grep がそれを拾う (CPU 負荷下で 300 回中 4 回 再現)
 wait_log() {   # <logfile> <regex> <timeout>
   local log=$1 pat=$2 timeout=$3 waited=0
   if [ "${UMIUSI_STAGE_WAIT:-signal}" = "sleep" ]; then sleep "$timeout"; return; fi
@@ -124,7 +125,7 @@ start() {
   else
     echo "[control] CAN / IMU (カメラは上げない)"
   fi
-  : > "$LOGDIR/control.log"      # 先に空にする (wait_log の注記)
+  : > "$LOGDIR/control.log"      # 起動ごとに空にする
   setsid nohup ros2 launch sinsei_umiusi_control main.yaml "${camargs[@]}" \
     > "$LOGDIR/control.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
   # controller_manager の spawner が終わると /state/imu が出はじめる
@@ -139,21 +140,21 @@ start() {
       ;;
     perception)
       echo "[autonomy] カメラブリッジ + perception のみ (BT / UI なし)"
-      : > "$LOGDIR/core.log"      # 先に空にする (wait_log の注記)
+      : > "$LOGDIR/core.log"      # 起動ごとに空にする
       setsid nohup ros2 launch umiusi_autonomy core_autonomy.launch.py \
         "${modelargs[@]}" use_core:=false use_rosbridge:=false \
         use_camera_bridge:=true rtsp_url:="$RTSP_URL" \
         > "$LOGDIR/core.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
-      wait_log "$LOGDIR/core.log" "detector loaded from" 35
+      wait_topic /perception_node/detections 35
       ;;
     *)
       echo "[autonomy] core + autonomy (BT / perception / カメラブリッジ$([ "$ui" = true ] && echo " / UI"))"
-      : > "$LOGDIR/core.log"      # 先に空にする (wait_log の注記)
+      : > "$LOGDIR/core.log"      # 起動ごとに空にする
       setsid nohup ros2 launch umiusi_autonomy core_autonomy.launch.py \
         "${modelargs[@]}" use_rosbridge:=$ui \
         use_camera_bridge:=true rtsp_url:="$RTSP_URL" \
         > "$LOGDIR/core.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
-      wait_log "$LOGDIR/core.log" "detector loaded from" 35
+      wait_topic /perception_node/detections 35
       ;;
   esac
 
