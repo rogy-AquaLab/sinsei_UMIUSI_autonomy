@@ -220,20 +220,42 @@ stop() {
     rm -f "$PIDFILE"
   fi
   # 取りこぼした個別ノードだけを名指しで止める
-  for n in $NODES; do pgrep -f "$n" | xargs -r kill -9 2>/dev/null; done
+  for n in $NODES; do node_pids "$n" | xargs -r kill -9 2>/dev/null; done
   sleep 2
   echo "停止しました"
+}
+
+# ノードのプロセスだけを拾う。`pgrep -f <名前>` は名前がコマンド行に出るだけの
+# プロセスも拾ってしまい、stop がそれを kill -9 する。実際に踏みうるのは
+# 別端末の `ros2 topic echo /perception_node/detections` と、このスクリプトを
+# 起動した親シェル自身。
+#   * 実行ファイルとして現れる形 (/<名前> の後ろが空白か行末) だけに絞る
+#   * 自分と祖先を除く (pgrep はコマンド行に名前が入った自分自身にマッチする)
+self_tree() {
+  local p=$$
+  while [ "${p:-0}" -gt 1 ] 2>/dev/null; do
+    printf '%s\n' "$p"
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+  done
+}
+
+node_pids() {  # <ノード名>
+  local skip
+  skip=$(self_tree | paste -sd'|' -)
+  pgrep -f "/$1( |\$)" 2>/dev/null | grep -Ev "^(${skip:-0})$" || true
 }
 
 status() {
   printf "  %-26s %s\n" "ノード" "プロセス数"
   for n in $NODES; do
     # pgrep -c は 0 件でも "0" を出して exit 1 する。|| echo 0 を足すと二重になる
-    c=$(pgrep -c -f "$n" 2>/dev/null); c=$(echo "${c:-0}" | head -1)
-    [ "$c" -gt 0 ] 2>/dev/null && printf "  %-26s %s\n" "$n" "$c"
+    c=$(node_pids "$n" | grep -c . || true)
+    [ "${c:-0}" -gt 0 ] 2>/dev/null && printf "  %-26s %s\n" "$n" "$c"
   done
   echo "  --"
-  awk '{printf "  CPU 温度: %.1f C\n", $1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null
+  # 読めない機体では異常値 (-273200 = 絶対零度) を返すことがあるので素通しにしない
+  awk '$1 > -50000 {printf "  CPU 温度: %.1f C\n", $1/1000}' \
+      /sys/class/thermal/thermal_zone0/temp 2>/dev/null
   command -v vcgencmd >/dev/null && echo "  $(vcgencmd get_throttled)"
 }
 
