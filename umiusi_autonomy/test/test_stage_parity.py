@@ -18,11 +18,16 @@ LAUNCH = ROOT / "umiusi_autonomy" / "launch" / "stack.launch.py"
 
 
 @pytest.fixture(scope="module")
-def stages():
+def launch_mod():
     spec = importlib.util.spec_from_file_location("stack_launch", LAUNCH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return {s["topic"]: s for s in mod.STAGES}
+    return mod
+
+
+@pytest.fixture(scope="module")
+def stages(launch_mod):
+    return {s["topic"]: s for s in launch_mod.STAGES}
 
 
 @pytest.fixture(scope="module")
@@ -65,8 +70,25 @@ def test_ログで待つのはrlだけ():
 
 
 def test_ログで待つ前に必ず親で空にする():
-    """背景側の > は fork 後に効くので、前回の完了行を拾う。"""
-    text = SCRIPT.read_text(encoding="utf-8")
-    for log in re.findall(r"^\s*wait_log\s+\"([^\"]+)\"", text, re.M):
-        assert re.search(r"^\s*: > \"" + re.escape(log) + r"\"", text, re.M), \
-            f"{log} を wait_log で読む前に空にしていない"
+    """背景側の > は fork 後に効くので、前回の完了行を拾う。
+
+    「どこかに truncate がある」では不十分で、wait_log より前になければ意味が無い。
+    """
+    lines = SCRIPT.read_text(encoding="utf-8").splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(r"^\s*wait_log\s+\"([^\"]+)\"", line)
+        if not m:
+            continue
+        log = m.group(1)
+        before = [j for j, ln in enumerate(lines[:i])
+                  if re.match(r"^\s*: > \"" + re.escape(log) + r"\"", ln)]
+        assert before, f"{log} を wait_log ({i + 1} 行目) で読む前に空にしていない"
+
+
+def test_認識を上げるmodeでは必ず待つ(stages, launch_mod):
+    """段の待ちと include の条件が別々だと「上がるのに待たない」mode ができる。
+    同じ定数を共有していること (別々に書かれていないこと) を固定する。"""
+    percep = stages["/perception_node/detections"]
+    assert percep["modes"] is launch_mod.PERCEPTION_MODES, \
+        "認識の待ちが PERCEPTION_MODES と別物になっている (include の条件とずれる)"
+    assert "perception" in percep["modes"], "mode=perception で認識の完了を待たない"

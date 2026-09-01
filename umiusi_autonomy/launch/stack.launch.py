@@ -39,11 +39,17 @@ from launch_ros.substitutions import FindPackageShare
 # best_effort: 誰が publish するか分からない段では緩い側にする (/state/imu は control か
 # sim bridge)。BEST_EFFORT の購読はどちらの publisher にも繋がる。
 # modes: その段を待つ mode。空 = 常に待つ。
+# 認識を上げる mode。段の待ちと include の条件を同じ定数から引く — 別々に書くと
+# 「認識は上がるのに待たない」mode ができる (実際 perception でそうなっていた)
+PERCEPTION_MODES = ("full", "perception")
+
+# トピック名は perception_node の detections_topic (config/autonomy.yaml) と揃えること。
+# core_autonomy.launch.py がその yaml を固定で渡すので、いまはずれようがない
 STAGES = (
     {"name": "wait_control", "topic": "/state/imu", "timeout": "20",
      "best_effort": True, "modes": ()},
     {"name": "wait_perception", "topic": "/perception_node/detections", "timeout": "35",
-     "best_effort": False, "modes": ("full",)},
+     "best_effort": False, "modes": PERCEPTION_MODES},
 )
 
 
@@ -82,7 +88,7 @@ def generate_launch_description():
             [FindPackageShare("umiusi_autonomy"), "launch", "core_autonomy.launch.py"])),
         launch_arguments={"model_path": model_path, "rtsp_url": rtsp_url,
                           "use_camera_bridge": "true"}.items(),
-        condition=_mode_is(mode, "full", "perception"))
+        condition=_mode_is(mode, *PERCEPTION_MODES))
 
     def _rl(condition):
         return IncludeLaunchDescription(
