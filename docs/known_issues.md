@@ -24,7 +24,7 @@
 `navigator_node` / `auto_target_generator` / `rl_attitude_node` はいずれも角速度を
 ヨーレートとして、姿勢をそのまま制御・観測に使うため、**1 発のスパイクで制御が跳ねる**。
 
-**実装済み**: `umiusi_common/imu_sanity.py` の `ImuSanity`。3 ノードすべての IMU
+**実装済み**: `umiusi_common/umiusi_common/imu_sanity.py` の `ImuSanity`。3 ノードすべての IMU
 コールバックに入れてある。
 
 > **2026-08-21 の方針変更 — 既定では捨てない (`imu_sanity_enforce: false`)。**
@@ -46,7 +46,7 @@
 | `imu_max_step_deg` | 30.0 deg | 1 サンプルの姿勢跳躍上限。50 Hz なら 1500 deg/s 相当 |
 
 ROS 非依存の純関数なので単体テストできる。**実機で観測した実際の化け値を使ったテスト**が
-`umiusi_rl_control/test/test_imu_sanity.py` にある。
+`umiusi_common/test/test_imu_sanity.py` にある。
 符号反転 (q と −q) を急変と誤判定しないこと、正常な運動 (1 サンプル 30° まで) を
 通すことも確認済み。
 
@@ -126,7 +126,7 @@ thrust_slew_per_s: 4.0        # ESC のレート制限
 > (バンバン制御に近い) を学習している。制限を外すとその高周波成分がそのまま出て発振する。
 > 逆 (制限なしで学習 → 制限ありで実行) なら、ポリシーは元々滑らかな指令を出すので影響は小さい。
 
-**暫定の修正**: `umiusi_rl_control/thruster_limits.py` の `slew` (sim と同じ実装) を
+**暫定の修正**: `umiusi_rl_control/umiusi_rl_control/thruster_limits.py` の `slew` (sim と同じ実装) を
 `rl_attitude_node._command()` に入れた。パラメータ `servo_slew_deg_per_s` (既定 250) /
 `thrust_slew_per_s` (既定 4.0)、0 以下で無効。**実機では未検証**。
 
@@ -800,8 +800,10 @@ msg のコメントは `[rad]` だが、受け側の実装は **DEGREES**:
 `navigator_node` が rad を送っておりフルスケールでも 1.57° にしかなっていなかった (修正済み)。
 `thruster_cmd.py` と `rl_attitude_node` は元から度で正しい。
 
-> **上流に修正あり (未マージ)**: `sinsei_umiusi_msgs` 側で `ThrusterOutput.angle` /
+> **上流に修正あり (push 済み・PR 未作成)**: `sinsei_umiusi_msgs` の
+> `fix/servo-angle-unit-comment` (`520a6cf`) で `ThrusterOutput.angle` /
 > `ThrusterState.angle` のコメントを DEGREES に訂正 (issue #19-5)。
+> **PR が無いのでマージされない。** 立てるまで msg のコメントは誤ったまま。
 > 併せて分かったこと: **`ThrusterState.angle` は指令のエコーで、実測のサーボ角ではない**。
 > サーボには位置のフィードバック経路が無く (state interface は `esc/rpm` / `esc/voltage` /
 > `esc/water_leaked` のみ)、`thruster_controller` が出した角度がそのまま返る。

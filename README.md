@@ -18,13 +18,16 @@ One colcon repo, four packages, so the control layer builds without perception.
 cd ~/ros2-ws/src
 git clone https://github.com/rogy-AquaLab/sinsei_UMIUSI_autonomy.git
 cd sinsei_UMIUSI_autonomy
-./tools/setup_robot.sh          # python deps into ~/.local, nothing system-wide
+./tools/setup_robot.sh          # deps into ~/.local, then colcon build
 
-cd ~/ros2-ws
-rosdep install --from-paths src -y --ignore-src
-colcon build --packages-up-to umiusi_autonomy
-source install/setup.bash
+source ~/ros2-ws/install/setup.bash
 ```
+
+`setup_robot.sh` does not touch system files. Python packages go to `~/.local`.
+Only `rosdep` uses `sudo apt`, for ROS packages.
+
+To get a Pi to the point where this works (ssh, CAN, mDNS, fixed IP), see
+[`docs/robot_setup.md`](docs/robot_setup.md).
 
 Build only the control layer (no perception, no torch for detection):
 

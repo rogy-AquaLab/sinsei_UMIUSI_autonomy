@@ -129,70 +129,16 @@ cd ~/ros2-ws
 colcon build --packages-up-to umiusi_autonomy --cmake-args -DCMAKE_BUILD_TYPE=Release
 ```
 
-## 4. 起動
+## 4. ここから先
+
+起動・記録・トラブル対応は **README** を見ること。このファイルは機体を
+「ssh で入って ROS が動く」状態にするまでを扱う。
+
+自動判定できる項目は 1 コマンドで確認できる:
 
 ```bash
-~/ros2-ws/src/sinsei_UMIUSI_autonomy/tools/umiusi_stack.sh start          # UI あり
-~/ros2-ws/src/sinsei_UMIUSI_autonomy/tools/umiusi_stack.sh start --no-ui  # CPU を空ける
+./tools/acceptance_test.sh
 ```
 
-`ln -sfn ~/ros2-ws/src/sinsei_UMIUSI_autonomy/tools ~/umiusi-tools` としておくと楽。
-
-> **カメラ設定は `umiusi_stack.sh` が同梱の `cameras_deploy.yaml` を自動で渡す。**
-> 実機既定の `params/cameras.yaml` は `usb_camera` が `/dev/video2` (unicam = H264 非対応) を
-> 指しており、そのままだとカメラが開かない (`docs/known_issues.md` の B-1)。
-> **手で `ros2 launch sinsei_umiusi_control main.yaml` する場合は自分で渡すこと**:
->
-> ```bash
-> ros2 launch sinsei_umiusi_control main.yaml enable_cameras:=true \
->     cameras_param_file:=$(ros2 pkg prefix umiusi_autonomy)/share/umiusi_autonomy/config/cameras_deploy.yaml
-> ```
->
-> デバイス番号は USB の挿し順で変わる。`v4l2-ctl --list-devices` と
-> `v4l2-ctl --device=/dev/video4 --list-formats` で H264 が出るデバイスを確認する。
-
-> **前カメラ (CSI) を使うには公式手順の環境変数が要る** (`LIBCAMERA_IPA_*` /
-> `LD_LIBRARY_PATH` / `GST_PLUGIN_PATH`)。`~/.bashrc` に入っているが、**非対話シェルでは
-> `.bashrc` が即 return するため効かない**。systemd やスクリプトから起動する場合は明示すること
-> (`umiusi_stack.sh` は `GST_PLUGIN_PATH` を自前で設定している)。
-> **apt の `gstreamer1.0-libcamera` は絶対に入れないこと** — Camera Module V3 非対応で、
-> `/usr/local` のソースビルド版を隠して `Failed to load a suitable IPA library` になる。
-
-## 5. 確認
-
-```bash
-~/umiusi-tools/acceptance_test.sh
-```
-
-CAN / VESC 4 台の ping / カメラ / torch / 周期 / IMU 健全性 を自動判定する。
-判定できない項目 (水中挙動・色判別・距離精度など) は `docs/competition_checklist.md`。
-
-## 5-2. 単体で動かして確かめる
-
-通しで動かす前に、**姿勢制御と認識をそれぞれ単体で**確認する:
-
-```bash
-~/umiusi-tools/umiusi_stack.sh start --attitude     # 姿勢制御だけ (指令は出さない)
-~/umiusi-tools/umiusi_stack.sh start --perception   # カメラブリッジ + perception だけ
-~/umiusi-tools/umiusi_stack.sh stop
-```
-
-**何をどう見るか**は `docs/experiment_guide.md` と README「実機で動かす」にまとめてある。
-
-## 6. 記録
-
-```bash
-~/umiusi-tools/record_run.sh --name <走行名>   # 映像 + rosbag。Ctrl-C で停止
-~/umiusi-tools/record_run.sh --fix             # 走行後に bag の metadata を復元
-```
-
-詳細と実測値は `docs/logging.md`。**`ros2 bag record -a` は使わない** (容量 200 倍)。
-
-## 7. 性能の目安
-
-`docs/performance_tuning.md` に実測値。要点だけ:
-
-- **C++ の `ros2_control` は CPU 飽和下でも 50 Hz を維持**。Python 系が先に劣化する
-- **perception は前カメラ (CSI) を使う** — 下カメラ (USB) より速い (7.70 vs 4.73 Hz)
-- **torch のスレッドは 1 に固定** (実機では多いほど遅い。launch に設定済み)
-- 温度は 50°C 程度でスロットルは出ない。**制約は CPU であって熱ではない**
+CAN / VESC 4 台の ping / カメラ / torch / 周期 / IMU 健全性 を見る。
+判定できない項目 (水中挙動・色判別・距離精度) は `competition_checklist.md`。
