@@ -58,9 +58,10 @@ class _Waiter(Node):
         qos = QoSProfile(
             depth=1,
             history=QoSHistoryPolicy.KEEP_LAST,
-            # publisher 側が BEST_EFFORT だと RELIABLE の購読は繋がらない。センサ系は
-            # BEST_EFFORT が普通なので、取りこぼしても「来た」ことが分かればよい用途では
-            # そちらに合わせる
+            # BEST_EFFORT の購読は RELIABLE / BEST_EFFORT どちらの publisher にも繋がるが、
+            # RELIABLE の購読は BEST_EFFORT の publisher に繋がらない。誰が publish するか
+            # 分からない用途 (/state/imu は control か sim bridge) では緩いほうを選ぶ。
+            # 到達保証は要らない — 1 通来たことが分かればよい
             reliability=(QoSReliabilityPolicy.BEST_EFFORT if self._best_effort
                          else QoSReliabilityPolicy.RELIABLE),
             durability=QoSDurabilityPolicy.VOLATILE,

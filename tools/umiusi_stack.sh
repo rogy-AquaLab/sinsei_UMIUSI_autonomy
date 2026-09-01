@@ -49,7 +49,10 @@ wait_topic() {  # <topic> <timeout> [--best-effort]
     --topic "$topic" --timeout "$timeout" --allow-timeout "$@" 2>&1 | tail -1
 }
 
-wait_log() {   # <logfile> <regex> <timeout> — ログに完了行が出るまで待つ
+# ログに完了行が出るまで待つ。呼ぶ前にそのログを親シェルで空にしておくこと —
+# 背景プロセス側の > は fork 後に効くので、前回の起動の完了行が残っていると
+# 最初の grep がそれを拾う。CPU 負荷下で 300 回中 4 回 再現した
+wait_log() {   # <logfile> <regex> <timeout>
   local log=$1 pat=$2 timeout=$3 waited=0
   if [ "${UMIUSI_STAGE_WAIT:-signal}" = "sleep" ]; then sleep "$timeout"; return; fi
   echo "  待機: $(basename "$log") に /$pat/ (最大 ${timeout}s)"
@@ -121,6 +124,7 @@ start() {
   else
     echo "[control] CAN / IMU (カメラは上げない)"
   fi
+  : > "$LOGDIR/control.log"      # 先に空にする (wait_log の注記)
   setsid nohup ros2 launch sinsei_umiusi_control main.yaml "${camargs[@]}" \
     > "$LOGDIR/control.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
   # controller_manager の spawner が終わると /state/imu が出はじめる
@@ -135,6 +139,7 @@ start() {
       ;;
     perception)
       echo "[autonomy] カメラブリッジ + perception のみ (BT / UI なし)"
+      : > "$LOGDIR/core.log"      # 先に空にする (wait_log の注記)
       setsid nohup ros2 launch umiusi_autonomy core_autonomy.launch.py \
         "${modelargs[@]}" use_core:=false use_rosbridge:=false \
         use_camera_bridge:=true rtsp_url:="$RTSP_URL" \
@@ -143,6 +148,7 @@ start() {
       ;;
     *)
       echo "[autonomy] core + autonomy (BT / perception / カメラブリッジ$([ "$ui" = true ] && echo " / UI"))"
+      : > "$LOGDIR/core.log"      # 先に空にする (wait_log の注記)
       setsid nohup ros2 launch umiusi_autonomy core_autonomy.launch.py \
         "${modelargs[@]}" use_rosbridge:=$ui \
         use_camera_bridge:=true rtsp_url:="$RTSP_URL" \
@@ -172,6 +178,7 @@ start() {
         echo "     警告: att_cal1_best_rep103 が見つかりません。既定ポリシーで起動します"
       fi
     fi
+    : > "$LOGDIR/rl.log"      # 先に空にする (wait_log の注記)
     setsid nohup ros2 run umiusi_rl_control rl_attitude_node --ros-args \
       -p control_hz:=50.0 -p publish:=$publish "${rlmodel[@]}" \
       > "$LOGDIR/rl.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
@@ -243,7 +250,8 @@ usage() {
                  既定は av_cal1_best_rep103 (姿勢+速度指令 17 次元、v_cmd 既定 0)
 
 環境変数: UMIUSI_WS / UMIUSI_MODEL / UMIUSI_RL_MODEL / UMIUSI_CAMERAS_PARAM /
-          UMIUSI_RTSP_URL / UMIUSI_LOGDIR
+          UMIUSI_RTSP_URL / UMIUSI_LOGDIR / UMIUSI_STAGE_WAIT
+          UMIUSI_STAGE_WAIT=sleep で段の待ちを従来の固定秒に戻す (既定 signal)
 EOS
 }
 

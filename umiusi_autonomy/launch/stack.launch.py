@@ -36,7 +36,8 @@ from launch_ros.substitutions import FindPackageShare
 
 # 段の定義。timeout は umiusi_stack.sh の固定 sleep と同じ値 — シグナルで抜けるので通常は
 # ここまで待たないが、上限として越えないことを保証する。
-# best_effort: センサ系の publisher は BEST_EFFORT が普通で、RELIABLE では繋がらない。
+# best_effort: 誰が publish するか分からない段では緩い側にする (/state/imu は control か
+# sim bridge)。BEST_EFFORT の購読はどちらの publisher にも繋がる。
 # modes: その段を待つ mode。空 = 常に待つ。
 STAGES = (
     {"name": "wait_control", "topic": "/state/imu", "timeout": "20",

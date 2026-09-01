@@ -60,7 +60,8 @@ def test_IMUの待ちは常に行う(M):
 
 
 def test_IMUはbest_effortで待つ(M):
-    """センサ系の publisher は BEST_EFFORT が普通。RELIABLE では繋がらない。"""
+    """誰が publish するか分からない段なので緩い側にする。BEST_EFFORT の購読は
+    RELIABLE / BEST_EFFORT どちらの publisher にも繋がる。"""
     assert "--best-effort" in M.wait_args(M.STAGES[0])
 
 
