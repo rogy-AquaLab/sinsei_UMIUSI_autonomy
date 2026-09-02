@@ -113,7 +113,7 @@ ros2 topic echo /rl_attitude_node/depth_mode          # horiz / brake / vert / a
 ```
 降下 = ブレーキ 1 s → 3-D ポリシーの純下バースト、浮上 = ホールドして**弱正浮力に任せる**
 (受動)。斜め指令は作らない。状態機械・検証済みパラメータ・前提 (機体を弱正浮力にトリム
-しておく) は `umiusi_rl_control/depth_supervisor.py` 冒頭と issue #15 のコメント
+しておく) は `umiusi_rl_control/umiusi_rl_control/depth_supervisor.py` 冒頭と issue #15 のコメント
 (sim リハーサル結果) を参照。深度ゼロ点は起動後の最初の水圧サンプルで自動キャプチャ
 (水面で起動する前提)。
 

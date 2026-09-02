@@ -35,7 +35,7 @@ LOGDIR="${UMIUSI_LOGDIR:-/tmp/umiusi_logs}"
 
 NODES="ros2_control_node gst_camera_node camera_bridge_node perception_node
        auto_target_generator robot_strategy manual_target_generator
-       low_power_health_check rosbridge_websocket rl_attitude"
+       low_power_health_check rosbridge_websocket rl_attitude_node"
 
 # 段の切り替えを sleep ではなくシグナルで待つ。
 # 待っているのは依存関係ではなく起動時の CPU 競合 (Pi で torch を 2 回読む間に
@@ -239,7 +239,9 @@ self_tree() {
   done
 }
 
-node_pids() {  # <ノード名>
+# ここに書くのは**実行ファイル名**であること (setup.py の console_scripts と一致させる)。
+# 短い別名を書くと node_pids のパターンが一致せず、stop が取りこぼす。
+node_pids() {  # <実行ファイル名>
   local skip
   skip=$(self_tree | paste -sd'|' -)
   pgrep -f "/$1( |\$)" 2>/dev/null | grep -Ev "^(${skip:-0})$" || true

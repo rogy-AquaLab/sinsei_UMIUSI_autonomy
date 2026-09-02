@@ -108,5 +108,10 @@ Policy bundles, observation layout and the wrench-mode action contract are descr
 Experiment procedures are in [`docs/experiment_guide.md`](docs/experiment_guide.md).
 Recording and log layout are in [`docs/logging.md`](docs/logging.md).
 
-Do not run `sinsei_umiusi_core/launch/main.yaml` together with this repo's full mode.
-Both start `auto_target_generator`, and the two fight over `/cmd/target`.
+Two combinations must never run at the same time:
+
+- `sinsei_umiusi_core/launch/main.yaml` and this repo's full mode.
+  Both start `auto_target_generator`, and the two fight over `/cmd/target`.
+- `autonomy.launch.py` and `core_autonomy.launch.py`.
+  The first drives the thrusters through `/cmd/direct`, the second through core's
+  behaviour tree and `/cmd/target`. Two command paths reach the thrusters at once.
