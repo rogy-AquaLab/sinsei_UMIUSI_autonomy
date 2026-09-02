@@ -113,5 +113,7 @@ Two combinations must never run at the same time:
 - `sinsei_umiusi_core/launch/main.yaml` and this repo's full mode.
   Both start `auto_target_generator`, and the two fight over `/cmd/target`.
 - `autonomy.launch.py` and `core_autonomy.launch.py`.
-  The first drives the thrusters through `/cmd/direct`, the second through core's
-  behaviour tree and `/cmd/target`. Two command paths reach the thrusters at once.
+  The commands do not fight: `thruster_controller` skips the core logic entirely
+  while anything publishes on `/cmd/direct`, so `autonomy.launch.py` wins and the
+  behaviour tree is ignored. It does this without logging anything, so the robot
+  looks like it is running the behaviour tree when it is not.
