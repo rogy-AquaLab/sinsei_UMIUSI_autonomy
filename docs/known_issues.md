@@ -749,12 +749,12 @@ pi  -  memlock unlimited
 > (以前ここには、スルーレートを `ThrusterLimits` に含める版 `742407d` を前提にした記述が
 > あった。その版は force-push で置き換えられ remote には残っていない。)
 >
-> **⚠ ただし `controllers.yaml` の `max_duty_step_per_sec` は 1.0 のまま。** この値は
-> `logic::thruster::LinearAcceleration` にも渡っており、`/cmd/direct` に publisher が
-> 居ない経路 — つまり `command_mode: "target"` — のスルーレートを決める。**sim の
-> `thrust_slew_per_s` は 4.0** なので揃っていなかった (2026-09-01 に control 側を 4.0 に
-> 揃えた)。`command_mode: "target"` を使うと A-11 と同型のギャップが出る
-> (既定の `"direct"` では `LinearAcceleration` ごとスキップされるので効かない)。
+> **`controllers.yaml` の `max_duty_step_per_sec` は 1.0 -> 4.0 にした** (`f00b96e`、
+> 同じブランチ、2026-09-01)。この値は `logic::thruster::LinearAcceleration` に渡り、
+> `/cmd/direct` に publisher が居ない経路 — つまり `command_mode: "target"` — の
+> スルーレートを決める。sim の `thrust_slew_per_s` (4.0) と長く揃っておらず、
+> `"target"` を使うと A-11 と同型のギャップが出る状態だった。既定の `"direct"` では
+> `LinearAcceleration` ごとスキップされるので影響しない。
 >
 > **なお RL 経路 (`/cmd/direct`) はこの値を使わない。** `rl_attitude_node` 自身の
 > `thrust_slew_per_s` パラメータ (既定 4.0、`ros2 param set` で実行中に変更可) が効く。
