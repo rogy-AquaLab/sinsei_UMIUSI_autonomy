@@ -82,18 +82,20 @@ def test_待ちは段を止めない(M):
 def test_段の遷移はイベントで繋ぐ(ld):
     assert not [a for a in ld.entities if isinstance(a, TimerAction)], \
         "固定秒の待ちが復活している"
-    assert len([a for a in ld.entities if isinstance(a, RegisterEventHandler)]) == 2
+    # 段の遷移は 1 つ: IMU が来たら残りを上げる。認識の待ちは診断のためだけに残る
+    # (full から RL を外したので、認識の完了で起動するものは無い)
+    assert len([a for a in ld.entities if isinstance(a, RegisterEventHandler)]) == 1
 
 
-def test_RLは2つの起動点に分かれ二重起動しない(ld):
-    """mode で起動点が違う。同じ action を両方の on_exit に渡すと二重に上がる。"""
+def test_RLの起動点は1つだけ(ld):
+    """起動点が増えると二重起動になる。RL は attitude の 1 経路だけ。"""
     rl = []
     for h in (a for a in ld.entities if isinstance(a, RegisterEventHandler)):
         rl += [a for a in _includes(_on_exit(h)) if "rl_attitude" in _loc(a)]
-    assert len(rl) == 2, f"RL の起動点が {len(rl)} 個 (2 個であるべき)"
-    assert rl[0] is not rl[1], "同じ action を 2 箇所に渡している (二重起動になる)"
+    assert len(rl) == 1, f"RL の起動点が {len(rl)} 個 (1 個であるべき)"
 
 
+@pytest.mark.skip(reason="full から RL を外したので、認識の待ちの後に上げるものは無い")
 def test_認識の待ちの後にRLが上がる(ld):
     """full のときの本題: 検出器のロードが終わってから RL の torch を読む。"""
     handlers = [a for a in ld.entities if isinstance(a, RegisterEventHandler)]
@@ -208,6 +210,16 @@ def test_navigatorとcoreのBTは同時に上がらない(ld):
     assert not _launched_in(ld, "full", "autonomy.launch.py")
 
 
-def test_fullではcoreのBTとRLが両方上がる(ld):
+def test_fullではRLを上げない(ld):
+    """rl_attitude_node は起動しただけで /cmd/direct の publisher を作る。
+    thruster_controller はそれだけで logic ごとスキップするので、BT の
+    /cmd/target が一度も実行されない (thruster_controller.cpp:321-326)。"""
     assert _launched_in(ld, "full", "core_autonomy.launch.py")
-    assert _launched_in(ld, "full", "rl_attitude.launch.py")
+    assert not _launched_in(ld, "full", "rl_attitude.launch.py"), \
+        "full で RL が上がると BT の指令が無言で無視される"
+
+
+def test_RLはattitudeでだけ上がる(ld):
+    assert _launched_in(ld, "attitude", "rl_attitude.launch.py")
+    for m in ("full", "perception", "navigator"):
+        assert not _launched_in(ld, m, "rl_attitude.launch.py"), m

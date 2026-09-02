@@ -24,7 +24,7 @@ IMU の待ちは use_control に関係なく行う。「IMU が流れている�
 それを control が出すか sim bridge が出すかは問わない。
 
 段の順序 (mode ごと):
-  full       control -> 認識 -> RL
+  full       control -> 認識 + core の BT (RL は上げない)
   perception control -> 認識
   attitude   control -> RL           (認識を上げないので RL は IMU の直後)
   navigator  control -> 認識 + FSM   (RL は上げない。同じトピックを奪い合うため)
@@ -135,7 +135,10 @@ def generate_launch_description():
 
     # RL の起動点は mode で変わる。認識を上げるなら認識のロードが終わってから、
     # 上げないなら IMU の直後。両方に同じ action を渡すと二重起動になるので分ける
-    rl_after_percep = _rl(_mode_is(mode, "full"))
+    # RL は attitude でだけ上げる。full (core の BT) と同時に上げてはいけない —
+    # rl_attitude_node は起動しただけで /cmd/direct の publisher を作り、
+    # thruster_controller が logic ごとスキップするので、BT の /cmd/target が
+    # 一度も実行されない (thruster_controller.cpp:321-326)
     rl_after_control = _rl(_mode_is(mode, "attitude"))
 
     wait_control = _wait(STAGES[0], mode)
@@ -144,7 +147,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("mode", default_value="full",
                               choices=["full", "attitude", "perception", "navigator"],
-                              description="full = 認識 + core の BT + RL / attitude = RL のみ / "
+                              description="full = 認識 + core の BT / attitude = RL のみ / "
                                           "perception = 認識のみ / navigator = core を使わない直接経路"),
         DeclareLaunchArgument("use_control", default_value="true",
                               description="false で sinsei_umiusi_control を起動しない "
@@ -167,6 +170,4 @@ def generate_launch_description():
         RegisterEventHandler(OnProcessExit(
             target_action=wait_control,
             on_exit=[autonomy, navigator, wait_percep, rl_after_control])),
-        RegisterEventHandler(OnProcessExit(
-            target_action=wait_percep, on_exit=[rl_after_percep])),
     ])

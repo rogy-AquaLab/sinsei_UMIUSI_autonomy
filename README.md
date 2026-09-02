@@ -67,7 +67,7 @@ When that looks right, restart without `publish:=false` and press `z` in termina
 Other modes:
 
 ```bash
-ros2 launch umiusi_autonomy bringup.launch.py                    # everything: control + perception + RL
+ros2 launch umiusi_autonomy bringup.launch.py                    # control + detection + core behaviour tree
 ros2 launch umiusi_autonomy bringup.launch.py mode:=perception   # control + camera + detection, no RL
 ros2 launch umiusi_autonomy bringup.launch.py mode:=navigator    # direct path, no core, no RL
 ```
@@ -110,10 +110,13 @@ Experiment procedures are in [`docs/experiment_guide.md`](docs/experiment_guide.
 Recording and log layout are in [`docs/logging.md`](docs/logging.md).
 
 `bringup.launch.py` is the only entry point, and `mode` picks one path, so you cannot
-start two that conflict. `navigator` and the RL controller both publish to
-`/cmd/direct/thruster_controller/output_*`, and `thruster_controller` skips the core
-logic entirely while anything publishes there, so the behaviour tree would be ignored
-without saying so.
+start two that conflict.
+
+`thruster_controller` skips the core logic entirely while anything publishes on
+`/cmd/direct` — and `rl_attitude_node` creates those publishers the moment it starts,
+armed or not. So the RL controller and the core behaviour tree cannot share a mode:
+the behaviour tree would be ignored, without logging anything. `navigator` publishes
+there too, so it cannot share a mode with the RL controller either.
 
 Do not run `sinsei_umiusi_core/launch/main.yaml` alongside `mode:=full`.
 Both start `auto_target_generator`, and the two fight over `/cmd/target`.
