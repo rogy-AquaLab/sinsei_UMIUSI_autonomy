@@ -1,8 +1,15 @@
-"""実機スタックを 1 本の launch で段階起動する。tools/umiusi_stack.sh の launch 版。
+"""実機を段階起動する。ここが唯一の入口。
 
-    ros2 launch umiusi_autonomy stack.launch.py
-    ros2 launch umiusi_autonomy stack.launch.py mode:=attitude   # control + RL (カメラなし)
-    ros2 launch umiusi_autonomy stack.launch.py mode:=perception # control + 認識のみ
+    ros2 launch umiusi_autonomy bringup.launch.py                  # 認識 + core の BT + RL
+    ros2 launch umiusi_autonomy bringup.launch.py mode:=attitude   # control + RL (カメラなし)
+    ros2 launch umiusi_autonomy bringup.launch.py mode:=perception # control + 認識のみ
+    ros2 launch umiusi_autonomy bringup.launch.py mode:=navigator  # core を使わない直接経路
+
+mode を 1 つしか選べないので、同時に動かしてはいけない組み合わせを選べない。
+navigator と RL はどちらも /cmd/direct/thruster_controller/output_* に publish するので
+本当に競合する。navigator と core の BT は競合しないが、/cmd/direct に publisher が
+居ると control が logic ごとスキップする (thruster_controller.cpp) ため、BT の指令が
+無言で無視される。
 
 段を分けるのは依存関係ではなく起動時の CPU 競合のため — Pi では torch を 2 回読む間に
 controller_manager と xacro が走る。待つのは固定秒ではなく実際の完了シグナル:
@@ -19,7 +26,8 @@ IMU の待ちは use_control に関係なく行う。「IMU が流れている�
 段の順序 (mode ごと):
   full       control -> 認識 -> RL
   perception control -> 認識
-  attitude   control -> RL        (認識を上げないので RL は IMU の直後)
+  attitude   control -> RL           (認識を上げないので RL は IMU の直後)
+  navigator  control -> 認識 + FSM   (RL は上げない。同じトピックを奪い合うため)
 """
 
 from launch import LaunchDescription
@@ -41,7 +49,7 @@ from launch_ros.substitutions import FindPackageShare
 # modes: その段を待つ mode。空 = 常に待つ。
 # 認識を上げる mode。段の待ちと include の条件を同じ定数から引く — 別々に書くと
 # 「認識は上がるのに待たない」mode ができる (実際 perception でそうなっていた)
-PERCEPTION_MODES = ("full", "perception")
+PERCEPTION_MODES = ("full", "perception", "navigator")
 
 # トピック名は perception_node の detections_topic (config/autonomy.yaml) と揃えること。
 # core_autonomy.launch.py がその yaml を固定で渡すので、いまはずれようがない
@@ -108,7 +116,16 @@ def generate_launch_description():
                           "use_rosbridge": PythonExpression(
                               ["'true' if '", mode, "' == 'full' and '", use_ui, "' == 'true' "
                                "else 'false'"])}.items(),
-        condition=_mode_is(mode, *PERCEPTION_MODES))
+        condition=_mode_is(mode, "full", "perception"))
+
+    # core を使わない直接経路。navigator_node が /cmd/direct を自分で叩くので、
+    # RL と同時に上げてはいけない (同じトピックに publish する)。mode で排他にしてある
+    navigator = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution(
+            [FindPackageShare("umiusi_autonomy"), "launch", "autonomy.launch.py"])),
+        launch_arguments={"model_path": model_path, "rtsp_url": rtsp_url,
+                          "publish": publish}.items(),
+        condition=_mode_is(mode, "navigator"))
 
     def _rl(condition):
         return IncludeLaunchDescription(
@@ -126,9 +143,9 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument("mode", default_value="full",
-                              choices=["full", "attitude", "perception"],
-                              description="full = control + 認識 + RL / attitude = control + RL / "
-                                          "perception = control + 認識"),
+                              choices=["full", "attitude", "perception", "navigator"],
+                              description="full = 認識 + core の BT + RL / attitude = RL のみ / "
+                                          "perception = 認識のみ / navigator = core を使わない直接経路"),
         DeclareLaunchArgument("use_control", default_value="true",
                               description="false で sinsei_umiusi_control を起動しない "
                                           "(sim bridge を自分で立てているとき)。IMU の待ちは残る"),
@@ -148,7 +165,8 @@ def generate_launch_description():
         control,
         wait_control,
         RegisterEventHandler(OnProcessExit(
-            target_action=wait_control, on_exit=[autonomy, wait_percep, rl_after_control])),
+            target_action=wait_control,
+            on_exit=[autonomy, navigator, wait_percep, rl_after_control])),
         RegisterEventHandler(OnProcessExit(
             target_action=wait_percep, on_exit=[rl_after_percep])),
     ])

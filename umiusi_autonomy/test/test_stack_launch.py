@@ -1,4 +1,4 @@
-"""stack.launch.py の段の組み立てを固定する。
+"""bringup.launch.py の段の組み立てを固定する。
 
 外し方はどれも実機でしか出ないので、ここで捕まえる:
   * RL が認識と同時に上がる -> 段を分けた意味 (起動時の CPU 競合の回避) が消える
@@ -18,7 +18,7 @@ from launch.actions import (  # noqa: E402
     TimerAction,
 )
 
-LAUNCH = Path(__file__).resolve().parents[1] / "launch" / "stack.launch.py"
+LAUNCH = Path(__file__).resolve().parents[1] / "launch" / "bringup.launch.py"
 
 
 @pytest.fixture(scope="module")
@@ -170,3 +170,44 @@ def test_カメラ設定を渡さないと実機のカメラが開かない(ld):
     raw = dict(_control_include(ld).launch_arguments)
     got = perform_substitutions(ctx, [raw["cameras_param_file"]])
     assert got.endswith("cameras_deploy.yaml"), got
+
+
+# --- mode による排他 -----------------------------------------------------------
+
+def _launched_in(ld, mode, needle):
+    """その mode で needle という launch ファイルが起動するか。条件を実際に評価する。"""
+    from launch import LaunchContext
+    from launch.actions import RegisterEventHandler
+    ctx = LaunchContext()
+    ctx.launch_configurations.update({"mode": mode, "use_control": "true"})
+    incs = list(_includes(ld.entities))
+    for h in (a for a in ld.entities if isinstance(a, RegisterEventHandler)):
+        incs += _includes(_on_exit(h))
+    for a in incs:
+        # location は解決前の PathJoinSubstitution なので、クォートで囲まれた
+        # ファイル名として比べる。core_autonomy.launch.py は autonomy.launch.py を
+        # 部分文字列として含むので、部分一致では区別できない
+        if f"'{needle}'" in _loc(a):
+            if a.condition is None or a.condition.evaluate(ctx):
+                return True
+    return False
+
+
+def test_navigatorとRLは同時に上がらない(ld):
+    """どちらも /cmd/direct/thruster_controller/output_* に publish するので、
+    同時に動かすと本当に競合する。mode で選べないようにしてある。"""
+    assert _launched_in(ld, "navigator", "autonomy.launch.py")
+    assert not _launched_in(ld, "navigator", "rl_attitude.launch.py"), \
+        "navigator と RL が同じ mode で上がる (同じトピックを奪い合う)"
+
+
+def test_navigatorとcoreのBTは同時に上がらない(ld):
+    """競合はしないが、/cmd/direct に publisher が居ると control が logic ごと
+    スキップするので、BT の指令が無言で無視される。"""
+    assert not _launched_in(ld, "navigator", "core_autonomy.launch.py")
+    assert not _launched_in(ld, "full", "autonomy.launch.py")
+
+
+def test_fullではcoreのBTとRLが両方上がる(ld):
+    assert _launched_in(ld, "full", "core_autonomy.launch.py")
+    assert _launched_in(ld, "full", "rl_attitude.launch.py")

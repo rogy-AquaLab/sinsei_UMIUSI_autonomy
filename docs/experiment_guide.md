@@ -59,7 +59,7 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
 ### 1-1. まず指令を出さずに見る
 
 ```bash
-ros2 launch umiusi_autonomy stack.launch.py mode:=attitude publish:=false   # 計算だけ。カメラも上げない
+ros2 launch umiusi_autonomy bringup.launch.py mode:=attitude publish:=false   # 計算だけ。カメラも上げない
 ```
 
 手で組む場合はこちら（内容は同じ）:
@@ -129,7 +129,7 @@ arm して初めて姿勢保持が始まる。**必ず e-stop を手元に**:
 
 ```bash
 # Ctrl-C で止めてから publish 付きで上げ直す
-ros2 launch umiusi_autonomy stack.launch.py mode:=attitude
+ros2 launch umiusi_autonomy bringup.launch.py mode:=attitude
 # 手で組む場合: ros2 launch umiusi_rl_control rl_attitude.launch.py
 
 # arm して初めて動き出す
@@ -172,7 +172,7 @@ ros2 service call /rl_attitude_node/arm std_srvs/srv/SetBool "{data: true}"    #
 ## 2. `perception` を単独で
 
 ```bash
-ros2 launch umiusi_autonomy stack.launch.py mode:=perception   # カメラブリッジ + perception だけ
+ros2 launch umiusi_autonomy bringup.launch.py mode:=perception   # カメラブリッジ + perception だけ
 ```
 
 手で組む場合はこちら:
@@ -190,7 +190,7 @@ ros2 launch umiusi_autonomy core_autonomy.launch.py use_core:=false use_rosbridg
 > `usb_camera` が `/dev/video2`（unicam = H264 非対応）を指しており、pipeline が開けず RTSP に
 > 映像が来ない（`known_issues.md` の B-1）。その状態だと `camera_bridge_node` が
 > `ハードウェア経路 ... software に落とします` / `接続できません` を出し続ける。
-> `stack.launch.py` は同梱の `cameras_deploy.yaml`（`/dev/video4`）を既定で渡す。
+> `bringup.launch.py` は同梱の `cameras_deploy.yaml`（`/dev/video4`）を既定で渡す。
 > 別のデバイスなら `cameras_param_file:=<path>`。
 > デバイス番号は挿し順で変わるので `v4l2-ctl --device=/dev/video4 --list-formats` で確認すること。
 

@@ -58,7 +58,7 @@ ros2 run umiusi_rl_control teleop_keyboard
 **Terminal 2 — the robot.** Start without moving the thrusters:
 
 ```bash
-ros2 launch umiusi_autonomy stack.launch.py mode:=attitude publish:=false
+ros2 launch umiusi_autonomy bringup.launch.py mode:=attitude publish:=false
 ```
 
 Watch terminal 1. Tilt the robot by hand and check that the target attitude follows.
@@ -67,8 +67,9 @@ When that looks right, restart without `publish:=false` and press `z` in termina
 Other modes:
 
 ```bash
-ros2 launch umiusi_autonomy stack.launch.py                    # everything: control + perception + RL
-ros2 launch umiusi_autonomy stack.launch.py mode:=perception   # control + camera + detection, no RL
+ros2 launch umiusi_autonomy bringup.launch.py                    # everything: control + perception + RL
+ros2 launch umiusi_autonomy bringup.launch.py mode:=perception   # control + camera + detection, no RL
+ros2 launch umiusi_autonomy bringup.launch.py mode:=navigator    # direct path, no core, no RL
 ```
 
 The launch starts the hardware first, waits until `/state/imu` arrives, then starts the rest.
@@ -78,7 +79,7 @@ Useful arguments:
 
 | argument | default | what it does |
 |---|---|---|
-| `mode` | `full` | `full` / `attitude` / `perception` |
+| `mode` | `full` | `full` / `attitude` / `perception` / `navigator` |
 | `publish` | `true` | `false` computes without commanding the thrusters |
 | `use_control` | `true` | `false` if you already run the hardware or the sim bridge |
 | `model_path` | bundled | detector checkpoint |
@@ -108,12 +109,11 @@ Policy bundles, observation layout and the wrench-mode action contract are descr
 Experiment procedures are in [`docs/experiment_guide.md`](docs/experiment_guide.md).
 Recording and log layout are in [`docs/logging.md`](docs/logging.md).
 
-Two combinations must never run at the same time:
+`bringup.launch.py` is the only entry point, and `mode` picks one path, so you cannot
+start two that conflict. `navigator` and the RL controller both publish to
+`/cmd/direct/thruster_controller/output_*`, and `thruster_controller` skips the core
+logic entirely while anything publishes there, so the behaviour tree would be ignored
+without saying so.
 
-- `sinsei_umiusi_core/launch/main.yaml` and this repo's full mode.
-  Both start `auto_target_generator`, and the two fight over `/cmd/target`.
-- `autonomy.launch.py` and `core_autonomy.launch.py`.
-  The commands do not fight: `thruster_controller` skips the core logic entirely
-  while anything publishes on `/cmd/direct`, so `autonomy.launch.py` wins and the
-  behaviour tree is ignored. It does this without logging anything, so the robot
-  looks like it is running the behaviour tree when it is not.
+Do not run `sinsei_umiusi_core/launch/main.yaml` alongside `mode:=full`.
+Both start `auto_target_generator`, and the two fight over `/cmd/target`.

@@ -1,4 +1,4 @@
-"""起動経路が 2 つある (tools/umiusi_stack.sh と launch/stack.launch.py) ので、
+"""起動経路が 2 つある (tools/umiusi_stack.sh と launch/bringup.launch.py) ので、
 段の定義がずれていないことを固定する。
 
 片方だけ直すのが一番ありがちな壊し方で、実機でしか気付けない。ずれると
@@ -14,7 +14,7 @@ pytest.importorskip("launch")
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "tools" / "umiusi_stack.sh"
-LAUNCH = ROOT / "umiusi_autonomy" / "launch" / "stack.launch.py"
+LAUNCH = ROOT / "umiusi_autonomy" / "launch" / "bringup.launch.py"
 
 
 @pytest.fixture(scope="module")
