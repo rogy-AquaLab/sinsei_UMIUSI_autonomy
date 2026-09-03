@@ -45,6 +45,7 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
 * `tools/thruster_cmd.py` — 較正用のスラスタ直接指令。
   **`rl_attitude_node` と同時に動かさないこと** (同じトピックを奪い合う)。
 * `tools/bag_check.py` — bag のその場検品。撤収前に通す。
+* 推力曲線の較正 (実験 4) は `thrust_calibration.md` に手順をまとめた。
 
 持ち帰るもの:
 
