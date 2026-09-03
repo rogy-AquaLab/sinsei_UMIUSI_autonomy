@@ -38,7 +38,7 @@ navigator_node:
     imu_max_gyro: 10.0        # [rad/s] 検出の閾値 (フルスケールは 35.74)
     imu_max_step_deg: 30.0    # 1 サンプルの姿勢跳躍上限 [deg]。50Hz なら 1500 deg/s 相当
     # 断の検出 (0 以下で無効)。ヨーレートは直近値を保持するので、無いと
-    # 「回っているつもり」のまま探索が進む (known_issues A-1)
+    # 「回っているつもり」のまま探索が進む (known_issues A-18)
     imu_timeout: 1.0
     publish: true            # false -> compute the FSM but do NOT command the thrusters (dry test)
     # duty の上限。この経路には他に歯止めが無い (known_issues B-12)。飽和時は向きを

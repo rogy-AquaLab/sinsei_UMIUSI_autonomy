@@ -10,10 +10,7 @@
 
 ### A-1. 【観測中】IMU のデータ化け — 検出はするが、いまは弾いていない
 
-> **関連: IMU の断 (`imu_timeout`)。** 8/25 の水中 run では autonomy 区間だけで **15.44 s +
-> 11.10 s の欠落**があった (残り 800 s は 0.5 s 超の欠落ゼロ)。`yaw_rate` は直近値を保持する
-> ので、断が起きると「回っているつもり」のまま制御が進む。当時はコンソールにも bag にも
-> 痕跡が無かったため、`imu_timeout` (既定 1.0 s) で検出するようにした。
+> 化けではなく **断** (`imu_timeout`) は A-18。
 
 `/state/imu` に物理的にありえないサンプルが混入する。実機 (BNO055) で確認したもの:
 
@@ -24,7 +21,7 @@
 `navigator_node` / `auto_target_generator` / `rl_attitude_node` はいずれも角速度を
 ヨーレートとして、姿勢をそのまま制御・観測に使うため、**1 発のスパイクで制御が跳ねる**。
 
-**実装済み**: `umiusi_common/umiusi_common/imu_sanity.py` の `ImuSanity`。3 ノードすべての IMU
+**実装済み**: `umiusi_common/imu_sanity.py` の `ImuSanity`。3 ノードすべての IMU
 コールバックに入れてある。
 
 > **2026-08-21 の方針変更 — 既定では捨てない (`imu_sanity_enforce: false`)。**
@@ -46,7 +43,7 @@
 | `imu_max_step_deg` | 30.0 deg | 1 サンプルの姿勢跳躍上限。50 Hz なら 1500 deg/s 相当 |
 
 ROS 非依存の純関数なので単体テストできる。**実機で観測した実際の化け値を使ったテスト**が
-`umiusi_common/test/test_imu_sanity.py` にある。
+`umiusi_rl_control/test/test_imu_sanity.py` にある。
 符号反転 (q と −q) を急変と誤判定しないこと、正常な運動 (1 サンプル 30° まで) を
 通すことも確認済み。
 
@@ -126,7 +123,7 @@ thrust_slew_per_s: 4.0        # ESC のレート制限
 > (バンバン制御に近い) を学習している。制限を外すとその高周波成分がそのまま出て発振する。
 > 逆 (制限なしで学習 → 制限ありで実行) なら、ポリシーは元々滑らかな指令を出すので影響は小さい。
 
-**暫定の修正**: `umiusi_rl_control/umiusi_rl_control/thruster_limits.py` の `slew` (sim と同じ実装) を
+**暫定の修正**: `umiusi_rl_control/thruster_limits.py` の `slew` (sim と同じ実装) を
 `rl_attitude_node._command()` に入れた。パラメータ `servo_slew_deg_per_s` (既定 250) /
 `thrust_slew_per_s` (既定 4.0)、0 以下で無効。**実機では未検証**。
 
@@ -143,11 +140,11 @@ thrust_slew_per_s: 4.0        # ESC のレート制限
 >
 > **ESC ランプを外すだけで 4.67% → 7.66% (+64%) に増え、受け入れ基準 ≤5% を割る。**
 > 方策も seed も同一なので、差はプラントのレート制限だけによる。**ESC 側は実機に等価物が無い**
-> — control の `max_duty_step_per_sec` は `/cmd/direct` ではそのまま通過する (B-12) ので、
+> — control の `max_duty_step_per_sec` は `/cmd/direct` では素通りする (B-12) ので、
 > ノードが掛けなければ誰も掛けない。
 >
 > ノード側で実際に効いていることは、同一のステップ応答 (`v_cmd` 0 → 0.4) をリミッタ有無で
-> 比較して確認済み: **有効時は duty 4.24/s・サーボ 265 deg/s で上限に上限に達したまま**、無効時は
+> 比較して確認済み: **有効時は duty 4.24/s・サーボ 265 deg/s で上限に張り付き**、無効時は
 > 25.46/s・9054 deg/s。**計測はティック単位に間引くこと** — 4 トピックがそれぞれ届くので、
 > 生のまま差分を取ると dt がマイクロ秒になり 451/s のような嘘の値が出る。
 
@@ -221,7 +218,10 @@ thrust_slew_per_s: 4.0        # ESC のレート制限
 ### A-17. 【中】`max_duty` を 0.4 に上げるとロール逸脱がほぼ倍になる
 
 上限を上げれば速く動けるが、**姿勢の余裕を削る**。sim の `capsize_gate.py`
-(`Umiusi_sim`、2026-08-28。DR オン・保持フェーズのみ・指令傾斜を基準にした逸脱):
+(`Umiusi_sim`、2026-08-28。DR オン・保持フェーズのみ・指令傾斜を基準にした逸脱)。
+**この数字は `thrust_slew_range` を DR に入れる前のもの** — 2026-09-01 に ESC の
+スルーレートも振るようにしたので、同じコマンドでは再現しない (帯域の速い側が混ざるぶん
+やや悪化する見込み)。次の再学習の後にまとめて測り直す:
 
 | `max_duty` | p95 ロール逸脱 (外乱あり) | (外乱なし) | 転覆 (>90°) |
 |---:|---:|---:|---:|
@@ -313,7 +313,7 @@ ros2 topic pub --once /cmd/direct/thruster_controller/output_lf \
 ### A-9. 【解決済み】`vel_cmd` を 0 にすると出力が飽和する（原因は未特定 — 旧説明は誤り）
 
 > **解決 (2026-08-22)**: 新ポリシー (`av_cal1_best_rep103` 系) は停止保持 (v_cmd=0) でも
-> 飽和しない (sim 評価: 停止保持 2.4°)。既定を `vel_cmd 0` に戻した — arm しても勝手に
+> 飽和しない (sim 評価: 停止保持 2.4°)。既定を `vel_cmd 0` に戻した — 武装しても勝手に
 > 前進しない。以下は旧 `cruise_policy` での記録。
 
 `vel_cmd` は `_build_obs()` で**観測ベクトルにそのまま入る**。実機観測 (2026-08-21): 0 を
@@ -732,15 +732,46 @@ pi  -  memlock unlimited
 実機は PR#303 相当で、**ESC の推力符号修正 (PR#307) が未取り込み**。実機の推力方向に効くので
 `main` へ更新すること。
 
-### B-12. 【高】`/cmd/direct` は `is_forward` / `max_duty` / スルーレート制限をそのまま通過する
+### B-12. 【高】`/cmd/direct` は `is_forward` / `max_duty` / スルーレート制限を素通りする
 
-> **上流に修正あり (未マージ)**: `sinsei_UMIUSI_control` 側で対応中 (issue #19-5)。
+> **上流に修正あり (push 済み・未マージ)**: `sinsei_UMIUSI_control` の
+> `fix/actuator-limits-on-direct-cmd` (`8ae6ee7`)。issue #19-5。
 > アクチュエータの歯止めを `ThrusterLimits` に切り出し、**指令の出所によらず必ず通す**ように
 > した (duty 上限 / `servo_sign` / サーボ角 ±90 クランプ)。
-> **スルーレート制限は意図的に含まれない。** `thruster_limits.hpp` が理由を明記している —
-> ステートレスな範囲強制だけを置く方針で、状態を持つ制限を素通し経路に挟むと (a) 生指令を
-> ラッチしないと二重に掛かる (b) 実効レートが publisher のレートに依存する (c) 較正ツールが
-> 生指令を出せない。持ち主は指令を出す側 (autonomy の `thruster_limits.py`) と宣言されている。
+>
+> **スルーレート制限は `ThrusterLimits` に置かない** (2026-09-01 に push されて確定)。
+> ヘッダが理由を明記している — ステートレスな範囲強制だけを置く方針で、状態を持つ制限を
+> 素通し経路に挟むと (a) 生指令をラッチしないと二重に掛かる (b) 実効レートが publisher の
+> レートに依存する (c) 較正ツールが生指令を出せない。**持ち主は指令を出す側**
+> (autonomy の `thruster_limits.py`)。したがって **autonomy 側の `slew` は撤去しない** —
+> これが `/cmd/direct` 経路で唯一のレート制限になる。
+>
+> (以前ここには、スルーレートを `ThrusterLimits` に含める版 `742407d` を前提にした記述が
+> あった。その版は force-push で置き換えられ remote には残っていない。)
+>
+> **`controllers.yaml` の `max_duty_step_per_sec` は 1.0 -> 4.0 にした** (`f00b96e`、
+> 同じブランチ、2026-09-01)。この値は `logic::thruster::LinearAcceleration` に渡り、
+> `/cmd/direct` に publisher が居ない経路 — つまり `command_mode: "target"` — の
+> スルーレートを決める。sim の `thrust_slew_per_s` (4.0) と長く揃っておらず、
+> `"target"` を使うと A-11 と同型のギャップが出る状態だった。既定の `"direct"` では
+> `LinearAcceleration` ごとスキップされるので影響しない。
+>
+> **なお RL 経路 (`/cmd/direct`) はこの値を使わない。** `rl_attitude_node` 自身の
+> `thrust_slew_per_s` パラメータ (既定 4.0、`ros2 param set` で実行中に変更可) が効く。
+> sim の 4.0 が鏡写しにしているのは control ではなくこちら。
+>
+> **「方策が 4.0 に張り付いている」は regime 依存。** A-11 の 4.24/s は `v_cmd` 0→0.4 の
+> **ステップ過渡**の値。sim の sweep (av_mode13、12 エピソード/点) ではエピソード全体の
+> 平均が 1.33/s (上限の 33%)、上限に張り付くのは 25% の step。過渡では律速、定常では余裕あり。
+>
+> **恒久対策は ESC 側の DR** (2026-09-01 に sim へ `thrust_slew_range: [1.0, 10.0]` を導入)。
+> これで control 側の値が何であれ方策が有効になる。範囲の根拠は**リスクの非対称性** —
+> 姿勢誤差は 1.0〜無制限でほぼ不変 (0.146-0.165) だが、零空間と巡航は速い側で単調に悪化
+> (null 6.1% → 9.1%、巡航 83% → 60%)。未実測の物理 ESC ランプは実効値を遅くする方向にしか
+> 働かないので良性側。無制限を範囲に入れないのは「悪いプラントに耐える」方向へ最適化して
+> しまうため。下限を実測に置き換えるには、VESC が CAN で返している実 duty / 電流を control が
+> state に出す必要がある (いま `vesc_model.cpp` でデコードしたまま捨てている)。
+>
 > `is_forward` と `duty_per_thrust` は「推力[N] → duty の換算」なので Logic 側に残っている
 > — 直接指令はすでに duty で届くため、掛け直すと二重換算になる (A-12 で符号補正不要と確定)。
 > **マージされて実機へ入るまで、下記の実態は変わらない。** 入ったら autonomy 側の暫定シム
@@ -780,13 +811,11 @@ max_duty 0.4 プロトコルは `thruster_cmd.py` の自主チェックだけで
 当てる方式で吸収している。ESC 側の向き補正は不要と確定した (A-12: 左舷=前向き / 右舷=後向きの
 2-2 分割で、ソフトの前提と一致)。
 
-**上流の修正が入っても変わらない点**: `max_duty_step_per_sec` は `/cmd/direct` に掛からないまま
-になる (上の設計判断)。したがって **autonomy 側の `thruster_limits.slew` は撤去しない** —
-これが唯一のレート制限であり、外すと A-11 と同型の sim2real ギャップになる。
-`controllers.yaml` の値を sim に揃える作業も不要。
+**上流の修正が入っても、autonomy 側の `thruster_limits.slew` は撤去しない** — 設計 B なら
+唯一のレート制限、設計 A でもべき等な重ね掛けにしかならない (上表)。外すと設計 B のとき
+A-11 と同型の sim2real ギャップになる。
 
-**撤去するのは `servo_sign` だけ** (両側で掛かると符号が二度反転する)。`max_duty` と ±90
-クランプはべき等なので重なったままでよい。
+撤去の優先順位は冒頭の引用ブロックのとおり (`servo_sign` だけが急ぎ)。
 
 ### B-13. 【中】`ThrusterOutput.angle` の単位コメントが実装と逆
 
@@ -800,10 +829,8 @@ msg のコメントは `[rad]` だが、受け側の実装は **DEGREES**:
 `navigator_node` が rad を送っておりフルスケールでも 1.57° にしかなっていなかった (修正済み)。
 `thruster_cmd.py` と `rl_attitude_node` は元から度で正しい。
 
-> **上流に修正あり (push 済み・PR 未作成)**: `sinsei_umiusi_msgs` の
-> `fix/servo-angle-unit-comment` (`520a6cf`) で `ThrusterOutput.angle` /
+> **上流に修正あり (未マージ)**: `sinsei_umiusi_msgs` 側で `ThrusterOutput.angle` /
 > `ThrusterState.angle` のコメントを DEGREES に訂正 (issue #19-5)。
-> **PR が無いのでマージされない。** 立てるまで msg のコメントは誤ったまま。
 > 併せて分かったこと: **`ThrusterState.angle` は指令のエコーで、実測のサーボ角ではない**。
 > サーボには位置のフィードバック経路が無く (state interface は `esc/rpm` / `esc/voltage` /
 > `esc/water_leaked` のみ)、`thruster_controller` が出した角度がそのまま返る。
