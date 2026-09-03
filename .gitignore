@@ -8,5 +8,6 @@ __pycache__/
 /log/
 
 # tools/export_deploy_bundle.py が export/ から機械的に作る派生物。
-# 元のバンドル (weights.pt / obs_norm.npz / meta.json) が正で、これは commit しない
+# 元のバンドル (weights.pt / obs_norm.npz / meta.json / golden.npz) が正で、これは commit しない
 **/models/*/deploy.pt
+**/models/*/golden.pt
