@@ -51,7 +51,7 @@
 | `sim_image_pub.py` | PC から画像を `/front_cam/image_raw` へ配信する。実機カメラが無い場所で perception を試すとき用。**QoS は RELIABLE 既定** (perception_node の購読に一致させないと 1 枚も届かない) |
 | `infer_bench.py` | 検出器の 1 フレーム推論時間をスレッド数別に測る。実機ではスレッドを増やすほど遅くなる (`docs/performance_tuning.md`) ことを確認できる |
 
-> SB3 非依存の推論実装は `umiusi_rl_control/policy_infer.py` (パッケージ内) にある。
+> SB3 非依存の推論実装は `umiusi_rl_control/umiusi_rl_control/policy_infer.py` (パッケージ内) にある。
 > `rl_attitude_node` が `export/` を自動で見つけて使うので、通常は意識しなくてよい。
 
 ## 典型的な使い方

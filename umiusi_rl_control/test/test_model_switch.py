@@ -93,9 +93,9 @@ def test_直接出力のモデルでも落ちない():
 # --- disarm で state が残らないこと (_detach_all -> _reset_mode_state) ------------------
 
 def test_disarmで両方のモデルの積分器が消える():
-    """武装したまま積んだ力が、再武装の最初の tick で出てはいけない。
+    """arm したまま積んだ力が、再 armの最初の tick で出てはいけない。
 
-    リセット漏れがあると、disarm 直前のモードベクトルぶんの力が次の武装でいきなり出る。
+    リセット漏れがあると、disarm 直前のモードベクトルぶんの力が次のarmでいきなり出る。
     _select_model は「切り替わったほう」しか消さないので、disarm 側で両方消す必要がある。
     """
     horiz, vert = _Model(modes=True), _Model(modes=True)
@@ -107,8 +107,8 @@ def test_disarmで両方のモデルの積分器が消える():
     assert np.all(vert.mode_action.modes == 0.0), "鉛直側の積分器が残っている"
 
 
-def test_disarmで再武装時の切替判定がやり直される():
-    """_active_model を残すと、再武装で同じモデルが選ばれたときリセットが飛ぶ。"""
+def test_disarmで再arm時の切替判定がやり直される():
+    """_active_model を残すと、再 armで同じモデルが選ばれたときリセットが飛ぶ。"""
     horiz = _Model(modes=True)
     s = _Stub(model=horiz)
     s._select_model(horiz)
@@ -119,7 +119,7 @@ def test_disarmで再武装時の切替判定がやり直される():
 
 def test_disarmでprev_actionもゼロに戻る():
     """観測の proprio は「自分が直前に出した指令」。指令を出していない間の値を残すと、
-    再武装した最初の観測が実際とずれる。"""
+    再 armした最初の観測が実際とずれる。"""
     s = _Stub(model=_Model(modes=True))
     s._reset_mode_state()
     assert np.all(s._prev_action == 0.0)

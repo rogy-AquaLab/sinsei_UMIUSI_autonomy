@@ -98,7 +98,7 @@ mkdir -p "$OUT"
 #   * `/rosout`   … 「目標を更新: … 速度=[…]」「policy loaded (obs 14-D)」「ARMED」など
 #                   ノードのログが全部入る。**どのポリシーで走ったか**が run から確定できる
 #                   (14 次元ポリシーは速度指令を受理表示しつつ黙って捨てる — A-15)
-#   * `estop`     … 武装/解除の履歴。arm は**サービス**なので topic には出ず、/rosout 頼み
+#   * `estop`     … arm/解除の履歴。arm は**サービス**なので topic には出ず、/rosout 頼み
 # いずれも小さい (docs/logging.md の実測で重いのは /front_cam/image_raw ただ 1 つ)。
 TOPICS="
 /state/imu

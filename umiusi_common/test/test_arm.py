@@ -50,7 +50,7 @@ def _make(start_armed=True):
     return n, a, calls
 
 
-def test_既定は武装状態で立ち上がる():
+def test_既定はarm状態で立ち上がる():
     _, a, calls = _make()
     assert a.armed is True
     assert calls == [], "起動しただけで detach を打ってはいけない"
@@ -86,7 +86,7 @@ def test_estopトピックで解除と復帰ができる():
     # 同一性ではなく中身を見る。 qos is ESTOP_QOS だけだと、ESTOP_QOS の durability を
     # VOLATILE に落とす変更が素通りする (= 守りたい性質そのものが壊れても気付けない)
     assert qos.durability == DurabilityPolicy.TRANSIENT_LOCAL, \
-        "latch されていないと、e-stop 中に再起動したノードが武装状態で上がってくる"
+        "latch されていないと、e-stop 中に再起動したノードがarm 状態で上がってくる"
     assert qos.depth >= 1
     cb(Bool(data=True))
     assert a.armed is False and len(calls) == 1

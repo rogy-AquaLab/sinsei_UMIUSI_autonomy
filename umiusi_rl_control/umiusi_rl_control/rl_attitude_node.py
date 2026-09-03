@@ -116,7 +116,7 @@ class RlAttitudeNode(Node):
         self.declare_parameter("imu_topic", "/state/imu")
         self.declare_parameter("control_hz", 50.0)
         # 前進速度の既定は 0。新ポリシーは停止保持 (v_cmd=0) も学習分布内なので、
-        # 旧 A-9 (0 が分布外で飽和する) は当てはまらない。武装しても勝手に前進しない。
+        # 旧 A-9 (0 が分布外で飽和する) は当てはまらない。arm しても勝手に前進しない。
         self.declare_parameter("vel_cmd", 0.0)             # forward (+X) commanded speed [m/s]
         self.declare_parameter("servo_range_deg", 90.0)
         # 実機のサーボ回転センスが ch ごとに反転している場合の補正 (lf, lb, rb, rf)。
@@ -136,8 +136,8 @@ class RlAttitudeNode(Node):
         self.declare_parameter("servo_slew_deg_per_s", 250.0)
         self.declare_parameter("thrust_slew_per_s", 4.0)
         # 既定は disarmed。起動と同時にスラスタへ指令が出るのを避ける。
-        # ~/arm サービス (data:true) で武装してから動かす。
-        self.declare_parameter("start_armed", False)       # True = 起動と同時に武装する
+        # ~/arm サービス (data:true) でarm してから動かす。
+        self.declare_parameter("start_armed", False)       # True = 起動と同時にarmする
         # Real-time setpoint (hold last; until a message arrives, use the launch defaults below).
         self.declare_parameter("setpoint_topic", "~/setpoint")   # umiusi_rl_control_msgs/AttitudeTarget
         # デッドマン: 速度指令が vel_timeout 秒来なければ 0 に戻す (姿勢目標は保持)。
@@ -235,7 +235,7 @@ class RlAttitudeNode(Node):
         self.add_on_set_parameters_callback(self._on_set_params)
         self._publish_current_setpoint()
         # ポリシーは spin 前に読む。torch の import に数秒かかるので、tick 内で読むと
-        # 武装後の最初の周期で e-stop が止まる窓ができる
+        # arm後の最初の周期で e-stop が止まる窓ができる
         self._ensure_model()
         self.get_logger().info(
             f"rl_attitude_node: default target=upright v_cmd=[{self._vel:.3f},0,0] m/s @ {self._hz:.0f} Hz "
@@ -701,7 +701,7 @@ class RlAttitudeNode(Node):
         self._reset_mode_state()
         if not self._publish:      # compute-only node never commands /cmd, so nothing to detach
             return
-        # 停止はレート制限を通さない (安全側。次に武装したとき 0 から積み直す)
+        # 停止はレート制限を通さない (安全側。次にarm したとき 0 から積み直す)
         self._servo_cmd[:] = 0.0
         self._duty_cmd[:] = 0.0
         for p in POSITIONS:
@@ -731,14 +731,14 @@ class RlAttitudeNode(Node):
         """レンチモードの積分器と前回サーボ角を初期化する (disarm / e-stop のたび)。
 
         prev_action も 0 に戻す — 観測の proprio は「自分が直前に出した指令」なので、
-        指令を出していない間の値を残すと、再武装した最初の観測が実際とずれる。
+        指令を出していない間の値を残すと、再 armした最初の観測が実際とずれる。
         """
         reset_any = False
         for m in (self._model, self._vert_model):
             if m is not None and getattr(m, "mode_action", None) is not None:
                 m.mode_action.reset()
                 reset_any = True
-        self._active_model = None      # 再武装時に切替判定をやり直す
+        self._active_model = None      # 再 arm時に切替判定をやり直す
         if reset_any:
             # 直接出力の方策では従来どおり prev_action を触らない (挙動を変えない)
             self._prev_action = np.zeros(ACT_DIM)

@@ -298,7 +298,7 @@ Ctrl-C で両方をきれいに閉じる。出力は `~/runs/<日時>-<名前>/`
 |---|---|
 | `/rl_attitude_node/setpoint` | teleop が**送った**目標。`current_setpoint` (ノードが**適用した**目標) と突き合わせると、届いていないのか無視されたのかが分かる |
 | `/rosout` | **どのポリシーで走ったか** (`policy loaded … obs 17-D`)、`目標を更新`、`ARMED`。14 次元ポリシーは速度指令を受理表示しつつ黙って捨てるので、これが無いと区別できない (A-15) |
-| `/rl_attitude_node/estop` | 武装/解除の履歴。`~/arm` は**サービス**なので topic には出ない |
+| `/rl_attitude_node/estop` | arm/解除の履歴。`~/arm` は**サービス**なので topic には出ない |
 
 `bag_check.py` はこの `/rosout` を読んで、**14 次元ポリシーに速度指令が入っている run を
 FAIL にする**。プールサイドで気付けるようにするため。

@@ -33,6 +33,7 @@ setup(
             "camera_bridge_node = umiusi_autonomy.camera_bridge_node:main",
             "navigator_node = umiusi_autonomy.navigator_node:main",
             "auto_target_generator = umiusi_autonomy.auto_target_generator:main",
+            "wait_for_topic = umiusi_autonomy.wait_for_topic:main",
         ],
     },
 )

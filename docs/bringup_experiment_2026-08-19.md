@@ -170,7 +170,7 @@ ModuleNotFoundError: No module named 'numpy._core.numeric'
 `custom_objects` でも `numpy._core` シムでも回避不可 (次は `PCG64 is not a known BitGenerator`)。
 
 **対処**: 重みと正規化統計を素形式へ書き出し、SB3/cloudpickle 非依存の torch 推論に置換。
-`export_policy.py` で書き出し、`umiusi_rl_control/policy_infer.py` で推論。
+`export_policy.py` で書き出し、`umiusi_rl_control/umiusi_rl_control/policy_infer.py` で推論。
 **SB3 との出力差は 200 サンプルで最大 0.000e+00 (完全一致)**。実機 numpy 1.26 で動作確認済み。
 
 ## 6. カメラ
@@ -187,7 +187,7 @@ ModuleNotFoundError: No module named 'numpy._core.numeric'
 | `/dev/video2` | YUYV/UYVY/RGB (unicam=CSI) | **H264 非対応** |
 | `/dev/video4` | **H264 のみ** | `v4l2src ! video/x-h264` が要求する形式 |
 
-- `usb_camera` の `device=/dev/video2` は誤り。`docs/camera.md` と実機の両方が **`/dev/video4`** を指す。
+- `usb_camera` の `device=/dev/video2` は誤り。上流 (`sinsei_UMIUSI_control`) の `docs/camera.md` と実機の両方が **`/dev/video4`** を指す。
   正しいデバイスで手動実行すると `PLAYING` に到達しエラー無し、**CPU 12.3%** のみ
   (カメラ内蔵 H264 ハードエンコードのため Pi は parse と RTSP 転送だけ)。
 - `pi_camera` は **`no element "libcamerasrc"`** で FATAL。
