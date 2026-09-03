@@ -3,8 +3,7 @@
 
 perception_node:
   ros__parameters:
-    # learned detector checkpoint (.pt)。**空なら同梱のものにフォールバックする**
-    # (models/detector/README.md)。launch 引数 model_path で上書きできる。
+    # 空なら同梱のものを使う (models/detector/README.md)。launch 引数 model_path で上書き
     model_path: ""
     image_topic: "/front_cam/image_raw"
     detections_topic: "/perception_node/detections"
@@ -13,9 +12,7 @@ perception_node:
     fovy_deg: 60.0           # MUST match the physical camera vertical FOV
     max_rate_hz: 10.0        # cap detector rate (realistic Pi-4 timing); 0 = every frame
     sanitise_near: true      # near red/blue colour re-confirmation before the FSM commits
-    # この秒数だけ画像が来なければ警告する (0 以下で無効)。実機カメラは RTSP なので
-    # camera_bridge_node が居ないと 1 枚も来ないが、**画像ゼロでも無言で回り続ける**。
-    # 8/25 の run はそれで 15.6 分間ずっと検出ゼロだったことに帰るまで気付けなかった
+    # 断の検出 (0 以下で無効)。画像ゼロでも無言で回り続けるので、無いと現場で気付けない
     image_timeout: 5.0
 
 navigator_node:
@@ -29,32 +26,23 @@ navigator_node:
     servo_range_deg: 90.0    # ThrusterOutput.angle [deg] = servo_action * servo_range_deg
                              # (受け側 sinsei_umiusi_control は DEGREES を期待し ±90 の範囲外は
                              #  CAN フレームを落とす。msg の "[rad]" コメントのほうが誤り)
-    # DEPLOY CALIBRATION — 実機のサーボ回転センスが ch ごとに反転している場合の補正 (lf, lb, rb, rf)。
-    # sim のアロケーションは 4 基同符号 (+角度 = 推力が上向き) 前提。実機で「+指令なのに推力が
-    # 下を向く」ch があれば、その要素を -1.0 にする。**実験 1 (thruster_cmd.py spin) で確認してから
-    # 変えること** — 誤った符号はヒーブ指令をロールに化けさせる。
+    # DEPLOY CALIBRATION — ch ごとのサーボ回転センス補正 (lf, lb, rb, rf)。sim 側は 4 基同符号
+    # が前提。変える前に実験 1 (thruster_cmd.py spin) で確認すること — 誤った符号は
+    # ヒーブ指令をロールに化けさせる
     servo_sign: [1.0, 1.0, 1.0, 1.0]
     # DEPLOY CALIBRATION — verify against the mounted IMU (sensor_msgs/Imu.angular_velocity is RAD/S):
     yaw_rate_axis: "z"       # IMU axis carrying the vehicle yaw rate (x/y/z); REP-103 body frame -> z (up)
     yaw_rate_sign: 1.0
-    # IMU サニティフィルタ (実機 BNO055 の化けサンプル対策)。
-    # ゼロクォータニオン / 角速度の int16 フルスケール張り付き / 姿勢の跳躍 を検出する。
-    # **既定は検出とログだけで、値は破棄しない** — 実機で該当は 0.44% しかなく、一方で
-    # フィルタ自身の誤爆のほうが被害が大きかったため (docs/known_issues.md A-1)。
-    # データが貯まって閾値を決めたら true にする。
+    # IMU サニティフィルタ。既定は検出とログだけで破棄しない (known_issues A-1)
     imu_sanity_enforce: false
     imu_max_gyro: 10.0        # [rad/s] 検出の閾値 (フルスケールは 35.74)
     imu_max_step_deg: 30.0    # 1 サンプルの姿勢跳躍上限 [deg]。50Hz なら 1500 deg/s 相当
-    # IMU がこの秒数来なければ警告する (0 以下で無効)。**ヨーレートは直近値を保持する**ので、
-    # 断が起きると「回っているつもり」のまま探索が進む。8/25 の run では autonomy 区間だけで
-    # 15.44 s + 11.10 s の欠落があり、コンソールにも bag にも痕跡が無かった
+    # 断の検出 (0 以下で無効)。ヨーレートは直近値を保持するので、無いと
+    # 「回っているつもり」のまま探索が進む (known_issues A-18)
     imu_timeout: 1.0
     publish: true            # false -> compute the FSM but do NOT command the thrusters (dry test)
-    # duty の上限。**この経路には他に歯止めが無い** (/cmd/direct は control の max_duty と
-    # スルーレート制限を素通りする — known_issues B-12)。飽和時は向きを保ったまま 4 基を
-    # 同率で縮める。**0.25** — 0.2 は 96% 飽和で比例制御になっておらず、零空間に 41% 流れて
-    # いるぶん降下もできない (8/25 の水中 run)。0.25 でロール転覆余裕が 1.1x。0.4 は配分を
-    # 直してから (上限は力の次元で効く: F = |u|^2*30 N なので 0.2->0.4 は 4 倍)。
+    # duty の上限。この経路には他に歯止めが無い (known_issues B-12)。飽和時は向きを
+    # 保ったまま 4 基を同率で縮める。既定 0.25 の根拠は known_issues A-17
     max_duty: 0.25
     command_mode: "direct"   # "direct" -> /cmd/direct ThrusterOutput (default, self-enabling).
                              # "target" -> ride on core: publish Target on /cmd/target (EXPERIMENTAL;
@@ -73,11 +61,7 @@ auto_target_generator:          # lifecycle node for the on-core path (core_auto
     # DEPLOY CALIBRATION — verify against the mounted IMU (sensor_msgs/Imu.angular_velocity is RAD/S):
     yaw_rate_axis: "z"       # IMU axis carrying the vehicle yaw rate (x/y/z); REP-103 body frame -> z (up)
     yaw_rate_sign: 1.0
-    # IMU サニティフィルタ (実機 BNO055 の化けサンプル対策)。
-    # ゼロクォータニオン / 角速度の int16 フルスケール張り付き / 姿勢の跳躍 を検出する。
-    # **既定は検出とログだけで、値は破棄しない** — 実機で該当は 0.44% しかなく、一方で
-    # フィルタ自身の誤爆のほうが被害が大きかったため (docs/known_issues.md A-1)。
-    # データが貯まって閾値を決めたら true にする。
+    # IMU サニティフィルタ。既定は検出とログだけで破棄しない (known_issues A-1)
     imu_sanity_enforce: false
     imu_max_gyro: 10.0        # [rad/s] 検出の閾値 (フルスケールは 35.74)
     imu_max_step_deg: 30.0    # 1 サンプルの姿勢跳躍上限 [deg]。50Hz なら 1500 deg/s 相当
