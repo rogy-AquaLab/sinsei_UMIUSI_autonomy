@@ -36,6 +36,8 @@ RECORDED_TOPICS = (
     "/state/imu", "/state/thruster_state_all", "/state/high_power_circuit_info",
     "/state/low_power_circuit_info", "/state/main_power_enabled", "/state/imu_temperature",
     "/perception_node/detections", "/cmd/target",
+    # control 内 RL (control_mode:=rl) の run で効くもの。UI が送った目標と arm の履歴
+    "/user_input/target", "/cmd/thruster_runnable_all",
     *CMD_TOPICS,
     "/rl_attitude_node/current_setpoint", "/rl_attitude_node/setpoint",
     "/rl_attitude_node/estop", "/rl_attitude_node/depth",
@@ -43,7 +45,9 @@ RECORDED_TOPICS = (
     "/rosout",
 )
 ROSOUT_TOPIC = "/rosout"
-RL_NODE = "rl_attitude_node"
+# RL がどちらのスタックで走ったか。autonomy 版は rl_attitude_node、control 版は
+# attitude_controller (logic::attitude::Rl)。どちらも "policy loaded from ..." を出す
+RL_NODES = ("rl_attitude_node", "attitude_controller")
 # 主ポリシーの読み込みログ。**行頭一致で見ること。** 深度スーパーバイザは
 # 「depth supervisor: vert policy loaded from …」を**主ポリシーの直後に**出すので、
 # 部分一致にすると vert のほうで上書きされ、`att_only` が False に戻ってしまう
@@ -82,13 +86,16 @@ def read_bag(bag_dir):
 
 
 def _is_rl_logger(name: str) -> bool:
-    """`/rosout` の `name` が rl_attitude_node のものか。
+    """`/rosout` の `name` が RL を回しているノードのものか。
+
+    autonomy 版は `rl_attitude_node`、control 版 (control_mode:=rl) は
+    `attitude_controller`。どちらも "policy loaded from ..." を出す。
 
     ROS 2 の logger 名は**名前空間を `.` で繋いだ完全修飾名** (`ns.rl_attitude_node`) なので、
     素の名前だけで比較すると名前空間付きで起動したときに**黙って 0 件**になり、
     「RL を起動していない」という誤った WARN に化ける (この検査が防ぎたい失敗そのもの)。
     """
-    return name == RL_NODE or name.endswith("." + RL_NODE)
+    return any(name == n or name.endswith("." + n) for n in RL_NODES)
 
 
 def _parse_velocity(line: str):

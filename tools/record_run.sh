@@ -99,7 +99,26 @@ mkdir -p "$OUT"
 #                   ノードのログが全部入る。**どのポリシーで走ったか**が run から確定できる
 #                   (14 次元ポリシーは速度指令を受理表示しつつ黙って捨てる — A-15)
 #   * `estop`     … arm/解除の履歴。arm は**サービス**なので topic には出ず、/rosout 頼み
+#                   (autonomy 版のみ。control 版の arm は `/cmd/thruster_runnable_all`)
+#
+# control 版のために足した 2 つ:
+#   * `/user_input/target`        … UI (ゲームパッド) が**送った**目標。`/cmd/target`
+#                                   (core が**転送した**もの) と突き合わせれば、届いて
+#                                   いないのか無視されたのかが分かる。autonomy 版の
+#                                   setpoint / current_setpoint と同じ役割
+#   * `/cmd/thruster_runnable_all`… arm/解除の実体。core の robot_strategy が出し
+#                                   gate_controller が受ける。**これが無いと「回らなかった
+#                                   のは arm していないからか、指令が 0 だからか」が
+#                                   bag から確定できない**
 # いずれも小さい (docs/logging.md の実測で重いのは /front_cam/image_raw ただ 1 つ)。
+#
+# **2 つのスタックのどちらでも録れるようにしてある。**
+#   autonomy 版 … RL は rl_attitude_node。指令は /cmd/direct/... に出る
+#   control 版  … RL は attitude_controller の logic (control_mode:=rl)。指令はトピックに
+#                 出ず /state/thruster_state_all のエコーだけ。arm は core の
+#                 /cmd/thruster_runnable_all、目標は UI -> /user_input/target -> /cmd/target
+# 走らせていない側のトピックは当然 publish されないので、下の購読レポートで
+# ⚠ が出る。**それは正常**。どちらのスタックで走ったかは /rosout から確定できる。
 TOPICS="
 /state/imu
 /state/thruster_state_all
@@ -109,6 +128,8 @@ TOPICS="
 /state/imu_temperature
 /perception_node/detections
 /cmd/target
+/user_input/target
+/cmd/thruster_runnable_all
 /cmd/direct/thruster_controller/output_lf
 /cmd/direct/thruster_controller/output_lb
 /cmd/direct/thruster_controller/output_rb
