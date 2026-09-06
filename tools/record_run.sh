@@ -40,6 +40,9 @@ FLOW=false
 # 下カメラ (cam2) の V4L2 デバイス。露光/ゲインの実値を読むためだけに使う (書き換えない)。
 # cameras_deploy.yaml の usb_camera と揃えること
 CAM2_DEV="${UMIUSI_CAM2_DEV:-/dev/video4}"
+# スタックのログの置き場。umiusi_stack.sh:34 と同じ既定にすること (取り違えると回収できない)。
+# **/tmp なので Pi を再起動すると消える。** run ディレクトリへ写すのが下の collect_stack_logs
+LOGDIR="${UMIUSI_LOGDIR:-/tmp/umiusi_logs}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -223,6 +226,38 @@ save_cam_controls() {
   fi
 }
 
+# スタックのログ (rl / control / core) を run ディレクトリへ写す。
+#
+# **これが無いと「どの方策で走ったか」が run から確定できない。** rl.log には
+# 「policy loaded from ... (obs N-D)」が出るが、置き場が $LOGDIR (既定 /tmp) なので
+# **Pi を再起動した時点で消える**。8/25 の run はこれで失われ、bag だけが残った。
+#
+# bag 側 (このスクリプト) と stack 側 (umiusi_stack.sh) で系統が別れているのが原因なので、
+# 系統をまたぐこの 1 箇所で吸収する。cp が失敗しても記録の停止処理は続ける。
+collect_stack_logs() {
+    [ -d "$LOGDIR" ] || { echo "  ⚠ $LOGDIR が無いので stack のログを回収できません"; return 0; }
+    local n=0 got=""
+    mkdir -p "$OUT/stack_logs"
+    for f in "$LOGDIR"/*.log; do
+        [ -e "$f" ] || continue
+        cp -p "$f" "$OUT/stack_logs/" 2>/dev/null && { n=$((n+1)); got="$got $(basename "$f")"; }
+    done
+    if [ "$n" -eq 0 ]; then
+        echo "  ⚠ $LOGDIR にログがありません — スタックを起動していないか、置き場が違います"
+        echo "    (umiusi_stack.sh と同じ UMIUSI_LOGDIR を使っているか確認)"
+        return 0
+    fi
+    echo "  stack ログ $n 本を回収:$got -> stack_logs/"
+    # どの方策が載っていたかをその場で出す。プールサイドで気付けるようにする
+    local loaded
+    loaded=$(grep -h "policy loaded from" "$OUT"/stack_logs/*.log 2>/dev/null | tail -2)
+    if [ -n "$loaded" ]; then
+        echo "$loaded" | sed 's/^/    /'
+    else
+        echo "    ⚠ 「policy loaded from」がログに出ていません — RL を起動していない run です"
+    fi
+}
+
 # **子プロセスを起こす前に** trap を張る。起動直後〜trap 設定前に Ctrl-C が入ると
 # 録画と bag が孤児として回り続けてしまうため。
 cleanup() {
@@ -248,6 +283,7 @@ cleanup() {
     ros2 bag reindex "$OUT/bag" > "$OUT/reindex.log" 2>&1 \
       && echo "  reindex 完了" || echo "  ⚠ reindex に失敗 (bag/reindex.log を確認)"
   fi
+  collect_stack_logs
   # 何が録れたのかを最後にもう一度出す。bag を開くまで分からない状態にしない。
   check_topics
   # 映像の健康状態も表面化する。8/25 の run は cam2 が 0 バイトのまま・録画が bag より
