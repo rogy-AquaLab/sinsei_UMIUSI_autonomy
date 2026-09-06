@@ -36,7 +36,10 @@ RECORDED_TOPICS = (
     "/state/imu", "/state/thruster_state_all", "/state/high_power_circuit_info",
     "/state/low_power_circuit_info", "/state/main_power_enabled", "/state/imu_temperature",
     "/perception_node/detections", "/cmd/target",
-    # control 内 RL (control_mode:=rl) の run で効くもの。UI が送った目標と arm の履歴
+    # control 内 RL (control_mode:=rl) の run で効くもの。UI が送った目標と arm の履歴。
+    # **走らせていない側のスタックのトピックは欠落として報告される。それは正常。**
+    # 較正 run (開ループ) では core も UI も上げないので、この 2 つと rl_attitude_node/*
+    # は出ない。⚠ の数ではなく「その run で出るはずのものが出ているか」で見ること
     "/user_input/target", "/cmd/thruster_runnable_all",
     *CMD_TOPICS,
     "/rl_attitude_node/current_setpoint", "/rl_attitude_node/setpoint",

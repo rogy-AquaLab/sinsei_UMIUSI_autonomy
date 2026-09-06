@@ -226,7 +226,7 @@ save_cam_controls() {
   fi
 }
 
-# スタックのログ (rl / control / core) を run ディレクトリへ写す。
+# $LOGDIR の *.log を run ディレクトリへ写す (rl / control / core とは限らない — 全部拾う)。
 #
 # **これが無いと「どの方策で走ったか」が run から確定できない。** rl.log には
 # 「policy loaded from ... (obs N-D)」が出るが、置き場が $LOGDIR (既定 /tmp) なので
@@ -235,27 +235,27 @@ save_cam_controls() {
 # bag 側 (このスクリプト) と stack 側 (umiusi_stack.sh) で系統が別れているのが原因なので、
 # 系統をまたぐこの 1 箇所で吸収する。cp が失敗しても記録の停止処理は続ける。
 collect_stack_logs() {
-    [ -d "$LOGDIR" ] || { echo "  ⚠ $LOGDIR が無いので stack のログを回収できません"; return 0; }
-    local n=0 got=""
+  [ -d "$LOGDIR" ] || { echo "  ⚠ $LOGDIR が無いので stack のログを回収できません"; return 0; }
+  local n=0 got=""
+  for f in "$LOGDIR"/*.log; do
+    [ -e "$f" ] || continue
     mkdir -p "$OUT/stack_logs"
-    for f in "$LOGDIR"/*.log; do
-        [ -e "$f" ] || continue
-        cp -p "$f" "$OUT/stack_logs/" 2>/dev/null && { n=$((n+1)); got="$got $(basename "$f")"; }
-    done
-    if [ "$n" -eq 0 ]; then
-        echo "  ⚠ $LOGDIR にログがありません — スタックを起動していないか、置き場が違います"
-        echo "    (umiusi_stack.sh と同じ UMIUSI_LOGDIR を使っているか確認)"
-        return 0
-    fi
-    echo "  stack ログ $n 本を回収:$got -> stack_logs/"
-    # どの方策が載っていたかをその場で出す。プールサイドで気付けるようにする
-    local loaded
-    loaded=$(grep -h "policy loaded from" "$OUT"/stack_logs/*.log 2>/dev/null | tail -2)
-    if [ -n "$loaded" ]; then
-        echo "$loaded" | sed 's/^/    /'
-    else
-        echo "    ⚠ 「policy loaded from」がログに出ていません — RL を起動していない run です"
-    fi
+    cp -p "$f" "$OUT/stack_logs/" 2>/dev/null && { n=$((n+1)); got="$got $(basename "$f")"; }
+  done
+  if [ "$n" -eq 0 ]; then
+    echo "  ⚠ $LOGDIR にログがありません — スタックを起動していないか、置き場が違います"
+    echo "    (umiusi_stack.sh と同じ UMIUSI_LOGDIR を使っているか確認)"
+    return 0
+  fi
+  echo "  stack ログ $n 本を回収:$got -> stack_logs/"
+  # どの方策が載っていたかをその場で出す。プールサイドで気付けるようにする
+  local loaded
+  loaded=$(grep -h "policy loaded from" "$OUT"/stack_logs/*.log 2>/dev/null | tail -2)
+  if [ -n "$loaded" ]; then
+    echo "$loaded" | sed 's/^/    /'
+  else
+    echo "    ⚠ 「policy loaded from」がログに出ていません — RL を起動していない run です"
+  fi
 }
 
 # **子プロセスを起こす前に** trap を張る。起動直後〜trap 設定前に Ctrl-C が入ると
