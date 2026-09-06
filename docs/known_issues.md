@@ -749,8 +749,12 @@ pi  -  memlock unlimited
 > (以前ここには、スルーレートを `ThrusterLimits` に含める版 `742407d` を前提にした記述が
 > あった。その版は force-push で置き換えられ remote には残っていない。)
 >
-> **`controllers.yaml` の `max_duty_step_per_sec` は 1.0 -> 4.0 にした** (`f00b96e`、
-> 同じブランチ、2026-09-01)。この値は `logic::thruster::LinearAcceleration` に渡り、
+> **`controllers.yaml` の `max_duty_step_per_sec` を 1.0 -> 4.0 にする変更 (`f00b96e`) は
+> このブランチから外れ、`tune/thruster-slew-4-0` に退避している** (2026-09-06 に確認:
+> `fix/actuator-limits-on-direct-cmd` の `controllers.yaml` は 1.0 のまま)。
+> sim が ESC ランプの domain randomization `[1.0, 10.0]` を入れたので、control の 1.0 は
+> **範囲の中**であり揃える必要が無くなった。sim の sweep 実測でも 1.0/s は範囲内で最良
+> (ori 0.154 / null_pw 5.2% / 巡航 104%)。以下は退避前の記述。この値は `logic::thruster::LinearAcceleration` に渡り、
 > `/cmd/direct` に publisher が居ない経路 — つまり `command_mode: "target"` — の
 > スルーレートを決める。sim の `thrust_slew_per_s` (4.0) と長く揃っておらず、
 > `"target"` を使うと A-11 と同型のギャップが出る状態だった。既定の `"direct"` では
