@@ -152,7 +152,7 @@
 | 7-1 | 映像 | RTSP を H264 のまま録画 (再エンコードしないので CPU ほぼゼロ) |
 | 7-2 | 状態・指令 | `ros2 bag record` (映像以外) |
 | 7-3 | 検出結果 | `/perception_node/detections` を bag に含める |
-| 7-4 | ノードのログ | `~/umiusi_logs/` |
+| 7-4 | ノードのログ | `/tmp/umiusi_logs/` (`record_run.sh` が run の `stack_logs/` へ写す) |
 | 7-5 | 時刻の対応付け | bag と映像を後で突き合わせられるようにする |
 
 ---

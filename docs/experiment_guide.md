@@ -49,7 +49,16 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && ./tools/setup_robot.sh
 
 持ち帰るもの:
 
-1. `rl.log` (`~/umiusi_logs/`)。起動直後の 2 行でどのポリシーで走ったかが決まる。
+1. `rl.log`。起動直後の 2 行でどのポリシーで走ったかが決まる。
+   `record_run.sh` が停止時に run の `stack_logs/` へ写すので、**Ctrl-C で正常に止めれば
+   自動で付いてくる**。元は `$UMIUSI_LOGDIR` (既定 `/tmp/umiusi_logs/`)。
+   **`kill -9` で止めた run は回収されない。`/tmp` なので Pi を再起動する前に手で拾うこと**:
+
+   ```sh
+   ls -la /tmp/umiusi_logs/
+   # 名前が変わっていても拾う
+   grep -rls "policy loaded from" /tmp /var/tmp "$HOME" 2>/dev/null | head
+   ```
 2. `record_run.sh --flow` で 1 本 (下カメラの mp4 + 露光の実値)。
 3. 走行後に `record_run.sh --fix`、その場で `bag_check.py`。
 
