@@ -18,6 +18,38 @@
 さらに sim の `configs/umiusi.yaml` 自身が `thrust_per_cmd` と `thrust_curve_exp` について
 **`BOTH VALUES ARE UNCALIBRATED and confounded with each other`** と書いている。
 
+**2026-09-09 に grep で確認した範囲** (`ros2_ws/src` 全体):
+
+- `thrust_curve_exp` / `thrust_per_cmd` を読んでいるのは **`umiusi_rl_control/mode_action.py` だけ**
+  (`rl_attitude_node.py` はログ表示のみ)。上の表の「direct + RL」以外は契約値を参照していない。
+- `navigator_node` は `umiusi_perception.control.feedforward_allocation` を呼んでいる。
+  **`umiusi_perception` はこのリポジトリに無い**ので、その既定が 1.0 であることは
+  ここからは確認できていない。上の表のその行は未検証として扱うこと。
+
+## 運用時の max_duty — 既定 0.25 だが実運用は 0.3〜0.4 の可能性がある
+
+到達速度の議論をするときは **cap がいくつだったか**を run ごとに確定させること。
+sim の解では `thrust_curve_exp` を 2.0 に固定したままでも、cap 0.25 で 0.40 kt、
+cap 0.40 で 0.70 kt と **1.75 倍**変わる。「exp が汚染されている」と「運用 cap が高い」は
+排他ではなく、両方効いている可能性がある。
+
+| 経路 | 既定 | 備考 |
+|---|---:|---|
+| `rl_attitude_node` / `rl_attitude.launch.py` | 0.25 | |
+| `navigator_node` | 0.25 | **この経路の歯止めはこれだけ** |
+| `umiusi_autonomy/config/autonomy.yaml` | 0.25 | |
+| control `rl.max_duty` | 0.25 | |
+| control `thruster_controller.max_duty` | 0.5 | **direct 経路では効かない** (B-12) |
+
+**既定が 0.25 でも、ドキュメントは上げることを推奨している**:
+
+- `rl_attitude.launch.py` の使用例に `max_duty:=0.4` が直書きされている
+- 同ファイルに「max_duty 0.3 以上を推奨 — 0.2 で降下できないのは …」
+- `depth_supervisor` は **max_duty 0.4 が前提**で、0.3 未満だと警告を出す
+
+したがって **過去の run が 0.25 だったとは限らない**。bag の `duty_cycle` (指令のエコー) を
+見れば run ごとに確定するので、到達速度を語る前にそれを確認すること。
+
 ## いま bag に何が入っているか
 
 `/state/thruster_state_all` の中身:
@@ -30,11 +62,33 @@
 
 **`rpm` が実測で入っているのが効く。** `duty -> rpm -> 推力` の 2 段のうち前段は既に見える。
 
+**推力 ∝ rpm^2 は物理として堅い**ので、`duty -> rpm` の回帰だけで曲線の形が判定できる:
+線形なら `thrust_curve_exp ≈ 2.0`、飽和していれば 2.0 未満。**秤も新規実験も要らない。**
+併せて原点付近のデッドゾーンの有無も見ること (sim は未モデル化)。立ち上がり数秒は固着の
+影響が出るので除外する。
+
+**使える bag はまだ回収できていない** (2026-09-09 時点)。手元 (`mujoco_ws/data/`) にある
+`20260821-080906-imu-motion` は **disarm 状態で録られていて** `esc_mode 0` /
+duty 全ゼロ / rpm 全ゼロなので回帰には使えない (IMU を手で振る試験)。
+必要なのは Pi の `~/runs/` にある走行 run:
+
+```
+20260825-154411-exp1-spin
+20260825-181310-0825_run
+20260825-183035-0825_run2
+20260821-174515-servo-debug (+ attitude-only 2 本)
+```
+
 ## 足りないもの: VESC の実 duty と電流
 
 VESC は `CAN_PACKET_STATUS` で **実 duty と電流を返している**。control の `vesc_model.cpp` は
 それをデコードしているが、`state::thruster::esc` に出していないので (`Rpm` / `Voltage` /
 `WaterLeaked` だけ) **bag に残らない**。
+
+**2026-09-06 に実機で確認済み**: `CAN_PACKET_STATUS` (id `0x0009xx`) は **4 基とも 50 Hz で
+バスに流れている**。`vesc_model.hpp` の `PacketStatus` は `erpm` / `current` / `duty` の
+3 つをデコードしていて、`can_model.cpp` が `erpm` だけを `state::thruster::esc::Rpm` に
+転送している。**取りこぼしているのは転送段だけで、データは既に届いている。**
 
 出すと:
 
