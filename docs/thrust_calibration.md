@@ -9,7 +9,7 @@
 | 経路 | 換算 | 出どころ |
 |---|---|---|
 | direct + RL | `F = abs(u)^2 * 30` (2 乗) | バンドルの `action_contract` |
-| direct + navigator | **線形** | `feedforward_allocation` の `thrust_curve_exp` 既定 1.0。`navigator_node.py:183` は渡していない |
+| direct + navigator | **線形 (根拠不明)** | `feedforward_allocation` の既定 1.0 とされるが、`umiusi_perception` がどのリポジトリにも無く裏が取れていない |
 | target (core) | **線形** | control の `duty_per_thrust: 1.0` |
 
 `max_duty` 0.25 の範囲では 2 乗と線形で **4 倍**の差になる。**経路をまたいだ実験結果は
@@ -22,9 +22,9 @@
 
 - `thrust_curve_exp` / `thrust_per_cmd` を読んでいるのは **`umiusi_rl_control/mode_action.py` だけ**
   (`rl_attitude_node.py` はログ表示のみ)。上の表の「direct + RL」以外は契約値を参照していない。
-- `navigator_node` は `umiusi_perception.control.feedforward_allocation` を呼んでいる。
-  **`umiusi_perception` はこのリポジトリに無い**ので、その既定が 1.0 であることは
-  ここからは確認できていない。上の表のその行は未検証として扱うこと。
+- `navigator_node` が呼んでいる `feedforward_allocation` は `umiusi_perception` にあり、
+  **そのパッケージは `mujoco_ws` 配下のどこにも無い**。上の表の「線形」はその既定 1.0 を
+  前提にしているが、裏が取れていない。
 
 ## 運用時の max_duty — 既定 0.25 だが実運用は 0.3〜0.4 の可能性がある
 
@@ -67,17 +67,30 @@ cap 0.40 で 0.70 kt と **1.75 倍**変わる。「exp が汚染されている
 併せて原点付近のデッドゾーンの有無も見ること (sim は未モデル化)。立ち上がり数秒は固着の
 影響が出るので除外する。
 
-**使える bag はまだ回収できていない** (2026-09-09 時点)。手元 (`mujoco_ws/data/`) にある
-`20260821-080906-imu-motion` は **disarm 状態で録られていて** `esc_mode 0` /
-duty 全ゼロ / rpm 全ゼロなので回帰には使えない (IMU を手で振る試験)。
-必要なのは Pi の `~/runs/` にある走行 run:
+### 現時点で回帰可能な bag は存在しない (2026-09-11)
 
+**この回帰は今はできない。** 同じ探索を繰り返さないために状況を残す:
+
+- 手元 (`mujoco_ws/data/`) の `20260821-080906-imu-motion` は **disarm 状態**
+  (`esc_mode 0` / duty 全ゼロ / rpm 全ゼロ)。IMU を手で振る試験なのでスラスタを回していない。
+- **これ以上の bag は存在せず、機体も接続されていないので取り出せない** (2026-09-11 のユーザー回答)。
+
+判定用のスクリプトは `tools/duty_rpm_fit.py` に置いてある。走行 bag が取れた日に
+そのまま流せる。上の bag に対しては「Runnable のサンプルが無い」と報告して終わる。
+
+```bash
+python3 tools/duty_rpm_fit.py <bag-dir>
 ```
-20260825-154411-exp1-spin
-20260825-181310-0825_run
-20260825-183035-0825_run2
-20260821-174515-servo-debug (+ attitude-only 2 本)
-```
+
+**bag 経由が消えたので、`thrust_curve_exp` を確定する道は 2 つ**。どちらも実機作業が要る:
+
+1. **重力アンカー方式** — 空中重量と水中の見かけ重量 (ばね秤) の差が `ρVg` として絶対値で
+   出る。定常ホバリングの duty を読めば `thrust_per_cmd = B / (4 * u_hover^exp)`。
+   指数はバラスト掃引で既知の力を振って取る。秤 1 個とバラストだけで治具が要らない。
+2. **電流プロキシ** — 下の「VESC の実 duty と電流」。BLDC のトルクは電流にほぼ比例するので
+   **通常の走行だけで曲線の形が取れる**。絶対値のアンカーは 1 の秤 1 点で足りる。
+
+**2 を先に入れると 1 の測定回数が減る。**
 
 ## 足りないもの: VESC の実 duty と電流
 
@@ -151,6 +164,9 @@ control 側も 2 乗にするかは実測を見てから決める (`LinearAccele
 
 ## 関連
 
-- `known_issues.md` A-17 — `max_duty` と転覆余裕、到達可能速度 `v_max ≈ 0.68 * max_duty`
+- `known_issues.md` A-17 — `max_duty` と転覆余裕。ただしそこに書いてある
+  `v_max ≈ 0.68 * max_duty` は **cap 0.25 近傍でしか合わない線形近似**で、
+  cap 0.4 で 24% / cap 0.5 で 41% 過小になる (2026-09-11、sim 側でプラント解と比較)。
+  正しくは `lin*v + quad*v^2 = 4*k*cap^exp` の正根。cap を上げた運用で使わないこと
 - `known_issues.md` B-12 — `/cmd/direct` は logic を通らない
 - `logging.md` — bag に何を入れるかの方針
