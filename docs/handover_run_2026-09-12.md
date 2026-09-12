@@ -155,17 +155,35 @@ python3 -c "from umiusi_perception.classical import ClassicalController; print('
 ```
 
 - **`OK` と出たら** 手順 8 へ
-- **`ModuleNotFoundError` / `ImportError` が出たら** 入れる:
+- **`ModuleNotFoundError` / `ImportError` が出たら** 機体の上で入れる:
 
   ```bash
+  # sim のリポジトリを取る (既にあれば fetch だけ)
+  cd ~/umiusi_sim 2>/dev/null \
+    && git fetch origin chore/comment-diet && git checkout chore/comment-diet && git pull \
+    || git clone -b chore/comment-diet git@github.com:rogy-AquaLab/Umiusi_sim.git ~/umiusi_sim
+
+  # 制御ライブラリだけ入れる (sim 本体も学習コードも入らない)
   pip install --no-deps --no-index ~/umiusi_sim/packages/perception
+
+  # 入ったか
+  python3 -c "from umiusi_perception.classical import ClassicalController; print('OK')"
   ```
 
-  `--no-deps` が要る。**機体はインターネットに出られない**ので、これを省くと依存の
-  解決に行って失敗する。制御だけなら numpy しか使わないので依存は既に足りている。
+  **`--no-deps` を省かないこと。** 省くと torch や opencv の解決に行って時間を食う。
+  制御だけなら numpy しか使わないので、依存は機体に既に足りている。
 
-  `~/umiusi_sim` が無ければ**このステップは飛ばし、古典はやらずに RL だけ**やる
-  （手順 10）。運用担当に連絡しておく。
+  **`pip install` が通らないときの逃げ道**（インストールせずに使う）。リポジトリだけ
+  取れていればこれで動く:
+
+  ```bash
+  export PYTHONPATH=~/umiusi_sim/packages/perception/src:$PYTHONPATH
+  python3 -c "from umiusi_perception.classical import ClassicalController; print('OK')"
+  ```
+
+  **この `export` をした窓から手順 10 の launch を叩くこと**（環境変数は窓ごと）。
+  リポジトリも取れないなら、**古典は諦めて RL だけ**やる（手順 11 へ飛ぶ）。
+  当日が潰れることはない。運用担当に連絡しておく。
 
 ## 8. 機体を固定する
 
