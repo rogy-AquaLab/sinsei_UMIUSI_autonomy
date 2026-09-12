@@ -28,6 +28,9 @@
   <!-- 共有部品 (arm/disarm と IMU サニティ)。**制御層 (umiusi_rl_control) には依存しない** —
        以前は共有物が制御層の中にあり、上位のこちらが下位へ import しに行っていた (依存が逆) -->
   <exec_depend>umiusi_common</exec_depend>
+  <!-- classical_attitude_node が AttitudeTarget (目標姿勢 + 速度指令) を購読する。
+       rl_attitude_node と同じ setpoint 型を使い、方策の差し替えとして見せるため -->
+  <exec_depend>umiusi_rl_control_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -13,6 +13,8 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
+        # 古典制御の配備バンドル (umiusi_sim の tools/export_classical.py が書き出す)
+        ("share/" + package_name + "/config", glob("config/*.json")),
         # 同梱の検出器。clone しただけで動かせるようにするため
         ("share/" + package_name + "/models/detector", glob("models/detector/*")),
     ],
@@ -32,6 +34,7 @@ setup(
             "perception_node = umiusi_autonomy.perception_node:main",
             "camera_bridge_node = umiusi_autonomy.camera_bridge_node:main",
             "navigator_node = umiusi_autonomy.navigator_node:main",
+            "classical_attitude_node = umiusi_autonomy.classical_attitude_node:main",
             "auto_target_generator = umiusi_autonomy.auto_target_generator:main",
             "wait_for_topic = umiusi_autonomy.wait_for_topic:main",
         ],
