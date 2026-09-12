@@ -82,6 +82,17 @@ cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy/tools
 > 他のモード (`start` / `--attitude` / `--perception`) は**使わない**。
 > 姿勢制御ノードが上がると `/cmd/direct` を取り合う。
 
+**`不明な引数: --control-only` と出た場合**、機体のコードがこの入口より古い。
+その場合は control を直接上げれば同じことになる (どのバージョンでも動く):
+
+```bash
+source ~/ros2-ws/install/setup.bash
+ros2 launch sinsei_umiusi_control main.yaml enable_cameras:=false
+```
+
+**この代替でも指令を出すノードは上がらない**ので、そのまま先へ進んでよい。
+機体のコードを更新する必要は無い (更新は失敗のリスクを増やすだけ)。
+
 30 秒待つ。別の窓 (Ctrl-b c) で:
 
 ```bash
