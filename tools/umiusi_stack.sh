@@ -15,6 +15,8 @@
 #   ./umiusi_stack.sh start --attitude --no-publish  # スラスタへ出さず計算だけ (ドライ試験)
 #   ./umiusi_stack.sh start --attitude --attitude-policy  # 姿勢保持だけのポリシーで
 #   ./umiusi_stack.sh start --perception   # カメラブリッジ + perception だけ (BT / UI なし)
+#   ./umiusi_stack.sh start --control-only # control だけ。指令を出すノードを一切上げない
+#                                          # 較正実験で tools/thruster_cmd.py から駆動する用
 # ROS の setup.bash は未定義変数を参照するため set -u は使えない
 set -o pipefail
 
@@ -92,6 +94,10 @@ start() {
       --with-rl)    rl=true ;;
       --attitude)   mode=attitude; rl=true ;;
       --perception) mode=perception ;;
+      # 較正実験用。`thruster_cmd.py` は /cmd/direct に publish するので、指令を出す
+      # ノードが同時に居るとトピックを取り合う (thruster_cmd.py 冒頭の禁止事項)。
+      # 取り合いを「注意して避ける」のではなく、そもそも上げない入口を用意する
+      --control-only) mode=control; rl=false; ui=false ;;
       --no-publish) publish=false ;;
       --attitude-policy) rl_policy=attitude ;;
       *) echo "不明な引数: $a"; usage; exit 1 ;;
@@ -111,7 +117,7 @@ start() {
 
   # 姿勢制御だけ見るときはカメラを上げない (CPU を空ける)
   local cams=true
-  [ "$mode" = attitude ] && cams=false
+  { [ "$mode" = attitude ] || [ "$mode" = control ]; } && cams=false
   local camargs=(enable_cameras:=$cams)
   if [ "$cams" = true ]; then
     if [ -n "$CAMERAS_PARAM" ]; then
@@ -137,6 +143,10 @@ start() {
   case "$mode" in
     attitude)
       echo "[autonomy] 起動しない (--attitude)"
+      ;;
+    control)
+      echo "[autonomy] 起動しない (--control-only)"
+      echo "[control] 指令を出すノードは上げない — tools/thruster_cmd.py から駆動すること"
       ;;
     perception)
       echo "[autonomy] カメラブリッジ + perception のみ (BT / UI なし)"
@@ -269,6 +279,8 @@ usage() {
   --with-rl      RL 姿勢制御も起動する
   --attitude     姿勢制御の単体実験。カメラを上げず、RL だけ起動する
   --perception   認識の単体実験。カメラブリッジ + perception だけ (BT / UI なし)
+  --control-only control だけ。autonomy / RL / カメラ / UI を上げない。
+                 較正実験で tools/thruster_cmd.py から /cmd/direct を叩くとき用
   --no-publish   RL の指令をスラスタへ出さず計算だけする (ドライ試験)
   --attitude-policy
                  姿勢保持専用ポリシー att_cal1_best_rep103 (14 次元) を使う。

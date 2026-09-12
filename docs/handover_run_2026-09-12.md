@@ -72,11 +72,15 @@ timeout 5 candump can0 | head -5
 窓 0 で:
 
 ```bash
-source ~/ros2-ws/install/setup.bash
-ros2 launch sinsei_umiusi_control main.yaml enable_cameras:=false
+cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy/tools
+./umiusi_stack.sh start --control-only
 ```
 
-> `umiusi_stack.sh start` や `--attitude` は**使わない**。あれは姿勢制御ノードまで上げる。
+`--control-only` は**指令を出すノードを一切上げない**入口で、この用途のために用意してある。
+カメラも UI も上がらない。
+
+> 他のモード (`start` / `--attitude` / `--perception`) は**使わない**。
+> 姿勢制御ノードが上がると `/cmd/direct` を取り合う。
 
 30 秒待つ。別の窓 (Ctrl-b c) で:
 
