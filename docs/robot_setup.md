@@ -131,14 +131,13 @@ colcon build --packages-up-to umiusi_autonomy --cmake-args -DCMAKE_BUILD_TYPE=Re
 
 ## 4. どのブランチで組むか
 
-**結論: `umiusi_sim` 以外は `main` で動く。sim だけは `chore/comment-diet` が必須。**
-
-（2026-09-13 時点。`git rev-list --count origin/main..HEAD` で数えたもの）
+**結論: 全部 `main` で動く。**（2026-09-13 に `chore/comment-diet` を sim の main へ
+fast-forward マージして push した。それまでは sim だけブランチ指定が必要だった）
 
 | リポジトリ | 必要なブランチ | main との差 | 理由 |
 |---|---|---|---|
 | `sinsei_UMIUSI_autonomy` | **`main`** | 0（未コミットの変更あり） | 姿勢制御ノード・FSM・ツール類。**コミットすること** |
-| `umiusi_sim` | **`chore/comment-diet`** | **43 コミット先行** | **`classical.py` が main に存在しない。** 機体に入れる `umiusi_perception` wheel はここから |
+| `umiusi_sim` | **`main`** | 0（`chore/comment-diet` と同一） | 機体に入れる `umiusi_perception` wheel はここから。`classical.py` もここ |
 | `sinsei_UMIUSI_control` | **`main`** | 作業ブランチが 17 先行（不要） | scenario 経路は `/cmd/direct` を使うので control の logic を通らない。autonomy が読むのは `is_forward` だけで、**これは main にもある**（4 基分） |
 | `sinsei_umiusi_msgs` | **`main`** | 作業ブランチが 1 先行 | 差分はサーボ角の単位コメント訂正のみ（`rad` → `DEGREES`）。動作に影響しないが、**誤読の元なのでマージしたい** |
 | `sinsei_UMIUSI_core` | **`main`** | 0 | UI の中継 (`manual_target_generator`) はここ |
@@ -146,15 +145,15 @@ colcon build --packages-up-to umiusi_autonomy --cmake-args -DCMAKE_BUILD_TYPE=Re
 
 ---
 
-## umiusi_sim が main で動かない理由
+## umiusi_sim から何を入れるか
 
-古典制御器の本体 `packages/perception/src/umiusi_perception/classical.py` が
-**`main` に無い**。`chore/comment-diet` にしかない。機体では:
+古典制御器の本体 `packages/perception/src/umiusi_perception/classical.py` は sim にある。
+機体に入れるのは **`packages/perception` の wheel だけ**（simulator も学習コードも入らない）。
 
 ```bash
-cd ~/umiusi_sim && git fetch origin chore/comment-diet \
-  && git checkout chore/comment-diet && git pull
+cd ~/umiusi_sim && git checkout main && git pull
 pip install --no-deps --no-index ~/umiusi_sim/packages/perception
+python3 -c "from umiusi_perception.classical import ClassicalController; print('OK')"
 ```
 
 **`--no-deps` を省かないこと。** 省くと torch や opencv の解決に行って時間を食う。
@@ -164,13 +163,10 @@ pip install --no-deps --no-index ~/umiusi_sim/packages/perception
 
 ```bash
 export PYTHONPATH=~/umiusi_sim/packages/perception/src:$PYTHONPATH
-python3 -c "from umiusi_perception.classical import ClassicalController; print('OK')"
 ```
 
-> `chore/comment-diet` は main から **43 コミット**離れている。これは長期的にはリスクで、
-> 「機体に入れるコードが main に無い」状態が続く。**どこかで main へマージすること。**
+**この `export` をした窓から launch すること**（環境変数は窓ごと）。
 
----
 
 ## control を main のままにしてよい理由
 
@@ -195,8 +191,8 @@ RL logic 用で、`/cmd/direct` 経路には要らない。
 # 1. autonomy
 cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && git checkout main && git pull
 
-# 2. 古典制御ライブラリ (sim の branch に注意)
-cd ~/umiusi_sim && git checkout chore/comment-diet && git pull
+# 2. 古典制御ライブラリ
+cd ~/umiusi_sim && git checkout main && git pull
 pip install --no-deps --no-index ~/umiusi_sim/packages/perception
 
 # 3. control / msgs / core は main

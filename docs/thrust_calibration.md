@@ -9,7 +9,7 @@
 | 経路 | 換算 | 出どころ |
 |---|---|---|
 | direct + RL | `F = abs(u)^2 * 30` (2 乗) | バンドルの `action_contract` |
-| direct + navigator | **線形 (根拠不明)** | `feedforward_allocation` の既定 1.0 とされるが、`umiusi_perception` がどのリポジトリにも無く裏が取れていない |
+| direct + navigator | **線形** | `feedforward_allocation` の `thrust_curve_exp` 既定 1.0。**2026-09-13 にコードで裏取り済み** |
 | target (core) | **線形** | control の `duty_per_thrust: 1.0` |
 
 `max_duty` 0.25 の範囲では 2 乗と線形で **4 倍**の差になる。**経路をまたいだ実験結果は
@@ -18,13 +18,23 @@
 さらに sim の `configs/umiusi.yaml` 自身が `thrust_per_cmd` と `thrust_curve_exp` について
 **`BOTH VALUES ARE UNCALIBRATED and confounded with each other`** と書いている。
 
-**2026-09-09 に grep で確認した範囲** (`ros2_ws/src` 全体):
+**2026-09-13 にコードで確認した** (2026-09-09 時点の「パッケージが見つからない」という
+記述は誤りだった。`umiusi_perception` は `umiusi_sim/packages/perception/` にあり、機体には
+そこから wheel で入る):
 
-- `thrust_curve_exp` / `thrust_per_cmd` を読んでいるのは **`umiusi_rl_control/mode_action.py` だけ**
-  (`rl_attitude_node.py` はログ表示のみ)。上の表の「direct + RL」以外は契約値を参照していない。
-- `navigator_node` が呼んでいる `feedforward_allocation` は `umiusi_perception` にあり、
-  **そのパッケージは `mujoco_ws` 配下のどこにも無い**。上の表の「線形」はその既定 1.0 を
-  前提にしているが、裏が取れていない。
+- `feedforward_allocation` は `umiusi_perception/control.py`。引数 `thrust_curve_exp` の
+  **既定は 1.0** で、そのとき ESC 指令を逆カーブで事前に歪めない (`u = sign(t)|t|^(1/exp)`)。
+- **`navigator_node` はこの引数を渡していない**ので、direct + navigator の経路は**線形**。
+  上の表の「線形」はこれで裏が取れた。
+- 一方プラントの実体は `thrust_curve_exp: 2.0` (未較正) なので、**この経路だけ推力の仮定が
+  プラントと食い違っている**。`feedforward_allocation(..., thrust_curve_exp=2.0)` を渡せば
+  事前歪みが入って揃うが、**exp 自体が未較正なので先に同定するのが順序**。
+- `thrust_curve_exp` / `thrust_per_cmd` を読んでいるのは `umiusi_rl_control/mode_action.py` と
+  `umiusi_perception.classical` (バンドルの契約経由)。
+
+> **シナリオを `command_mode:=setpoint` で回すとこの食い違いは消える。** 配分が
+> `umiusi_perception.classical` の `GeneralAllocator` (契約の exp を使う) に一本化されるため。
+> `direct` を使い続ける場合だけ上の話が効く。
 
 ## 運用時の max_duty — 既定 0.25 だが実運用は 0.3〜0.4 の可能性がある
 
@@ -73,6 +83,12 @@ roll を与え、**指令 duty が cap に張り付き始める姿勢誤差**を
 > 測っているのは**開いた系での指令の飽和**であって、閉ループの挙動ではない
 > (静的な姿勢を与えて指令を読んだだけで、プラントは回していない)。
 > 「どの姿勢誤差から比例制御でなくなるか」の判定にだけ使うこと。
+>
+> **2026-09-12 のプール run が飽和していた原因は cap ではない。** あの run は推力の符号が
+> 反転していて yaw 誤差が 180° に張り付いており (known_issues B-14)、その巨大な誤差が
+> duty を上限へ押し付けていた。**cap を上げても直らない。符号が先。**
+> 逆に、duty -> rpm の回帰は大きさの話なので**符号が反転していても使える**
+> (`tools/duty_rpm_fit.py`)。符号確認の run でスラスタを回すので、そのついでに取れる。
 
 ## いま bag に何が入っているか
 
@@ -181,7 +197,7 @@ sim を実機に合わせたいなら、合わせるべきは静推力ではな�
 |---|---|
 | `thrust_per_cmd` / `thrust_curve_exp` | sim の `configs/umiusi.yaml` |
 | `duty_per_thrust` | control の `params/controllers.yaml` |
-| navigator の `thrust_curve_exp` | `navigator_node.py:183` の呼び出し (いま渡していない) |
+| navigator の `thrust_curve_exp` | `navigator_node` の `feedforward_allocation` 呼び出し (いま渡していない = 線形)。**`command_mode:=setpoint` なら不要** |
 
 **control 側は線形なので 2 乗カーブとは原理的に一致しない。** 運用範囲で線形近似を取るか、
 control 側も 2 乗にするかは実測を見てから決める (`LinearAcceleration` の名前ごと変わる話)。

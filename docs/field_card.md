@@ -36,8 +36,15 @@ cd ~/ros2-ws && git -C src/sinsei_UMIUSI_autonomy log --oneline -1   # ← bag �
 python3 -c "from umiusi_perception.classical import ClassicalController; print('OK')"
 ```
 
-`OK` が出なければ古典制御が動かない。`robot_setup.md` の「どのブランチで組むか」へ
-（**`umiusi_perception` は sim から入れる**）。
+`OK` が出なければ古典制御が動かない。直しかた:
+
+```bash
+cd ~/umiusi_sim && git checkout main && git pull
+pip install --no-deps --no-index ~/umiusi_sim/packages/perception
+```
+
+通らなければ `export PYTHONPATH=~/umiusi_sim/packages/perception/src:$PYTHONPATH`
+（**その窓から launch すること**）。詳細は `robot_setup.md`。
 
 **ビルドし直さない。** どうしても必要なら `rm -rf build/umiusi_autonomy install/umiusi_autonomy`
 してから `colcon build --packages-select umiusi_autonomy --symlink-install`。
