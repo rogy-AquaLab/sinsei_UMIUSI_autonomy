@@ -5,7 +5,7 @@
     ros2 launch umiusi_autonomy classical_attitude.launch.py max_duty:=0.3
 
 **rl_attitude.launch.py と同時に起動しないこと。** 同じ /cmd/direct を取り合う。
-control 側は別に上げておく (docs/handover_run_2026-09-12.md)。
+control 側は別に上げておく (docs/field_card.md)。
 
 bundle は同梱のものを既定で使う。較正したら umiusi_sim の tools/export_classical.py を
 流し直して config/classical_bundle.json を置き換えること — config だけ直しても
@@ -16,6 +16,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -31,6 +32,20 @@ def generate_launch_description():
                               description="前進 (+X) の速度指令 [m/s]"),
         DeclareLaunchArgument("imu_sanity_enforce", default_value="false",
                               description="true で化けサンプルを破棄する。既定は検出のみ"),
+        # 現場でコードを触らずに符号を直すための入口。実行中も `ros2 param set` で変えられる
+        DeclareLaunchArgument("thrust_sign", default_value="[1.0, 1.0, 1.0, 1.0]",
+                              description="基ごとの推力の向き (lf, lb, rb, rf)。-1.0 で反転。"
+                                          "値は tools/thrust_sign_check.py が測って出す"),
+        DeclareLaunchArgument("servo_sign", default_value="[1.0, 1.0, 1.0, 1.0]",
+                              description="基ごとのサーボ回転センス (lf, lb, rb, rf)"),
+        DeclareLaunchArgument("hold_yaw", default_value="true",
+                              description="false で yaw の保持だけ切る (roll/pitch のみ保つ)"),
+        DeclareLaunchArgument("k_v_vert", default_value="-1.0",
+                              description="鉛直 (heave) の速度フィードバック。"
+                                          "負でバンドルの値 (既定 0 = 前進項だけ)"),
+        DeclareLaunchArgument("cmd_target_topic", default_value="",
+                              description="空以外で `/cmd/target` も目標として受ける。"
+                                          "UI のテレオペが姿勢制御の上に乗る"),
     ]
     return LaunchDescription(args + [
         Node(
@@ -45,6 +60,13 @@ def generate_launch_description():
                 "start_armed": LaunchConfiguration("start_armed"),
                 "vel_cmd": LaunchConfiguration("vel_cmd"),
                 "imu_sanity_enforce": LaunchConfiguration("imu_sanity_enforce"),
+                "thrust_sign": ParameterValue(LaunchConfiguration("thrust_sign"),
+                                              value_type=None),
+                "servo_sign": ParameterValue(LaunchConfiguration("servo_sign"),
+                                             value_type=None),
+                "hold_yaw": ParameterValue(LaunchConfiguration("hold_yaw"), value_type=bool),
+                "k_v_vert": ParameterValue(LaunchConfiguration("k_v_vert"), value_type=float),
+                "cmd_target_topic": LaunchConfiguration("cmd_target_topic"),
             }],
         ),
     ])

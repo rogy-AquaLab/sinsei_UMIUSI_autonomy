@@ -40,6 +40,12 @@ def generate_launch_description():
                               description="onboard camera topic"),
         DeclareLaunchArgument("publish", default_value="true",
                               description="navigator commands the thrusters (false = dry / FSM-only)"),
+        # "direct" = navigator が自前で配分してスラスタを叩く (姿勢の安定化は入らない)。
+        # "setpoint" = FSM の指令を姿勢制御器へ渡す。**別途 classical_attitude を上げること**
+        # (bringup.launch.py mode:=scenario がその組み合わせをやる)
+        DeclareLaunchArgument("command_mode", default_value="direct",
+                              choices=["direct", "setpoint", "target"]),
+        DeclareLaunchArgument("setpoint_topic", default_value="/classical_attitude/setpoint"),
         DeclareLaunchArgument("max_duty", default_value="0.25",
                               description="duty upper bound (this path bypasses control's max_duty)"),
         DeclareLaunchArgument("use_camera_bridge", default_value="true",
@@ -71,6 +77,8 @@ def generate_launch_description():
             executable="navigator_node",
             name="navigator_node",
             output="screen",
-            parameters=[params, {"publish": publish, "max_duty": max_duty}],
+            parameters=[params, {"publish": publish, "max_duty": max_duty,
+                                 "command_mode": LaunchConfiguration("command_mode"),
+                                 "setpoint_topic": LaunchConfiguration("setpoint_topic")}],
         ),
     ])

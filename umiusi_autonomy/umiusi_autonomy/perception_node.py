@@ -40,6 +40,14 @@ class PerceptionNode(Node):
         self.declare_parameter("fovy_deg", 60.0)
         self.declare_parameter("max_rate_hz", 10.0)
         self.declare_parameter("sanitise_near", True)
+        # **後段の信頼度フィルタ。** 検出器そのものの閾値 (conf_thresh) は重みを読んだ時点で
+        # 固定されるので、実行中には動かせない。プールサイドで誤検出を絞りたいときのために、
+        # publish の直前でもう一度足切りする。0 以下で無効 (検出器の閾値のまま)。
+        # **上げる方向にしか効かない** — 検出器が出さなかったものは戻せない。
+        # 8/25 のプール run では camp_real @0.30 が 4.6 個/枚の誤検出を出し、
+        # ハードネガティブ再学習 (camp_real2 @0.40) で 267 -> 3 に落ちている。
+        # まずは同梱の camp_real2 (閾値 0.4) をそのまま使い、それでも回るなら 0.5 を試す
+        self.declare_parameter("min_confidence", -1.0)
         # 断の検出用。画像ゼロでも無言で回り続ける (known_issues A-18)。0 以下で無効
         self.declare_parameter("image_timeout", 5.0)
 
@@ -50,6 +58,8 @@ class PerceptionNode(Node):
                                    / "models" / "detector" / "camp_real2.pt")
         self._fovy = float(self.get_parameter("fovy_deg").value)
         self._sanitise = bool(self.get_parameter("sanitise_near").value)
+        self._min_conf = float(self.get_parameter("min_confidence").value)
+        self.add_on_set_parameters_callback(self._on_params)
         # 位相追従の間引き。素朴な「一定時間空ける」方式は入力がわずかに速いだけで
         # 1 フレームおきに落ち、目標の半分近くまで下がる。RateLimiter 参照
         self._limiter = RateLimiter(float(self.get_parameter("max_rate_hz").value))
@@ -123,6 +133,24 @@ class PerceptionNode(Node):
         self.get_logger().info(f"detector loaded from '{self._model_path}'")
         return True
 
+    def _on_params(self, params):
+        """`ros2 param set /perception_node min_confidence 0.5` を実行中に効かせる。
+
+        誤検出の絞り込みは**現場で回しながら**でないと当たりが分からない。再起動すると
+        検出器の読み込み (数秒) と映像の再購読が挟まるので、走らせたまま変えたい。
+        """
+        from rcl_interfaces.msg import SetParametersResult
+        for p in params:
+            if p.name == "min_confidence":
+                try:
+                    self._min_conf = float(p.value)
+                except (TypeError, ValueError) as e:
+                    return SetParametersResult(successful=False, reason=str(e))
+                self.get_logger().warning(
+                    f"min_confidence={self._min_conf:.2f}"
+                    f"{' (無効)' if self._min_conf <= 0.0 else ''}")
+        return SetParametersResult(successful=True)
+
     def _on_image(self, msg: Image):
         # ウォッチドッグ用。レート制限より前に記録する — 落としたフレームも「来ている」ので。
         self._last_image_t = self.get_clock().now().nanoseconds * 1e-9
@@ -148,6 +176,13 @@ class PerceptionNode(Node):
         dets = self._detector(rgb)
         if self._sanitise:
             dets = self._sanitise_fn(rgb, dets)
+        if self._min_conf > 0.0:
+            n_before = len(dets)
+            dets = [d for d in dets if float(d.confidence) >= self._min_conf]
+            if n_before != len(dets):
+                self.get_logger().info(
+                    f"min_confidence={self._min_conf:.2f} で {n_before - len(dets)} 件を落とした",
+                    throttle_duration_sec=5.0)
         self._pub.publish(self._to_msg(msg.header, dets))
         # 末尾でも更新する。初回は _ensure_detector() の同期ロードが image_timeout を
         # 超えることがあり、そのままだと復帰直後に偽の「画像が途切れた」警告が出る

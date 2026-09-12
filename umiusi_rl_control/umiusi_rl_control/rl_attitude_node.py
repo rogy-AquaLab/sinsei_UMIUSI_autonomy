@@ -122,6 +122,15 @@ class RlAttitudeNode(Node):
         # 実機のサーボ回転センスが ch ごとに反転している場合の補正 (lf, lb, rb, rf)。
         # navigator_node と同じ規約。sim / ポリシーの前提は触らず、実機に出す直前で吸収する。
         self.declare_parameter("servo_sign", [1.0, 1.0, 1.0, 1.0])
+        # **推力の向き**。基ごとに duty へ掛ける (-1.0 で反転)。順序は POSITIONS。
+        # 2026-09-12 のプール run で、意図したモーメントと実測の角加速度が 3 軸とも逆相関し、
+        # arm すると振れが 2〜3 倍に悪化していた (classical_attitude_node の同名 param 参照)。
+        # 原因は指令が機体に届いたあとで、方策も配分も無関係。**現場でコードを触らずに
+        # 直せるようにここに置く。** 値は tools/thrust_sign_check.py が測って出す
+        self.declare_parameter("thrust_sign", [1.0, 1.0, 1.0, 1.0])
+        # "control" = control の is_forward に合わせに行く (既定) / "param" = 上の値を使う。
+        # 詳細は umiusi_common/thrust_sign.py
+        self.declare_parameter("thrust_sign_source", "control")
         self.declare_parameter("imu_max_gyro", 10.0)       # IMU サニティ: 角速度上限 [rad/s]
         self.declare_parameter("imu_max_step_deg", 30.0)   # IMU サニティ: 姿勢跳躍上限 [deg]
         # 既定は検出のみで破棄しない。理由は imu_sanity.py 冒頭
@@ -168,6 +177,13 @@ class RlAttitudeNode(Node):
             # 起動時に落とす。誤った符号のまま動かすほうが危険 (ヒーブがロールに化ける)。
             raise ValueError(f"servo_sign needs {len(POSITIONS)} entries {POSITIONS}, got {_signs}")
         self._servo_sign = _signs
+        _tsigns = [float(v) for v in self.get_parameter("thrust_sign").value]
+        if len(_tsigns) != len(POSITIONS):
+            raise ValueError(f"thrust_sign needs {len(POSITIONS)} entries {POSITIONS}, got {_tsigns}")
+        from umiusi_common import thrust_sign as _ts
+        self._thrust_sign = _ts.resolve(
+            self, POSITIONS, str(self.get_parameter("thrust_sign_source").value).strip(),
+            _tsigns)
         self._publish = bool(self.get_parameter("publish").value)
         self._hold_yaw = bool(self.get_parameter("hold_yaw").value)
         self._max_duty = abs(float(self.get_parameter("max_duty").value))
@@ -244,7 +260,15 @@ class RlAttitudeNode(Node):
     def _on_set_params(self, params):
         """ros2 param set を実行中に効かせる (hold_yaw / max_duty / vel_cmd / slew)。"""
         for p in params:
-            if p.name == "hold_yaw":
+            if p.name in ("thrust_sign", "servo_sign"):
+                v = [float(x) for x in p.value]
+                if len(v) != len(POSITIONS):
+                    self.get_logger().error(
+                        f"{p.name} は {len(POSITIONS)} 個 {POSITIONS} が要る: {v} — 無視した")
+                    continue
+                setattr(self, "_" + p.name, v)
+                self.get_logger().warning(f"{p.name}={v}")
+            elif p.name == "hold_yaw":
                 self._hold_yaw = bool(p.value)
                 self.get_logger().info(
                     f"hold_yaw={self._hold_yaw}"
@@ -687,7 +711,9 @@ class RlAttitudeNode(Node):
         for k, p in enumerate(POSITIONS):
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=True, servo=True)
-            out.duty_cycle = float(self._duty_cmd[k])
+            # 符号は**出口だけ**で掛ける (_duty_cmd / _servo_cmd は sim 規約のまま保つ)。
+            # 上流で掛けると、観測器と方策が「出していない指令」を前提に動く
+            out.duty_cycle = float(self._duty_cmd[k]) * self._thrust_sign[k]
             # 単位は度 (known_issues B-13)。ch 別のサーボ符号はこの境界でだけ当てる
             # (_servo_cmd は sim 規約のまま保つ)。範囲外は CAN 送信が失敗するので ±90 に収める
             out.angle = max(-90.0, min(90.0, float(self._servo_cmd[k]) * self._servo_sign[k]))

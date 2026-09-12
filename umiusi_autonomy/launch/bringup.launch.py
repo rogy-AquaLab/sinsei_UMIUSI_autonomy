@@ -49,7 +49,7 @@ from launch_ros.substitutions import FindPackageShare
 # modes: その段を待つ mode。空 = 常に待つ。
 # 認識を上げる mode。段の待ちと include の条件を同じ定数から引く — 別々に書くと
 # 「認識は上がるのに待たない」mode ができる (実際 perception でそうなっていた)
-PERCEPTION_MODES = ("full", "perception", "navigator")
+PERCEPTION_MODES = ("full", "perception", "navigator", "scenario")
 
 # トピック名は perception_node の detections_topic (config/autonomy.yaml) と揃えること。
 # core_autonomy.launch.py がその yaml を固定で渡すので、いまはずれようがない
@@ -127,6 +127,20 @@ def generate_launch_description():
                           "publish": publish}.items(),
         condition=_mode_is(mode, "navigator"))
 
+    # scenario: 認識 + FSM を **姿勢制御の上に載せる**。navigator は指令を自前で配分せず
+    # AttitudeTarget を出すだけで、安定化と 4 基への配分は classical_attitude がやる。
+    # navigator モードとの違いはそこだけで、FSM もカメラも同じもの。
+    # **classical_attitude は disarmed で上がる** — arm はサービスで明示的に打つ
+    # (起動しただけで推力が出るのを避ける。docs/scenario_run.md)
+    scenario = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution(
+            [FindPackageShare("umiusi_autonomy"), "launch", "scenario.launch.py"])),
+        launch_arguments={"model_path": model_path, "rtsp_url": rtsp_url,
+                          "publish": publish,
+                          "max_duty": LaunchConfiguration("max_duty"),
+                          "cmd_target_topic": LaunchConfiguration("cmd_target_topic")}.items(),
+        condition=_mode_is(mode, "scenario"))
+
     def _rl(condition):
         return IncludeLaunchDescription(
             PythonLaunchDescriptionSource(PathJoinSubstitution(
@@ -146,9 +160,17 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument("mode", default_value="full",
-                              choices=["full", "attitude", "perception", "navigator"],
+                              choices=["full", "attitude", "perception", "navigator",
+                                       "scenario"],
                               description="full = 認識 + core の BT / attitude = RL のみ / "
-                                          "perception = 認識のみ / navigator = core を使わない直接経路"),
+                                          "perception = 認識のみ / navigator = core を使わない直接経路 / "
+                                          "scenario = 認識 + FSM を姿勢制御の上に載せる (推奨)"),
+        DeclareLaunchArgument("max_duty", default_value="0.25",
+                              description="scenario の姿勢制御器の duty 上限。"
+                                          "cap 0.25 は姿勢誤差 10 度で飽和する (実測)"),
+        DeclareLaunchArgument("cmd_target_topic", default_value="",
+                              description="scenario で `/cmd/target` も目標として受ける "
+                                          "(UI のテレオペを姿勢制御の上に乗せる)"),
         DeclareLaunchArgument("use_control", default_value="true",
                               description="false で sinsei_umiusi_control を起動しない "
                                           "(sim bridge を自分で立てているとき)。IMU の待ちは残る"),
@@ -169,5 +191,6 @@ def generate_launch_description():
         wait_control,
         RegisterEventHandler(OnProcessExit(
             target_action=wait_control,
-            on_exit=[autonomy, navigator, wait_percep, rl_after_control])),
+            on_exit=[autonomy, navigator, scenario, wait_percep,
+                     rl_after_control])),
     ])

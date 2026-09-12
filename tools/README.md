@@ -34,6 +34,20 @@
 | `bag_check.py` | **実験直後に bag をその場で検品**。必須トピック/レート、前後静止 5 s、IMU 化け率、**衝突らしき gyro スパイクの時刻**（較正・world model から除外する区間）、`--profile teleop` で励起カバレッジ（duty 振幅帯・符号・サーボ可動域）。帰宅後に「使えない bag だった」を防ぐ |
 | `view_detections.py` | **検出結果を画像に重ねて表示**（時刻照合はせず、最後に届いた検出を重ねる）。**PC 側で動かす**こと（Pi でやると CPU が飽和して認識周期が落ちる）。`--save` で mp4 保存（表示も続く。録画だけなら `--no-window` を併用）|
 
+## 符号・幾何の確認（実機を水に浮かべて）
+
+| スクリプト | 用途 |
+|---|---|
+| `thrust_sign_check.py` | **1 基ずつ回して、推力の向きがモデルと合っているかその場で判定する**。姿勢制御が 4 基を一斉に動かす run では、どの基が反転しているか原理的に分けられない（2026-09-12 の bag は duty の相互相関 1.000）。+duty / −duty の角速度変化 Δω の差をバンドルの予測モーメントと内積して、**基ごとに「正常 / 反転 / 反応なし」**を出す。サーボ 0° と 60° を分けて測るので、**推力ベクトルごとの反転（ペラ・ESC）とサーボの正方向（`servo_sign`）を切り分けられる**。**配線の入れ替わり検出**（応答が別の基の予測に近くないか）も同時に出す。`--dry` で手順と予測だけ表示 |
+| `flow_check.py` | **オプティカルフローが実際に出るかを判定する**。追跡成功率は当てにならない（無地でも LK は「成功」を返す）ので、**前後誤差 (forward-backward)** で検定する。コントラスト std ≥ 25 / FB<1px ≥ 70% / FB誤差比 ≤ 0.2 が基準。`--device` `--topic` `--video` のどれでも。**ダメなときの順番はレンズを拭く → プール底に向ける → 照明 → 露光**（露光は最後） |
+
+## 解析（持ち帰ってから・PC で）
+
+| スクリプト | 用途 |
+|---|---|
+| `run_compare.py` | **1 本の bag に入った「古典 vs RL」を arm 区間で切り分けて並べる**。どちらが走っていたかは `/rosout` の `ARMED` / `DISARMED` の logger 名でしか分からない（両者とも同じ `/cmd/direct` に出し、`~/arm` はサービスなので topic に残らない）。姿勢誤差の RMS/p95、発振（主要周波数と符号反転レート）、duty とサーボの張り付き率を出す。`--segments` で区間一覧だけ。**良し悪しは判定しない** |
+| `duty_rpm_fit.py` | **`duty -> rpm` を回帰して `thrust_curve_exp` を決める**。推力 ∝ rpm² は物理として堅いので、線形に近ければ指数 ≈ 2.0、飽和していれば 2.0 未満。秤も治具も要らず、**arm して回した bag だけ**が要る。回し忘れた bag は「Runnable のサンプルが無い」と報告して終わる |
+
 ## センサ確認
 
 | スクリプト | 用途 |
@@ -77,6 +91,8 @@
 ./umiusi_stack.sh stop
 ```
 
-関連ドキュメント: `docs/experiment_guide.md` (実験手順) / `docs/robot_setup.md` (セットアップ) /
+関連ドキュメント: **`docs/field_card.md` (当日の 1 枚)** / `docs/scenario_run.md` (**シナリオを回す — 今どこまで動くか**) /
+`docs/robot_setup.md` (セットアップ / ブランチ) / `docs/teleop_gamepad.md` (ゲームパッド) /
+`docs/experiment_guide.md` (実験手順) / `docs/robot_setup.md` (セットアップ) /
 `docs/performance_tuning.md` (性能チューニング) / `docs/logging.md` (記録) /
 `docs/competition_checklist.md` (競技前の確認項目) / `docs/known_issues.md` (既知の問題)

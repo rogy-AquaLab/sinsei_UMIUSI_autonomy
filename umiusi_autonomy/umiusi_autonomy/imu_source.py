@@ -61,6 +61,7 @@ class ImuSource:
 
         self.topic = str(node.get_parameter("imu_topic").value)   # ログ用。購読時に読み直す
         self.yaw_rate = 0.0        # 直近の (符号・軸を当てた) ヨーレート [rad/s]
+        self.quat = None           # 直近の (w, x, y, z)。setpoint 経路が現在方位を知るのに使う
         self._last_t = None        # None = まだ 1 つも来ていない
         self._sub = None
 
@@ -79,6 +80,7 @@ class ImuSource:
             self._sub = None
         # 状態も捨てる。残すと再 activate 直後の tick に古いヨーレートが FSM へ入る
         self.yaw_rate = 0.0
+        self.quat = None
         self._last_t = None
 
     # ---- 受信 ----
@@ -95,6 +97,7 @@ class ImuSource:
                 return          # まだ 1 つも有効値が無い
         # sensor_msgs/Imu.angular_velocity is RAD/S (ROS standard), which is what the FSM wants.
         self.yaw_rate = self._sign * sample.gyro[self._axis]
+        self.quat = tuple(float(v) for v in sample.quat)
 
     def _now(self) -> float:
         return self._node.get_clock().now().nanoseconds * 1e-9

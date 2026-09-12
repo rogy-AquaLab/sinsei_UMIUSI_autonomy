@@ -27,6 +27,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -68,6 +69,9 @@ def generate_launch_description():
         DeclareLaunchArgument("target_depth", default_value="0.0",
                               description="目標深度 [m, 正=深い]。実行中に "
                                           "`ros2 param set /rl_attitude_node target_depth 1.0` で変更"),
+        DeclareLaunchArgument("thrust_sign", default_value="[1.0, 1.0, 1.0, 1.0]",
+                              description="基ごとの推力の向き (lf, lb, rb, rf)。-1.0 で反転。"
+                                          "値は autonomy の tools/thrust_sign_check.py が測る"),
         DeclareLaunchArgument("start_armed", default_value="false",
                               description="起動と同時にarmする。**既定 false** — 起動しただけで "
                                           "スラスタへ指令が出るのを避けるため。`~/arm` でarmする"),
@@ -80,6 +84,8 @@ def generate_launch_description():
             parameters=[{"model_path": model_path, "vel_cmd": vel_cmd, "publish": publish,
                          "start_armed": start_armed, "hold_yaw": hold_yaw,
                          "max_duty": max_duty, "depth_supervisor": depth_supervisor,
+                         "thrust_sign": ParameterValue(
+                             LaunchConfiguration("thrust_sign"), value_type=None),
                          "target_depth": target_depth, "vel_timeout": vel_timeout}],
         ),
     ])

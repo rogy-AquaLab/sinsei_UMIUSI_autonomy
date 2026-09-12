@@ -1,5 +1,52 @@
 # ロギング — 競技後に分析できるように残す
 
+## まず何を叩くか
+
+**記録は `record_run.sh` に一本化してある。** bag と映像を同時に開始し、`Ctrl-C` で両方を
+きれいに閉じる。**駆動より先に開始すること** — recorder は録りながら discovery を回すので、
+後から上がったノードのトピックも拾う。
+
+| やりたいこと | コマンド | 残るもの |
+|---|---|---|
+| **姿勢制御・シナリオの run**（既定） | `./record_run.sh --name <名前>` | bag（状態・指令・`/rosout`）+ 前後カメラの H264 |
+| **スラスタの符号確認・較正**（映像不要） | `./record_run.sh --bag-only --name <名前>` | bag だけ |
+| **風船の実写を集める** | `./record_run.sh --name <名前> --vision` | 上記 + **bag に 2 Hz の圧縮画像**。スタック側も `record_vision:=true` が要る |
+| **オプティカルフローの素材** | `./record_run.sh --name <名前> --flow` | 上記 + **下カメラの mp4（フレーム時刻つき）と露光設定** |
+| **映像だけ** | `./record_run.sh --camera-only --name <名前>` | H264 のみ |
+| **止めかたを失敗して metadata が無い** | `./record_run.sh --fix` | `~/runs/*/bag` を reindex して読めるようにする |
+
+出力は `~/runs/<日時>-<名前>/`（`UMIUSI_RUN_DIR` で変更可）。中身は
+`bag/`（mcap）・`*.h264` / `*.mp4`・`meta.txt`（開始壁時計・設定）・`bag.log`・`stack_logs/`。
+
+> **開始 20 秒後に「何を購読できたか」が出る。** ここに `/state/imu` と
+> `/state/thruster_state_all` が無ければ録れていない。**実験を止められるうちに気付くための
+> 表示**なので、必ず見ること（8/25 は 20 指定のうち 12 しか録れておらず、解析で詰んだ）。
+
+### 録ったらその場で検品する
+
+```bash
+python3 tools/bag_check.py ~/runs/latest/bag          # 必須トピック・レート・IMU 化け率
+python3 tools/flow_check.py --video ~/runs/latest/*.mp4   # フローが出るか (--flow で録ったとき)
+```
+
+### PC に回収する
+
+```bash
+scp -r pi@umiusi2.local:runs/latest/ ./20260913/
+```
+
+**録っただけでは終わっていない。** 8 月に 1 回、記録が機体の再起動で失われている
+（`/tmp` に置かれるスタックログは特に消える）。
+
+### 持ち帰ってから
+
+```bash
+python3 tools/run_compare.py <bag>      # arm 区間で切り分けて姿勢・発振・飽和を出す
+python3 tools/duty_rpm_fit.py <bag>     # duty -> rpm から thrust_curve_exp を決める
+```
+
+---
+
 ## なぜ rosbag だけでは足りないか
 
 実機カメラは `gst_camera_node` が **RTSP に流すだけで ROS トピックを出さない**

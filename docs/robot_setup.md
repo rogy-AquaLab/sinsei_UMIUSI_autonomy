@@ -129,7 +129,110 @@ cd ~/ros2-ws
 colcon build --packages-up-to umiusi_autonomy --cmake-args -DCMAKE_BUILD_TYPE=Release
 ```
 
-## 4. ここから先
+## 4. どのブランチで組むか
+
+**結論: `umiusi_sim` 以外は `main` で動く。sim だけは `chore/comment-diet` が必須。**
+
+（2026-09-13 時点。`git rev-list --count origin/main..HEAD` で数えたもの）
+
+| リポジトリ | 必要なブランチ | main との差 | 理由 |
+|---|---|---|---|
+| `sinsei_UMIUSI_autonomy` | **`main`** | 0（未コミットの変更あり） | 姿勢制御ノード・FSM・ツール類。**コミットすること** |
+| `umiusi_sim` | **`chore/comment-diet`** | **43 コミット先行** | **`classical.py` が main に存在しない。** 機体に入れる `umiusi_perception` wheel はここから |
+| `sinsei_UMIUSI_control` | **`main`** | 作業ブランチが 17 先行（不要） | scenario 経路は `/cmd/direct` を使うので control の logic を通らない。autonomy が読むのは `is_forward` だけで、**これは main にもある**（4 基分） |
+| `sinsei_umiusi_msgs` | **`main`** | 作業ブランチが 1 先行 | 差分はサーボ角の単位コメント訂正のみ（`rad` → `DEGREES`）。動作に影響しないが、**誤読の元なのでマージしたい** |
+| `sinsei_UMIUSI_core` | **`main`** | 0 | UI の中継 (`manual_target_generator`) はここ |
+| `sinsei_UMIUSI_ui` | **`main`** | 0 | ゲームパッド |
+
+---
+
+## umiusi_sim が main で動かない理由
+
+古典制御器の本体 `packages/perception/src/umiusi_perception/classical.py` が
+**`main` に無い**。`chore/comment-diet` にしかない。機体では:
+
+```bash
+cd ~/umiusi_sim && git fetch origin chore/comment-diet \
+  && git checkout chore/comment-diet && git pull
+pip install --no-deps --no-index ~/umiusi_sim/packages/perception
+```
+
+**`--no-deps` を省かないこと。** 省くと torch や opencv の解決に行って時間を食う。
+古典制御だけなら numpy しか使わない。
+
+入らないときの逃げ道（インストールせずに使う）:
+
+```bash
+export PYTHONPATH=~/umiusi_sim/packages/perception/src:$PYTHONPATH
+python3 -c "from umiusi_perception.classical import ClassicalController; print('OK')"
+```
+
+> `chore/comment-diet` は main から **43 コミット**離れている。これは長期的にはリスクで、
+> 「機体に入れるコードが main に無い」状態が続く。**どこかで main へマージすること。**
+
+---
+
+## control を main のままにしてよい理由
+
+scenario / teleop の指令は `/cmd/direct/thruster_controller/output_*` に出る。
+`thruster_controller` は **`/cmd/direct` に publisher が 1 つでも居ると自前の logic を
+まるごとスキップする**（`thruster_controller.cpp` の `has_no_thruster_publishers`）ので、
+control 側の制御ロジックは一切通らない。
+
+autonomy が control から読むのは `thruster_controller_<pos>` の **`is_forward` だけ**で、
+これは main にもある。作業ブランチ `feat/rl-attitude-logic` の 17 コミットは control 内蔵の
+RL logic 用で、`/cmd/direct` 経路には要らない。
+
+**未 push / 未 PR のブランチが 6 本あるが、当面どれも不要。** 順序は
+`fix/torch-link-leaks-into-camera-node` → `fix/hardware-health-flags` →
+`fix/can-servo-update-rate` → RL 依存の 3 本。
+
+---
+
+## 機体で組むときの手順
+
+```bash
+# 1. autonomy
+cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && git checkout main && git pull
+
+# 2. 古典制御ライブラリ (sim の branch に注意)
+cd ~/umiusi_sim && git checkout chore/comment-diet && git pull
+pip install --no-deps --no-index ~/umiusi_sim/packages/perception
+
+# 3. control / msgs / core は main
+for r in sinsei_UMIUSI_control sinsei_umiusi_msgs sinsei_UMIUSI_core; do
+  git -C ~/ros2-ws/src/$r checkout main && git -C ~/ros2-ws/src/$r pull
+done
+
+# 4. ビルド
+cd ~/ros2-ws && colcon build --symlink-install
+```
+
+### `colcon build` が `File exists` で落ちるとき
+
+`install/` 側に実体ファイルが残ったまま `--symlink-install` に切り替えると失敗する。
+**エラー文はファイル名しか出さないので原因が分かりにくい。** 消して建て直す:
+
+```bash
+rm -rf build/umiusi_autonomy install/umiusi_autonomy
+colcon build --packages-select umiusi_autonomy --symlink-install
+```
+
+`launch/` に**存在しないファイルへの symlink が残っている**ときも同じ症状になる
+（`stack.launch.py` で踏んだ）。`build/<pkg>/` ごと消すのが確実。
+
+### 入ったか確かめる
+
+```bash
+python3 -c "from umiusi_perception.classical import ClassicalController; print('OK')"
+ros2 launch umiusi_autonomy scenario.launch.py --show-args | head -3
+git -C ~/ros2-ws/src/sinsei_UMIUSI_autonomy log --oneline -1   # bag と一緒にメモする
+```
+
+**最後の 1 行は run のたびに記録すること。** 「どのコードで録った bag か」が後から
+分からなくなる。
+
+## 5. ここから先
 
 起動・記録・トラブル対応は **README** を見ること。このファイルは機体を
 「ssh で入って ROS が動く」状態にするまでを扱う。

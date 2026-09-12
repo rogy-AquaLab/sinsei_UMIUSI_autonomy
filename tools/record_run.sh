@@ -102,7 +102,10 @@ mkdir -p "$OUT"
 #                   ノードのログが全部入る。**どのポリシーで走ったか**が run から確定できる
 #                   (14 次元ポリシーは速度指令を受理表示しつつ黙って捨てる — A-15)
 #   * `estop`     … arm/解除の履歴。arm は**サービス**なので topic には出ず、/rosout 頼み
-#                   (autonomy 版のみ。control 版の arm は `/cmd/thruster_runnable_all`)
+#                   (autonomy 版のみ。control 版の arm は `/cmd/thruster_runnable_all`)。
+#                   **RL と古典の両方を録る** — 古典 vs RL を 1 本の bag に録る run では、
+#                   どちらが走っていたかの手掛かりが /rosout の logger 名しか無い
+#                   (両者とも同じ /cmd/direct に出す)。解析は tools/run_compare.py
 #
 # control 版のために足した 2 つ:
 #   * `/user_input/target`        … UI (ゲームパッド) が**送った**目標。`/cmd/target`
@@ -142,6 +145,7 @@ TOPICS="
 /rl_attitude_node/estop
 /rl_attitude_node/depth
 /rl_attitude_node/depth_mode
+/classical_attitude/estop
 /state/pressure
 /joint_states
 /tf
