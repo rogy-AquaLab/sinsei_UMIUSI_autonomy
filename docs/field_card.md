@@ -34,19 +34,45 @@
 **古典なら動かせる**（残り 3 基でも 6 自由度の権限は残る。rank 6・条件数 5.34→8.05）。
 **RL は使えない**（方策が 4 基前提）。**2 基以上死んだら諦める。**
 
-**control の yaml を直せば autonomy は自動で追従する**（起動時に `esc_disabled` を読む）:
+### いまの状態（2026-09-13）
+
+**autonomy 側は対応済み。control 側のブランチ `codex/left-front-thruster-failure` は
+まだ main に入っていない** — `esc_disabled` は 4 基とも `false` のまま。
+
+autonomy は既定で control の `esc_disabled` を読むので、**このままだと「全基生きている」と
+判断して lf に配分し続ける**。どちらかを選ぶ:
+
+**A. control のブランチをマージする**（推奨。設定が 1 箇所で済む）
 
 ```yaml
 attitude_controller:      disabled_thruster: "lf"   # control の ff 経路用
 thruster_controller_lf:   esc_disabled: true        # direct 経路にも効く
 ```
 
-現場で試すだけなら:
+これだけで autonomy は起動時に読んで自動で外す。
+
+**B. マージ前に動かすなら autonomy 側で明示する**
 
 ```bash
+ros2 launch umiusi_autonomy scenario.launch.py   # 起動してから
+ros2 param set /classical_attitude live_thrusters_source param
 ros2 param set /classical_attitude live_thrusters '[false,true,true,true]'   # lf,lb,rb,rf
-ros2 param set /classical_attitude max_duty 0.4     # 余裕が無くなるので上げる
+ros2 param set /classical_attitude max_duty 0.4   # 余裕が無くなるので上げる
 ```
+
+ログに `**lf を死亡扱いにした。**` が出れば効いている。**出なければ効いていない。**
+
+### 効き目（実測）
+
+| | 外さない | 外す |
+|---|---:|---:|
+| yaw トルク指令の実現誤差 | **240%** | 0% |
+| 前進指令の実現誤差 | 57% | 0.2% |
+| **水平ドリフト** | **1.36 m** | **0.02 m** |
+
+**効くのは主に並進。** 姿勢は浮力の復元でそれなりに保ててしまうので、
+**姿勢だけ見ていると「外さなくても動いている」と誤読する。**
+競技は風船へ近づく動作なので、水平 1.36 m のずれは致命的。
 
 > **外さないと「死んだ基に配分し続ける」**状態になり、解いた力と実際に出る力が食い違って
 > 残り 3 基が誤った前提で釣り合いを取る。**control 側だけ直しても direct 経路は直らない。**

@@ -1013,6 +1013,11 @@ core の BT 経路には効かない。**両方要る。**
 
 これは `GeneralAllocator` の docstring が warning している状態そのもの。
 
+> **2026-09-13 時点、control の `codex/left-front-thruster-failure` は main に未マージ。**
+> main の `esc_disabled` は 4 基とも false なので、**autonomy は「全基生きている」と読む。**
+> マージするか、autonomy 側で `live_thrusters_source:=param` +
+> `live_thrusters:='[false,true,true,true]'` を明示すること。
+
 **対処**: autonomy は起動時に control の `esc_disabled` を読みに行き、`live_thrusters` を
 自動で合わせる（`live_thrusters_source` 既定 `"control"`。`is_forward` と同じ方式で、
 **設定の正は control の yaml 1 箇所**）。control が居なければ自ノードの値に落ちて警告。
