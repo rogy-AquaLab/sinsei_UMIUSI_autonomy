@@ -58,17 +58,42 @@ arm すると振れが 2〜3 倍に悪化し、yaw は目標から 180° 離れ�
 どの基が反転しているかは**あの bag からは分離できない**（4 基が一斉に動いていたため）。
 **1 基ずつ測る。4 基すべて。**
 
+### 1-a. まず**地上**で（水に入れない・押さえなくていい）
+
 ```bash
 ./umiusi_stack.sh start --control-only          # 指令を出すノードを一切上げない
-./record_run.sh --bag-only --name 20260913-sign-check
+python3 tools/thrust_sign_check.py --ground --dry   # 予測だけ見る
+python3 tools/thrust_sign_check.py --ground         # 1 基ずつ回して y/n で答える
+```
 
-# 別の窓
-python3 tools/thrust_sign_check.py --dry        # まず予測だけ見る
-python3 tools/thrust_sign_check.py --out ~/runs/sign.json
+各基について「servo 0°・+duty のとき噴流がどちらへ出るはず」を出すので、
+**ティッシュ / 紙片 / 手をノズルの後ろにかざして**見て y/n で答える。
+最後に **`is_forward` の値がそのまま出る**ので yaml に書く。
+
+| 基 | 取り付け | 噴流が出るはず |
+|---|---|---|
+| lf | 前左舷 | **後ろ左舷** |
+| lb | 後ろ左舷 | **後ろ右舷** |
+| rb | 後ろ右舷 | **前右舷** |
+| rf | 前右舷 | **前左舷** |
+
+4 基すべて +duty なら**合力ちょうど 0 の純粋な旋回（上から見て右回り）**になる配置。
+噴流はその反対向きに出る。
+
+> **空回しなので長く回さない。** duty 0.12 / 1 回 3 秒に絞ってある。異音・発熱で止める。
+
+### 1-b. 直したら**水で**確かめる
+
+```bash
+./record_run.sh --bag-only --name 20260913-sign-check
+python3 tools/thrust_sign_check.py --out ~/runs/sign.json    # 水中・IMU で 1 基ずつ
 ```
 
 **機体は水に浮かべ、回れる程度に緩く係留する。** 固定すると角速度が出ず判定できない。
 所要 約 3 分（4 基 × サーボ 2 通り × ±duty）。
+
+**地上で決まるのは符号だけ**で、バンドルの幾何（取り付け角・位置）が合っているかは
+決まらない。**幾何が鏡像なら、符号を合わせても水中でまた逆になる。** そこを見るのが 1-b。
 
 ### 出力の読みかた
 

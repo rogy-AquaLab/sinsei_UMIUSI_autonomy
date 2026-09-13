@@ -39,10 +39,13 @@
 
 ```bash
 ./umiusi_stack.sh start --control-only        # 指令を出すノードを一切上げない
-./record_run.sh --bag-only --name 20260913-sign-check
 
-# 別の窓。まず予測だけ見る
-python3 tools/thrust_sign_check.py --dry
+# まず地上で (水に入れない・押さえ不要)。噴流の向きを目視して y/n で答える
+python3 tools/thrust_sign_check.py --ground --dry
+python3 tools/thrust_sign_check.py --ground
+
+# 直したら水で (IMU で 1 基ずつ。幾何が合っているかはここでしか分からない)
+./record_run.sh --bag-only --name 20260913-sign-check
 python3 tools/thrust_sign_check.py --out ~/runs/sign.json
 ```
 

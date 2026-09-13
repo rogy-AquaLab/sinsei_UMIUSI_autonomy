@@ -69,6 +69,24 @@ def predicted_torque(axes, pivots, idx, angle_deg):
     return cad_to_rep103(np.cross(pivots[idx], f))
 
 
+def exhaust_words(axes, idx):
+    """servo 0° / duty>0 のとき、**噴流がどちらへ出るか**を日本語にする。
+
+    推力は `thrust_axes[idx]` の向き、**噴流はその反対**。地上ではこれを目で見る
+    (推力は見えないが噴流は見える)。CAD は +X 前 / +Z 右舷。
+    """
+    v = -np.asarray(axes[idx], dtype=float)        # 噴流 = 推力の逆
+    fb = "前" if v[0] > 0.05 else ("後ろ" if v[0] < -0.05 else "")
+    ps = "右舷" if v[2] > 0.05 else ("左舷" if v[2] < -0.05 else "")
+    return (fb + ps) or "真横"
+
+
+def mount_words(pivots, idx):
+    """取り付け位置を日本語に (前後 × 左右)。"""
+    r = np.asarray(pivots[idx], dtype=float)
+    return ("前" if r[0] > 0 else "後ろ") + ("右舷" if r[2] > 0 else "左舷")
+
+
 def in_words(tau):
     """予測モーメントを日本語の向きにする。**目視で確かめるための逃げ道** —
     こちらの座標系の取り違えは、この文と実際の動きを見比べれば operator が捕まえられる。
@@ -130,6 +148,91 @@ def delta_omega(samples, edge_frac=0.2):
     return samples[-k:].mean(axis=0) - samples[:k].mean(axis=0)
 
 
+def ground_check(args, axes, pivots):
+    """**地上で**、噴流の向きを目で見て符号を決める。IMU も水も使わない。
+
+    水に浮かべる版 (この下の main) との違い:
+      * 決まるのは**各基の推力の符号**だけ。これはそのまま control の `is_forward` になる。
+      * **バンドルの幾何 (`thrust_axes`) が正しいかは決まらない。** 幾何が鏡像なら、
+        符号を合わせても水中でまた逆になる。そのときは水で測り直すこと。
+      * 機体を押さえる必要がない。大きい機体ではこちらが現実的。
+
+    幾何が地上で使える理由: servo 0° なら 4 基とも推力は水平で、**噴流の向きは取り付け
+    位置から一意に決まる** (4 基すべて +duty で合力ちょうど 0 の純粋な偶力配置)。
+    """
+    print("\n" + "=" * 64)
+    print("  地上での向き確認 — **水に入れない。** 機体を押さえる必要もない")
+    print("=" * 64)
+    print("\n**スラスタを空回しする。** 水冷前提の機体なら長く回さないこと —")
+    print(f"1 回 {args.pulse:.0f} 秒、duty {args.duty:.2f} に抑えてある。異音・発熱で止める。")
+    print("\n噴流は弱いので、**ティッシュ / 紙片 / 手をノズルの後ろにかざして**見る。")
+    print("\n各基について、servo 0°・duty>0 で**噴流が出るはずの向き**:")
+    print(f"\n  {'基':5}{'取り付け':10}{'噴流の向き':14}")
+    for p in args.ch:
+        i = POSITIONS.index(p)
+        print(f"  {p:5}{mount_words(pivots, i):10}{exhaust_words(axes, i):14}")
+    print("\n  (4 基すべて +duty なら合力 0 の純粋な旋回 = **上から見て右回り**。")
+    print("   噴流はその反対向きに出る)")
+    if args.dry:
+        print("\n--dry: ここまで。指令は出していない。")
+        return 0
+    if not args.yes:
+        try:
+            input("\n水に入っていないことを確認して Enter (Ctrl-C で中止): ")
+        except (EOFError, KeyboardInterrupt):
+            print("\n中止")
+            return 1
+
+    rclpy.init()
+    rig = Rig()
+    results = {}
+    try:
+        for p in args.ch:
+            i = POSITIONS.index(p)
+            want = exhaust_words(axes, i)
+            print(f"\n--- {p} ({mount_words(pivots, i)}) : 噴流は **{want}** へ出るはず")
+            input("    Enter で回す: ")
+            print(f"    duty +{args.duty:.2f} を {args.pulse:.0f} s ...", end="", flush=True)
+            rig.spin_for(args.pulse, pos=p, duty=args.duty, angle=0.0)
+            rig.spin_for(0.3, pos=None, duty=0.0, angle=0.0)
+            print(" 停止")
+            while True:
+                a = input(f"    噴流は {want} へ出たか? [y/n/s(skip)]: ").strip().lower()
+                if a in ("y", "n", "s"):
+                    break
+            results[p] = a
+    except KeyboardInterrupt:
+        print("\n中止された")
+    finally:
+        for _ in range(10):
+            rig.detach()
+            rclpy.spin_once(rig, timeout_sec=0.02)
+        print("\nゼロ出力 + detach を送信")
+
+    print("\n" + "=" * 64)
+    bad = [p for p, a in results.items() if a == "n"]
+    skip = [p for p, a in results.items() if a == "s"]
+    if skip:
+        print(f"  判定していない基: {sorted(skip)} — 残したまま次へ進まないこと")
+    if not bad:
+        print("  **4 基とも向きは合っている。** `is_forward` は全部 true のままでよい。")
+        print("  それでも水中で逆になるなら、**バンドルの幾何** (thrust_axes) を疑う。")
+    else:
+        print(f"  **向きが逆の基: {sorted(bad)}**")
+        print("\n  control の params/controllers.yaml をこうする:")
+        for p in POSITIONS:
+            v = "false" if p in bad else "true"
+            print(f"    thruster_controller_{p}:  is_forward: {v}")
+        sign = ", ".join("-1.0" if p in bad else "1.0" for p in POSITIONS)
+        print(f"\n  現場で試すだけなら (再起動すると control の値に戻る):")
+        print(f"    ros2 param set /classical_attitude thrust_sign '[{sign}]'")
+    print("\n  **直したら水に浮かべて確かめること** — 地上で決まるのは符号だけで、")
+    print("  幾何 (取り付け角・位置) が合っているかは決まらない:")
+    print("    python3 tools/thrust_sign_check.py        # 水中・IMU で 1 基ずつ")
+    rclpy.shutdown()
+    return 1 if (bad or skip) else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ch", nargs="+", choices=POSITIONS, default=list(POSITIONS))
@@ -142,7 +245,13 @@ def main() -> int:
     ap.add_argument("--out", default="", help="生データの保存先 JSON")
     ap.add_argument("--dry", action="store_true", help="指令を出さず、手順と予測だけ表示")
     ap.add_argument("--yes", action="store_true", help="確認プロンプトを省略")
+    ap.add_argument("--ground", action="store_true",
+                    help="**地上で**噴流の向きを目で見て符号を決める (IMU も水も使わない)。"
+                         "機体を押さえなくてよいが、決まるのは符号だけで幾何は決まらない")
     args = ap.parse_args()
+    if args.ground:
+        args.duty = min(abs(args.duty), 0.12)      # 空回しなので更に絞る
+        args.pulse = min(args.pulse, 3.0)
 
     if abs(args.duty) > 0.3:
         print(f"duty {args.duty} は大きすぎる。0.3 以下にすること")
@@ -154,6 +263,8 @@ def main() -> int:
         print(f"バンドルを読めない ({type(e).__name__}: {e})")
         return 1
     print(f"バンドル: {bundle}")
+    if args.ground:
+        return ground_check(args, axes, pivots)
 
     # 予測: 各基・各サーボ角で「どの軸に一番効くか」。判定はこの向きとの内積で行う
     print("\n予測モーメントの向き (REP-103, duty>0 のとき / 単位推力あたり)")
