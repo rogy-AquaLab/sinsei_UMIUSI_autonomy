@@ -47,6 +47,26 @@ def _wrap(a):
     return (a + math.pi) % (2.0 * math.pi) - math.pi
 
 
+YAW_DT_MAX = 0.2     # [s] 指令が途切れたときに方位目標が飛ばないための上限
+
+
+def advance_yaw_setpoint(yaw_sp, yaw_now, rz, rate_scale, dt, lead_max):
+    """旋回レート指令 `rz` を方位目標へ積分する (`cmd_target_yaw_mode="rate"`)。
+
+    呼び出し側の義務:
+      * `dt` = **前の指令から今までの実時間**。制御周期を渡すと旋回速度が指令の
+        送信レートに比例してずれる (known_issues B-17)
+      * `lead_max` = 実測方位からの先行量の上限 (known_issues B-14 の 180 度の罠)
+    """
+    if yaw_sp is None:
+        yaw_sp = yaw_now
+    yaw_sp = _wrap(yaw_sp + rz * rate_scale * dt)
+    lead = _wrap(yaw_sp - yaw_now)
+    if abs(lead) > lead_max:      # 追随できない目標を先行させない
+        yaw_sp = _wrap(yaw_now + math.copysign(lead_max, lead))
+    return yaw_sp
+
+
 def slew(current, target, max_rate, dt):
     """1 ステップで `max_rate * dt` だけ target に近づける。`max_rate <= 0` で無制限。"""
     if max_rate <= 0.0:
@@ -206,6 +226,7 @@ class ClassicalAttitudeNode(Node):
         self._yaw_rate_scale = float(self.get_parameter("cmd_target_yaw_rate_scale").value)
         self._yaw_lead_max = abs(float(self.get_parameter("cmd_target_yaw_lead_max").value))
         self._yaw_sp = None
+        self._yaw_t_prev = None
         cmd_target = str(self.get_parameter("cmd_target_topic").value).strip()
         if cmd_target:
             from sinsei_umiusi_msgs.msg import Target
@@ -213,6 +234,14 @@ class ClassicalAttitudeNode(Node):
             self.get_logger().info(
                 f"'{cmd_target}' (Target) も目標として受ける — UI のテレオペが"
                 "姿勢制御の上に乗る。orientation は REP-103 の回転ベクトル [rad] と解釈する")
+            if self._yaw_mode != "rate":
+                # UI が出す orientation.z は正規化したスティック値なので、absolute だと
+                # そのまま絶対方位 [rad] になる (known_issues B-17)
+                self.get_logger().warning(
+                    f"cmd_target_yaw_mode='{self._yaw_mode}' で '{cmd_target}' を受けている。"
+                    "**UI のゲームパッドなら ±11 度しか回れない** "
+                    "(orientation.z を絶対方位として読むため)。旋回させるなら "
+                    "`ros2 param set /classical_attitude cmd_target_yaw_mode rate`")
 
         self._arm = ArmState(self, self._detach_all,
                              start_armed=bool(self.get_parameter("start_armed").value))
@@ -296,6 +325,19 @@ class ClassicalAttitudeNode(Node):
                     dead = [q for q, a in zip(POSITIONS, v) if not a]
                     self.get_logger().warning(
                         f"live_thrusters={v}" + (f" — {dead[0]} を外した" if dead else ""))
+                elif p.name == "live_thrusters_source":
+                    src = str(p.value).strip().lower()
+                    if src not in ("control", "param"):
+                        return SetParametersResult(
+                            successful=False,
+                            reason=f"live_thrusters_source は control か param: '{p.value}'")
+                    # **ここでは control へ読みに行かない** — パラメータコールバックの中で
+                    # サービスを待つと spin が入れ子になって固まる。効くのは次に
+                    # live_thrusters を set したときか、再起動したとき
+                    self.get_logger().warning(
+                        f"live_thrusters_source={src} — **この set だけでは読み直さない。** "
+                        "続けて `ros2 param set /classical_attitude live_thrusters '[...]'` "
+                        "を実行するか、再起動すること")
                 elif p.name == "k_v_vert":
                     # 制御器は属性を持つだけなので、作り直さずその場で差し替えられる
                     ctl = getattr(self, "_ctl", None)
@@ -305,6 +347,45 @@ class ClassicalAttitudeNode(Node):
                 elif p.name == "vel_cmd":
                     self._vel_cmd = np.array([float(p.value), 0.0, 0.0])
                     self.get_logger().warning(f"vel_cmd={float(p.value):.2f} m/s")
+                # --- テレオペのつまみ。**起動時に読んだきりにしない** ---------------
+                # 手順書 (docs/teleop_gamepad.md, docs/field_card.md) が現場で
+                # `ros2 param set` するよう書いているもの。受けないと set は成功を
+                # 返すのに何も変わらない (known_issues B-17)
+                elif p.name == "cmd_target_yaw_mode":
+                    mode = str(p.value).strip().lower()
+                    if mode not in ("absolute", "rate"):
+                        return SetParametersResult(
+                            successful=False,
+                            reason=f"cmd_target_yaw_mode は absolute か rate: '{p.value}'")
+                    self._yaw_mode = mode
+                    # 溜めた方位目標と受信時刻は持ち越さない (モードが変わった瞬間に
+                    # 古い目標へ飛ぶ / 切替の間隔をまとめて積むのを防ぐ)
+                    self._yaw_sp = None
+                    self._yaw_t_prev = None
+                    self.get_logger().warning(
+                        f"cmd_target_yaw_mode={mode}"
+                        + (" — orientation.z を旋回レートとして積む"
+                           if mode == "rate" else
+                           " — orientation.z は絶対方位 [rad]。**UI だと ±11 度しか回れない**"))
+                elif p.name == "cmd_target_yaw_rate_scale":
+                    self._yaw_rate_scale = float(p.value)
+                    self.get_logger().warning(
+                        f"cmd_target_yaw_rate_scale={self._yaw_rate_scale:.2f} rad/s per unit")
+                elif p.name == "cmd_target_yaw_lead_max":
+                    self._yaw_lead_max = abs(float(p.value))
+                    self.get_logger().warning(
+                        f"cmd_target_yaw_lead_max={math.degrees(self._yaw_lead_max):.0f} deg")
+                elif p.name == "cmd_target_vel_scale":
+                    v = float(p.value)
+                    ctl = getattr(self, "_ctl", None)
+                    if v < 0.0 and ctl is None:
+                        return SetParametersResult(
+                            successful=False, reason="制御器が未構築で自動値を計算できない")
+                    # 負 = 自動 (スティック 1.0 = その cap で到達できる速度)。init と同じ規則
+                    self._vel_scale = ctl.reachable_speed(self._max_duty) if v < 0.0 else v
+                    self.get_logger().warning(
+                        f"cmd_target_vel_scale={self._vel_scale:.3f} m/s per unit"
+                        + (" (自動)" if v < 0.0 else ""))
             except (TypeError, ValueError) as e:            # noqa: PERF203
                 return SetParametersResult(successful=False, reason=f"{p.name}: {e}")
         return SetParametersResult(successful=True)
@@ -375,12 +456,14 @@ class ClassicalAttitudeNode(Node):
             yaw_now = self._yaw_now()
             if yaw_now is None:
                 return                       # IMU 待ち: 目標を作れない
-            if self._yaw_sp is None:
-                self._yaw_sp = yaw_now
-            self._yaw_sp = _wrap(self._yaw_sp + rz * self._yaw_rate_scale * self._dt)
-            lead = _wrap(self._yaw_sp - yaw_now)
-            if abs(lead) > self._yaw_lead_max:   # 追随できない目標を先行させない
-                self._yaw_sp = _wrap(yaw_now + math.copysign(self._yaw_lead_max, lead))
+            # 積分は受信間隔の実時間で行う (advance_yaw_setpoint)。初回は制御周期で
+            # 代用し、途切れたときは YAW_DT_MAX で頭打ちにする
+            now = self.get_clock().now().nanoseconds * 1e-9
+            dt = self._dt if self._yaw_t_prev is None else now - self._yaw_t_prev
+            self._yaw_t_prev = now
+            self._yaw_sp = advance_yaw_setpoint(
+                self._yaw_sp, yaw_now, rz, self._yaw_rate_scale,
+                min(max(dt, 0.0), YAW_DT_MAX), self._yaw_lead_max)
             rz = _wrap(self._yaw_sp)         # 以降は絶対角として扱う
 
         rv = np.array([rx, ry, rz], dtype=float)
@@ -464,6 +547,7 @@ class ClassicalAttitudeNode(Node):
         # 流された量が 180 度を超えていれば、そこが安定平衡になって出られなくなる
         # (2026-09-12 に踏んだ形)。次の arm で現在方位に取り直す
         self._yaw_sp = None
+        self._yaw_t_prev = None
         self._servo_cmd[:] = 0.0
         self._duty_cmd[:] = 0.0
         self._action[:] = 0.0

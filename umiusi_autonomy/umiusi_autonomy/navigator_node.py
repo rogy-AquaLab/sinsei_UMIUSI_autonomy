@@ -177,12 +177,48 @@ class NavigatorNode(Node):
         self.declare_parameter("start_armed", True)    # False = launch disarmed; arm to drive
         self._arm = ArmState(self, self._detach_all,
                              start_armed=bool(self.get_parameter("start_armed").value))
+        self.add_on_set_parameters_callback(self._on_params)
         self._timer = self.create_timer(self._dt, self._control_tick)
         self.get_logger().info(
             f"navigator_node[{self._mode}]: detections='{det_topic}', imu='{self._imu.topic}' -> "
             f"{sink} @ {self._control_hz:.0f} Hz "
             f"(publish={self._publish}, max_duty={self._max_duty:.2f}, "
             f"servo_sign={self._servo_sign})")
+
+    def _on_params(self, params):
+        """`ros2 param set` を実行中に効かせる (setpoint モードの旋回・前進のつまみ)。
+
+        手順書 (docs/field_card.md, docs/scenario_run.md) が現場で
+        `ros2 param set /navigator_node yaw_rate_scale 0.4` するよう書いているもの。
+        受けないと set は成功を返すのに何も変わらない (known_issues B-17)。
+        """
+        from rcl_interfaces.msg import SetParametersResult
+        for p in params:
+            try:
+                r = None
+                if p.name == "yaw_rate_scale":
+                    r = self._setpoint_knob(p, "_yaw_rate_scale", float(p.value))
+                elif p.name == "yaw_lead_max":
+                    r = self._setpoint_knob(p, "_yaw_lead_max", abs(float(p.value)))
+                elif p.name == "surge_scale":
+                    r = self._setpoint_knob(p, "_surge_scale", float(p.value))
+                if r is not None:
+                    return r
+            except (TypeError, ValueError) as e:            # noqa: PERF203
+                return SetParametersResult(successful=False, reason=f"{p.name}: {e}")
+        return SetParametersResult(successful=True)
+
+    def _setpoint_knob(self, p, attr, value):
+        """setpoint モードのつまみを当てる。当てられないときだけ理由を返す。"""
+        from rcl_interfaces.msg import SetParametersResult
+        if not hasattr(self, attr):
+            # 他のモードでは持っていない。**黙って成功を返さない** (known_issues B-17)
+            return SetParametersResult(
+                successful=False,
+                reason=f"{p.name} は command_mode=setpoint のときだけ効く (今は {self._mode})")
+        setattr(self, attr, value)
+        self.get_logger().warning(f"{p.name}={value:.2f}")
+        return None
 
     def _ensure_behavior(self) -> bool:
         if self._behavior is not None:
