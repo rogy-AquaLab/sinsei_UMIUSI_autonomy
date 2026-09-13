@@ -8,6 +8,8 @@ RL もアロケータも通さない「素の指令」— 較正実験はこれ�
     python3 thruster_cmd.py spin                     # 実験 1: 1 基ずつ、回したまま servo を振る
     python3 thruster_cmd.py step --ch lf --angle 80  # 実験 3: サーボステップ 0→80°→0 ×3
     python3 thruster_cmd.py sweep --ch lf            # 実験 4: 推力ベンチ duty ±0.2..±1.0
+    python3 thruster_cmd.py pose                     # 全基 servo 0 deg / duty 0.1 で保持 (向きの確認)
+    python3 thruster_cmd.py pose --angle 45          # 全基 45 deg に寝かせて保持
     python3 thruster_cmd.py steady --duty 0.3        # 実験 6: 全基前進 10 s (--yaw で旋回)
     python3 thruster_cmd.py excite --seconds 120     # 実験 8: 有界ランダム励起 (world model 用)
 
@@ -114,12 +116,84 @@ def cmd_sweep(drv, a):
 
 
 def cmd_steady(drv, a):
-    sign = {"lf": 1, "lb": 1, "rb": -1, "rf": -1} if a.yaw else dict.fromkeys(POSITIONS, 1)
-    what = "旋回 (左右逆転)" if a.yaw else "前進 (全基同符号)"
+    # **符号と挙動の対応は 2026-09-13 にバンドルの幾何で計算し直した。以前は逆だった。**
+    # 4 基は接線方向に付いた偶力配置なので:
+    #   全基同符号        -> 合力ちょうど 0 の**純粋な旋回** (上から見て右回り)
+    #   lf+ lb+ rb- rf-  -> 合力が前方のみ (yaw ほぼ 0) の**前進**
+    # 以前はこの 2 つのラベルが入れ替わっていて、「前進」と表示して旋回していた。
+    sign = dict.fromkeys(POSITIONS, 1) if a.yaw else {"lf": 1, "lb": 1, "rb": -1, "rf": -1}
+    what = "旋回 (全基同符号・合力 0 の偶力)" if a.yaw else "前進 (lf+ lb+ rb- rf-)"
     confirm(f"実験 6: {what} duty {a.duty} を {a.seconds} s。"
             "プール長辺方向・中央から。前進と後退 (--duty 負) の両方取ること", a.yes)
     drv.hold(a.seconds, duty={p: sign[p] * a.duty for p in POSITIONS},
              label=f"{what} duty {a.duty}")
+
+
+def _expect_words(angle_deg, duty, chans):
+    """バンドルの幾何から「この指令で何が起きるはずか」を日本語にする。
+
+    地上/水中を問わず、**指令を出す前に何を見ればよいか**が分からないと確認にならない。
+    バンドルが読めなければ黙って諦める (このツールは単体で動くのが取り柄なので、
+    バンドルを必須にはしない)。
+    """
+    try:
+        import json
+        from pathlib import Path as _P
+        from ament_index_python.packages import get_package_share_directory
+        c = json.loads((_P(get_package_share_directory("umiusi_autonomy"))
+                        / "config" / "classical_bundle.json").read_text())["contract"]
+        ax = np.asarray(c["thrust_axes"], float)
+        pv = np.asarray(c["pivots_from_com"], float)
+    except Exception:                                    # noqa: BLE001
+        return None
+    y_up = np.array([0.0, 1.0, 0.0])
+    phi = math.radians(angle_deg)
+    f = np.zeros(3)
+    t = np.zeros(3)
+    for k, p in enumerate(POSITIONS):
+        if p not in chans:
+            continue
+        v = (math.cos(phi) * ax[k] + math.sin(phi) * y_up) * duty
+        f += v
+        t += np.cross(pv[k], v)
+    # CAD: +X 前 / +Y 上 / +Z 右舷。トルクの +Y まわりが yaw
+    parts = []
+    if abs(f[0]) > 1e-3:
+        parts.append("前進" if f[0] > 0 else "後退")
+    if abs(f[2]) > 1e-3:
+        parts.append("右舷へ横移動" if f[2] > 0 else "左舷へ横移動")
+    if abs(f[1]) > 1e-3:
+        parts.append("上昇" if f[1] > 0 else "下降")
+    if abs(t[1]) > 1e-3:
+        parts.append("上から見て左回り" if t[1] > 0 else "上から見て右回り")
+    if abs(t[0]) > 1e-3:
+        parts.append("左舷が下がる" if t[0] > 0 else "右舷が下がる")
+    if abs(t[2]) > 1e-3:
+        parts.append("機首が上がる" if t[2] > 0 else "機首が下がる")
+    return "・".join(parts) if parts else "力もモーメントも出ない (釣り合い)"
+
+
+def cmd_pose(drv, a):
+    """**全基を規定の姿勢に置いて保持する。** 方向と向きを一度に目で見るためのもの。
+
+    1 基ずつ見る `spin` / `thrust_sign_check.py --ground` と違い、**4 基の相対関係**が
+    見える: サーボが全部同じ向きに寝ているか、噴流が揃っているか、1 基だけ違わないか。
+    姿勢制御を入れる前に、ここで食い違いを潰しておく。
+    """
+    chans = set(a.ch) if a.ch else set(POSITIONS)
+    exp = _expect_words(a.angle, a.duty, chans)
+    print(f"規定姿勢: サーボ {a.angle:+.0f}° / duty {a.duty:+.2f} / 対象 {sorted(chans)}")
+    if exp:
+        print(f"  **この指令で起きるはず**: {exp}")
+        print("  (地上なら噴流の向きで、水中なら機体の動きで確かめる)")
+    else:
+        print("  (バンドルが読めないので期待値は出せない)")
+    confirm(f"{a.seconds:.0f} s 保持する。**水中なら機体が動く。** 地上なら空回しなので"
+            "長く回さないこと", a.yes)
+    drv.hold(a.seconds,
+             duty={p: (a.duty if p in chans else 0.0) for p in POSITIONS},
+             angle={p: (a.angle if p in chans else 0.0) for p in POSITIONS},
+             label=f"servo {a.angle:+.0f}° duty {a.duty:+.2f}")
 
 
 def cmd_excite(drv, a):
@@ -171,6 +245,13 @@ def main():
     s.add_argument("--seconds", type=float, default=10.0)
     s.add_argument("--yaw", action="store_true", help="左右逆転で旋回")
 
+    s = sub.add_parser("pose", help="全基を規定の姿勢 (サーボ角 + duty) に置いて保持する")
+    s.add_argument("--angle", type=float, default=0.0, help="サーボ角 [deg]。既定 0 = 水平")
+    s.add_argument("--duty", type=float, default=0.1, help="duty (負で逆)。既定 0.1")
+    s.add_argument("--seconds", type=float, default=20.0)
+    s.add_argument("--ch", nargs="+", choices=POSITIONS, default=None,
+                   help="対象の基 (既定は全 4 基)")
+
     s = sub.add_parser("excite", help="実験 8: 有界ランダム励起 (world model データ)")
     s.add_argument("--seconds", type=float, default=120.0)
     s.add_argument("--duty-max", type=float, default=0.3)
@@ -188,7 +269,7 @@ def main():
     drv = Driver()
     time.sleep(0.5)          # publisher のマッチング待ち
     try:
-        {"spin": cmd_spin, "step": cmd_step, "sweep": cmd_sweep,
+        {"spin": cmd_spin, "step": cmd_step, "sweep": cmd_sweep, "pose": cmd_pose,
          "steady": cmd_steady, "excite": cmd_excite}[a.cmd](drv, a)
     except KeyboardInterrupt:
         print("\n中断")
