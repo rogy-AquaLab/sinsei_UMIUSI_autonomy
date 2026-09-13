@@ -56,6 +56,15 @@ UI（ブラウザ）は `/user_input/target` に publish し、core の `manual_
 > **`cmd_target_yaw_mode` の既定は `absolute`**（control の `rl.hpp` に合わせた規約どおり）。
 > ゲームパッドで操縦するなら **`rate` に変えること**。`absolute` のままだと、UI が出す
 > ±0.2 rad がそのまま目標角になるので **±11° しか回れない**。
+>
+> 忘れても気付けるように、`cmd_target_topic` を受けていて `absolute` のままなら
+> **起動時に警告が出る**（`**UI のゲームパッドなら ±11 度しか回れない**`）。
+> `rate` にすると `cmd_target_yaw_mode=rate — orientation.z を旋回レートとして積む` が出る。
+> **出なければ効いていない。** 2026-09-13 までは `ros2 param set` を受けていなかったので、
+> set が成功を返すのに何も変わらなかった（B-17）。
+>
+> 旋回レートは**指令の受信間隔の実時間**で積む。`cmd_target_yaw_rate_scale` に書いた
+> rad/s がそのまま出る（以前は UI の送信 30 Hz と制御 50 Hz の比で 0.6 倍になっていた）。
 
 ---
 

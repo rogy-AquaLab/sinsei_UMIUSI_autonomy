@@ -299,6 +299,11 @@ ros2 param set /classical_attitude cmd_target_yaw_mode rate   # ← 無いと 11
 ros2 service call /classical_attitude/arm std_srvs/srv/SetBool '{data: true}'
 ```
 
+**`cmd_target_yaw_mode=rate — orientation.z を旋回レートとして積む` がログに出れば効いている。
+出なければ効いていない。** 旋回だけができないときは、まずここを疑う（符号ではない・B-17）。
+旋回が遅い / 速いときは `ros2 param set /classical_attitude cmd_target_yaw_rate_scale 2.5`
+（既定 1.5 rad/s。左スティック −0.2 なら 0.3 rad/s = 17°/s）。
+
 **パッド背面のスイッチを `X` にする**（`D` だと添字がズレて、エラー無しに操作が狂う）。
 切り替えたら挿し直してブラウザも再読み込み。
 

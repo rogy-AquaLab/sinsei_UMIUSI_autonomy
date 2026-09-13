@@ -1086,3 +1086,64 @@ core の BT 経路には効かない。**両方要る。**
 
 - **2 基以上の欠損は受け付けない**（6 自由度の権限が無くなり、黙って姿勢が崩れるため）。
 - **RL は使えない。** 方策は 4 基前提で学習しており、縮退の手段が無い。**古典を使うこと。**
+
+---
+
+### B-17. 【高・修正済み】現場向けの `ros2 param set` が黙って効かなかった — 「回転できない」の正体
+
+2026-09-13 プール。**姿勢制御を効かせたままゲームパッドで操作すると、並進はできるが
+回転がほとんどできない。** 推力の符号を疑って時間を使ったが、原因は符号ではなかった。
+
+**原因 (1): `cmd_target_yaw_mode` の既定 `absolute` + 実行中に変えられない**
+
+UI が出す `orientation.z` は**正規化したスティック値**（左スティック左右に ×−0.2）。
+`absolute` ではこれを**絶対方位 [rad]** として読むので **±11° で頭打ち**になる。
+手順書はこれを見越して `ros2 param set /classical_attitude cmd_target_yaw_mode rate` と
+書いてあったが、**ノードは起動時に一度読むだけで、`_on_params` が受けていなかった。**
+
+  → `ros2 param set` は **`successful=True` を返すのに挙動が変わらない**。
+    現場からは「param set したのに回らない」としか見えず、切り分けが符号の方へ逸れる。
+
+同じ状態だったものが 5 つ（すべて手順書が `param set` しろと書いているもの）:
+
+| ノード | パラメータ | どこに書いてあったか |
+|---|---|---|
+| `/classical_attitude` | `cmd_target_yaw_mode` | field_card / teleop_gamepad / scenario_run |
+| `/classical_attitude` | `cmd_target_yaw_rate_scale` | teleop_gamepad |
+| `/classical_attitude` | `cmd_target_vel_scale` | teleop_gamepad |
+| `/classical_attitude` | `live_thrusters_source` | field_card |
+| `/navigator_node` | `yaw_rate_scale` | field_card / scenario_run（**コールバック自体が無かった**） |
+
+**原因 (2): 旋回レートが UI の送信レートに依存していた**
+
+`_on_cmd_target` は**指令を受けるたび**に呼ばれるのに、積分に制御周期
+（`control_hz` 既定 50 Hz）を使っていた。UI の送信は 30 Hz（`gamepadPublisher.ts` の
+`frequency = 30`）なので、**指定した rad/s の 0.6 倍でしか回らない。** UI 側の頻度を
+変えると旋回速度が黙って変わる。
+
+**対処**
+
+- 上の 5 つを `_on_params` で受ける。値の検証つき（`cmd_target_yaw_mode` は
+  `absolute` / `rate` 以外を拒否）。`live_thrusters_source` だけは**その場で読み直さない** —
+  パラメータコールバックの中で control へ問い合わせると spin が入れ子になって固まるため、
+  「次に `live_thrusters` を set するか再起動で効く」と警告を出すに留める。
+- 旋回レートの積分を**受信間隔の実時間**にする（`advance_yaw_setpoint`）。途切れたときに
+  目標が飛ばないよう `YAW_DT_MAX = 0.2 s` で頭打ち。
+- `cmd_target_topic` を受けていて `absolute` のままなら、**起動時に警告を出す**
+  （「±11° しか回れない」と直すコマンドを添えて）。
+- 回帰テスト `umiusi_autonomy/test/test_cmd_target_yaw.py`。**手順書の
+  `ros2 param set /<node> <param>` を全部拾って、そのノードのコールバックが
+  受けているかを突き合わせる**テストを含む（修正前のコードに当てると上表の 5 つが出る）。
+
+**検証**（ノードを立てて UI 相当の Target を実時間で 3 秒送る。左スティック −0.2）
+
+| | 回った角度 | 目標方位 |
+|---|---:|---:|
+| `absolute`（既定・修正前と同じ） | 0° | **−11.5° で頭打ち** |
+| `ros2 param set ... rate` 後 | **−52.1°** | 追随 |
+| 同上・送信 10 Hz | **−50.5°**（レート非依存） | 追随 |
+| `cmd_target_yaw_rate_scale 3.0` を実行中に設定 | **−104.1°**（2 倍） | 追随 |
+
+> **教訓**: 「現場で `ros2 param set` できます」と手順書に書いたら、**そのノードの
+> パラメータコールバックが受けているかを必ず確かめる。** 効かない `param set` は
+> エラーを返さないので、現場では原因の切り分けが別方向（符号・配線・ハード）へ逸れる。
