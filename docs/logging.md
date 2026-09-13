@@ -10,7 +10,7 @@
 |---|---|---|
 | **姿勢制御・シナリオの run**（既定） | `./record_run.sh --name <名前>` | bag（状態・指令・`/rosout`）+ 前後カメラの H264 |
 | **スラスタの符号確認・較正**（映像不要） | `./record_run.sh --bag-only --name <名前>` | bag だけ |
-| **風船の実写を集める** | `./record_run.sh --name <名前> --vision` | 上記 + **bag に 2 Hz の圧縮画像**。スタック側も `record_vision:=true` が要る |
+| **風船の実写を集める** | `./record_run.sh --name <名前> --vision` | 上記 + **bag に 2 Hz の圧縮画像**。**スタック側も `record_vision:=true` が要る** — 無いと publisher が居ないので**黙って 1 枚も録れない** |
 | **オプティカルフローの素材** | `./record_run.sh --name <名前> --flow` | 上記 + **下カメラの mp4（フレーム時刻つき）と露光設定** |
 | **映像だけ** | `./record_run.sh --camera-only --name <名前>` | H264 のみ |
 | **止めかたを失敗して metadata が無い** | `./record_run.sh --fix` | `~/runs/*/bag` を reindex して読めるようにする |

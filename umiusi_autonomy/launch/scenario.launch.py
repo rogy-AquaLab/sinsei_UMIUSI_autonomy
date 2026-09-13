@@ -47,6 +47,9 @@ def generate_launch_description():
             "model_path": LaunchConfiguration("model_path"),
             "rtsp_url": LaunchConfiguration("rtsp_url"),
             "use_camera_bridge": LaunchConfiguration("use_camera_bridge"),
+            # これを渡さないと camera_bridge が compressed を publish せず、
+            # `record_run.sh --vision` が**黙って 1 枚も録らない**
+            "record_vision": LaunchConfiguration("record_vision"),
         }.items(),
         condition=IfCondition(LaunchConfiguration("use_perception")))
 
@@ -79,6 +82,11 @@ def generate_launch_description():
                               description="検出器の .pt。空なら同梱のもの"),
         DeclareLaunchArgument("rtsp_url", default_value="rtsp://127.0.0.1:8554/cam1"),
         DeclareLaunchArgument("use_camera_bridge", default_value="true"),
+        DeclareLaunchArgument("record_vision", default_value="false",
+                              description="true で camera_bridge が 2 Hz の圧縮画像も出す。"
+                                          "**`record_run.sh --vision` で画像を bag に残すには "
+                                          "これが要る** (既定 false のままだと publisher が "
+                                          "居ないので黙って空振りする)"),
         DeclareLaunchArgument("use_perception", default_value="true",
                               description="false で認識と FSM を上げない "
                                           "(姿勢制御器だけ = teleop 用)"),

@@ -208,8 +208,19 @@ ros2 param set /navigator_node  yaw_rate_scale 0.4     # 旋回をゆっくり
 |---|---|
 | 姿勢制御・シナリオ | `./record_run.sh --name <名前>` |
 | 符号確認（映像不要） | `./record_run.sh --bag-only --name <名前>` |
-| **風船の実写を集める** | `./record_run.sh --name <名前> --vision` |
+| **風船の実写を集める** | `./record_run.sh --name <名前> --vision` ＋ **スタック側に `record_vision:=true`**（下記） |
 | **フローの素材** | `./record_run.sh --name <名前> --flow` |
+
+> **`--vision` は「余計なものを録らない」ためではなく、`bag` に画像を足すためのもの。**
+> 既定では画像は bag に入らない（映像は RTSP から H264 で別録り）。そして
+> **スタックを `record_vision:=true` で上げていないと publisher が居ないので黙って空振りする。**
+>
+> ```bash
+> ros2 launch umiusi_autonomy bringup.launch.py mode:=scenario record_vision:=true
+> ./record_run.sh --name 20260913-balloon --vision
+> ```
+>
+> 購読レポートに `/front_cam/image_raw/compressed` が出ているかで確認できる。
 
 **開始 20 秒後に「何を購読できたか」が出る。** `/state/imu` と
 `/state/thruster_state_all` が無ければ録れていない — **実験を止められるうちに気付くための表示**。

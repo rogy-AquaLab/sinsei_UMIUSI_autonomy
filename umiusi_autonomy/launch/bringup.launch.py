@@ -138,7 +138,8 @@ def generate_launch_description():
         launch_arguments={"model_path": model_path, "rtsp_url": rtsp_url,
                           "publish": publish,
                           "max_duty": LaunchConfiguration("max_duty"),
-                          "cmd_target_topic": LaunchConfiguration("cmd_target_topic")}.items(),
+                          "cmd_target_topic": LaunchConfiguration("cmd_target_topic"),
+                          "record_vision": LaunchConfiguration("record_vision")}.items(),
         condition=_mode_is(mode, "scenario"))
 
     def _rl(condition):
@@ -171,6 +172,10 @@ def generate_launch_description():
         DeclareLaunchArgument("cmd_target_topic", default_value="",
                               description="scenario で `/cmd/target` も目標として受ける "
                                           "(UI のテレオペを姿勢制御の上に乗せる)"),
+        DeclareLaunchArgument("record_vision", default_value="false",
+                              description="true で 2 Hz の圧縮画像も publish する。"
+                                          "**`record_run.sh --vision` で画像を bag に残すには "
+                                          "これが要る** (既定のままだと黙って空振りする)"),
         DeclareLaunchArgument("use_control", default_value="true",
                               description="false で sinsei_umiusi_control を起動しない "
                                           "(sim bridge を自分で立てているとき)。IMU の待ちは残る"),
