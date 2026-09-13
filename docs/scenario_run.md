@@ -63,8 +63,13 @@ sim で学習した RL 方策まで巻き添えになる）。
 
 ### 2. 反転を直す
 
-**唯一の正は control の `params/controllers.yaml`。** そこの `is_forward` を直すと
-autonomy は起動時に読みに行くので、両方に書く必要はない。
+**どこを直すかで効く範囲が違う** — `thrust_axes`（モデルの規約・水平だけ）/
+`thrust_sign`（推力ベクトル全体・一時対処）/ `is_forward`（実機の極性。control の yaml。
+autonomy が起動時に読む）/ `servo_sign`（サーボの回転センス）。
+**選びかたの表は `field_card.md` の「直しかた」**。
+
+実機の極性が逆なら **control の `params/controllers.yaml` の `is_forward`** が唯一の正。
+そこを直せば autonomy は起動時に読みに行くので、両方に書く必要はない。
 
 ```yaml
 thruster_controller_lb:

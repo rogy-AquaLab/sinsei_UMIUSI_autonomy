@@ -92,7 +92,8 @@
 ```
 
 関連ドキュメント: **`docs/field_card.md` (当日の 1 枚)** / `docs/scenario_run.md` (**シナリオを回す — 今どこまで動くか**) /
-`docs/robot_setup.md` (セットアップ / ブランチ) / `docs/teleop_gamepad.md` (ゲームパッド) /
+`docs/robot_setup.md` (セットアップ / ブランチ) /
+**`docs/field_card.md` の「直しかた」(符号をどこで直すかの選びかた)** / `docs/teleop_gamepad.md` (ゲームパッド) /
 `docs/experiment_guide.md` (実験手順) / `docs/robot_setup.md` (セットアップ) /
 `docs/performance_tuning.md` (性能チューニング) / `docs/logging.md` (記録) /
 `docs/competition_checklist.md` (競技前の確認項目) / `docs/known_issues.md` (既知の問題)
