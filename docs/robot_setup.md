@@ -157,7 +157,17 @@ python3 -c "from umiusi_perception.classical import ClassicalController; print('
 ```
 
 **`--no-deps` を省かないこと。** 省くと torch や opencv の解決に行って時間を食う。
-古典制御だけなら numpy しか使わない。
+
+ただし **import には numpy に加えて `scipy` が要る**（制御則そのものは numpy だけだが、
+`umiusi_perception/__init__.py` が `balloon_detector` 経由で scipy を引く）。
+`--no-deps` で入れて `ModuleNotFoundError: scipy` が出たら **scipy だけ**入れる:
+
+```bash
+pip install --user scipy
+```
+
+**torch と cv2 は遅延 import なので古典制御には要らない**（2026-09-13 に、numpy+scipy
+だけの空 venv へ `--no-deps` で入れて import が通ることを実測）。
 
 入らないときの逃げ道（インストールせずに使う）:
 

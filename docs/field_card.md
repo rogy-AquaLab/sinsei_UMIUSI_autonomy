@@ -43,6 +43,16 @@ cd ~/umiusi_sim && git checkout main && git pull
 pip install --no-deps --no-index ~/umiusi_sim/packages/perception
 ```
 
+**`ModuleNotFoundError: No module named 'scipy'` が出たら scipy だけ入れる**:
+
+```bash
+pip install --user scipy
+```
+
+（制御則そのものは numpy しか使わないが、`umiusi_perception` の `__init__` が
+検出器を経由して **scipy** を引く。**torch と cv2 は遅延 import なので要らない** —
+`--no-deps` を付けるのは torch の解決で時間を食わないためで、実測で確認済み）
+
 通らなければ `export PYTHONPATH=~/umiusi_sim/packages/perception/src:$PYTHONPATH`
 （**その窓から launch すること**）。詳細は `robot_setup.md`。
 
