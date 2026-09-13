@@ -29,6 +29,30 @@
 
 ---
 
+## スラスタが 1 基死んでいるとき
+
+**古典なら動かせる**（残り 3 基でも 6 自由度の権限は残る。rank 6・条件数 5.34→8.05）。
+**RL は使えない**（方策が 4 基前提）。**2 基以上死んだら諦める。**
+
+**control の yaml を直せば autonomy は自動で追従する**（起動時に `esc_disabled` を読む）:
+
+```yaml
+attitude_controller:      disabled_thruster: "lf"   # control の ff 経路用
+thruster_controller_lf:   esc_disabled: true        # direct 経路にも効く
+```
+
+現場で試すだけなら:
+
+```bash
+ros2 param set /classical_attitude live_thrusters '[false,true,true,true]'   # lf,lb,rb,rf
+ros2 param set /classical_attitude max_duty 0.4     # 余裕が無くなるので上げる
+```
+
+> **外さないと「死んだ基に配分し続ける」**状態になり、解いた力と実際に出る力が食い違って
+> 残り 3 基が誤った前提で釣り合いを取る。**control 側だけ直しても direct 経路は直らない。**
+
+---
+
 ## 0. 最初に 1 回だけ
 
 ```bash

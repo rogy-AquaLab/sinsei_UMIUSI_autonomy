@@ -990,3 +990,36 @@ yaw 誤差の中央値は 172°、区間の 64〜95% を 170° 超で過ごし�
 ラベルを入れ替えて修正済み。併せて `pose` サブコマンドを追加し、**指令の前に
 バンドルの幾何から「何が起きるはずか」を表示する**ようにした（同じ取り違えを
 人が再発させないため）。
+
+### B-16. 【高】スラスタ 1 基が死んだときの縮退 — 経路が 2 つあり、片方ずつしか直らない
+
+2026-09-13、**lf の BLDC が故障**。1 基欠損でも動かせるが、**直す場所が 2 つある**。
+
+| 経路 | 誰が配分するか | 縮退の入れかた |
+|---|---|---|
+| control の `ff` (core の BT / auto_target) | `logic/attitude/feed_forward.hpp` | control の `disabled_thruster: "lf"`（ブランチ `codex/left-front-thruster-failure`） |
+| **`/cmd/direct`**（classical / RL / navigator。シナリオと teleop はこちら） | autonomy の `GeneralAllocator` | **autonomy の `live_thrusters`** |
+
+**`/cmd/direct` に publisher が居ると control の logic はスキップされる**ので、
+control 側の `disabled_thruster` はシナリオ経路には**効かない**。逆に autonomy だけ直しても
+core の BT 経路には効かない。**両方要る。**
+
+ただし同じブランチの **`esc_disabled: true` は direct 経路にも効く**
+(`thruster_controller.cpp` の direct 購読が `resolve_thruster_mode(esc_disabled, ...)` を通す)。
+つまり control 側だけ入れると:
+
+  lf の ESC は control 層で止まる → **しかし autonomy のアロケータは lf が生きている前提で
+  解き続ける** → 解いた wrench と実際に出る力が食い違い、残り 3 基が誤った前提で釣り合いを取る
+
+これは `GeneralAllocator` の docstring が warning している状態そのもの。
+
+**対処**: autonomy は起動時に control の `esc_disabled` を読みに行き、`live_thrusters` を
+自動で合わせる（`live_thrusters_source` 既定 `"control"`。`is_forward` と同じ方式で、
+**設定の正は control の yaml 1 箇所**）。control が居なければ自ノードの値に落ちて警告。
+
+**根拠**: `GeneralAllocator.set_live()` で 1 基を外して解き直すと、縮約した行列の
+**rank は 6 のまま、条件数は 5.34 → 8.05**（lf 欠損、2026-09-13 実測）。**6 自由度の権限は
+残るが余裕は無い。** cap を上げるか機動をゆっくりにすること。
+
+- **2 基以上の欠損は受け付けない**（6 自由度の権限が無くなり、黙って姿勢が崩れるため）。
+- **RL は使えない。** 方策は 4 基前提で学習しており、縮退の手段が無い。**古典を使うこと。**

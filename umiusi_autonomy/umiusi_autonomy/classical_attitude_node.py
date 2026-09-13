@@ -142,6 +142,19 @@ class ClassicalAttitudeNode(Node):
         # 目標 yaw は IMU の基準方位であって現場の向きではないので、方位を保たせたくない
         # ときや、yaw の符号だけ怪しいときの切り分けに使う。実行中も param set で切替可
         self.declare_parameter("hold_yaw", True)
+        # **死んだスラスタを配分から外す** (lf, lb, rb, rf の順。false = そのスラスタは無い扱い)。
+        # `GeneralAllocator` は生きている列だけで解き直すので、**1 基欠損でも 6 自由度の
+        # 権限は残る** — 縮約した 6x8 の rank は 6、条件数は 5.34 -> 8.05 (lf 欠損、実測)。
+        # 外さないと「死んだ基に指令を出し続け、実際に出る力は解いたものと違う」状態になり、
+        # 残り 3 基が誤った前提で釣り合いを取るので姿勢が崩れる。
+        # **余裕は無くなる**ので cap を上げるか、機動をゆっくりにすること。
+        # `ros2 param set` で実行中に変更可。**RL 側にはこの機能は無い** (方策は 4 基前提)。
+        self.declare_parameter("live_thrusters", [True, True, True, True])
+        # 生死の正をどこに置くか。"control" = control の `thruster_controller_<pos>.esc_disabled`
+        # を読みに行く (既定)。**`esc_disabled` は /cmd/direct にも効く**ので、control で
+        # 殺したのに autonomy が知らないと「死んだ基に配分し続ける」状態になる。
+        # "param" = 上の live_thrusters をそのまま使う (control が居ないとき)
+        self.declare_parameter("live_thrusters_source", "control")
         # 鉛直 (heave) の速度フィードバックゲイン。**0 = 前進項だけ**（指令した鉛直速度を
         # 抗力に対して開ループで保つ）。負でバンドルの gains の値を使う。
         # 深度センサではなく指令からの推測 (VelocityObserver) を見るので、上げるのは
@@ -210,6 +223,28 @@ class ClassicalAttitudeNode(Node):
             f"publish={self._publish}, hold_yaw={self._hold_yaw}, "
             f"thrust_sign={self._thrust_sign}, servo_sign={self._servo_sign}")
 
+    def _apply_live(self):
+        """`live_thrusters` をアロケータへ当てる。**全滅と 2 基以上の欠損は拒否する** —
+        2 基欠けると 6 自由度の権限が無くなり、解いた wrench が出ない (黙って姿勢が崩れる)。"""
+        v = [bool(x) for x in self.get_parameter("live_thrusters").value]
+        if len(v) != len(POSITIONS):
+            raise ValueError(f"live_thrusters は {POSITIONS} と同じ {len(POSITIONS)} 個が要る: {v}")
+        if str(self.get_parameter("live_thrusters_source").value).strip() != "param":
+            v = thrust_sign.live_from_control(self, POSITIONS, v)
+        dead = [p for p, a in zip(POSITIONS, v) if not a]
+        if len(dead) > 1:
+            self.get_logger().error(
+                f"死亡扱いが {dead} と 2 基以上 — **6 自由度の権限が無くなる**ので受け付けない。"
+                "1 基までにすること")
+            return False
+        self._alloc.set_live(v)
+        self._alloc.reset()
+        if dead:
+            self.get_logger().warning(
+                f"**{dead[0]} を死亡扱いにした。** 残り 3 基で解き直す (6 自由度は保つが"
+                "余裕は無い)。cap を上げるか機動をゆっくりに。RL 側は 4 基前提なので使えない")
+        return True
+
     def _signs(self, name):
         """符号パラメータを読む。**長さが違えば起動させない** — 3 個しか書かないミスは
         黙って 1 基ぶん既定のまま残り、水中で初めて気付くことになる。"""
@@ -249,6 +284,18 @@ class ClassicalAttitudeNode(Node):
                         self._vel_scale = self._ctl.reachable_speed(self._max_duty)
                     self.get_logger().warning(
                         f"max_duty={self._max_duty:.2f} (vel_scale={self._vel_scale:.3f})")
+                elif p.name == "live_thrusters":
+                    # 先に宣言値を書き換えてから当てる (バリデーションは _apply_live 側)
+                    v = [bool(x) for x in p.value]
+                    if len(v) != len(POSITIONS) or sum(1 for a in v if not a) > 1:
+                        return SetParametersResult(
+                            successful=False,
+                            reason=f"live_thrusters は {len(POSITIONS)} 個・死亡は 1 基まで")
+                    self._alloc.set_live(v)
+                    self._alloc.reset()
+                    dead = [q for q, a in zip(POSITIONS, v) if not a]
+                    self.get_logger().warning(
+                        f"live_thrusters={v}" + (f" — {dead[0]} を外した" if dead else ""))
                 elif p.name == "k_v_vert":
                     # 制御器は属性を持つだけなので、作り直さずその場で差し替えられる
                     ctl = getattr(self, "_ctl", None)
@@ -288,6 +335,7 @@ class ClassicalAttitudeNode(Node):
             gains["k_v_vert"] = kvv
         self._ctl = ClassicalController(plant, **gains)
         self._alloc = GeneralAllocator(plant, **b.get("allocator", {}))
+        self._apply_live()
         # 較正前のバンドルで絶対値を信じないこと。相対比較には使える
         for k in b.get("uncalibrated", []):
             self.get_logger().warn(f"未較正の契約値: {k}")
