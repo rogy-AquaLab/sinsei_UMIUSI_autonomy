@@ -49,6 +49,7 @@ from umiusi_autonomy_msgs.msg import BalloonDetectionArray
 from umiusi_rl_control_msgs.msg import AttitudeTarget
 from umiusi_common import thrust_sign
 from umiusi_common.arm import ArmState
+from umiusi_common.yaw_setpoint import advance_yaw_setpoint
 
 from umiusi_autonomy.imu_source import ImuSource
 
@@ -348,10 +349,11 @@ class NavigatorNode(Node):
             self._yaw_sp = yaw_now
             self.get_logger().info(
                 f"setpoint: 目標方位を現在方位 {math.degrees(yaw_now):+.0f} deg に合わせた")
-        self._yaw_sp = _wrap(self._yaw_sp + float(cmd["yaw"]) * self._yaw_rate_scale * self._dt)
-        lead = _wrap(self._yaw_sp - yaw_now)
-        if abs(lead) > self._yaw_lead_max:       # 目標を機体に引き戻す
-            self._yaw_sp = _wrap(yaw_now + math.copysign(self._yaw_lead_max, lead))
+        # **姿勢制御器の cmd_target_yaw_mode="rate" と同じ関数を使う。**
+        # 同じ式を 2 箇所に書くと片方だけ直る (umiusi_common/yaw_setpoint.py)
+        self._yaw_sp = advance_yaw_setpoint(
+            self._yaw_sp, yaw_now, float(cmd["yaw"]), self._yaw_rate_scale,
+            self._dt, self._yaw_lead_max)
 
         msg = AttitudeTarget()
         msg.header.stamp = self.get_clock().now().to_msg()

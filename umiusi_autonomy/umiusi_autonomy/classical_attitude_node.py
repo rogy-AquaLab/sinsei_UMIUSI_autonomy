@@ -32,6 +32,7 @@ from sensor_msgs.msg import Imu
 from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable
 
 from umiusi_common import thrust_sign
+from umiusi_common.yaw_setpoint import YAW_DT_MAX, advance_yaw_setpoint
 from umiusi_common.arm import ArmState
 from umiusi_common.imu_sanity import ImuSanity
 from umiusi_rl_control_msgs.msg import AttitudeTarget
@@ -48,26 +49,6 @@ FAIL_LIMIT = 10
 def _wrap(a):
     """角度を (-pi, pi] に畳む。"""
     return (a + math.pi) % (2.0 * math.pi) - math.pi
-
-
-YAW_DT_MAX = 0.2     # [s] 指令が途切れたときに方位目標が飛ばないための上限
-
-
-def advance_yaw_setpoint(yaw_sp, yaw_now, rz, rate_scale, dt, lead_max):
-    """旋回レート指令 `rz` を方位目標へ積分する (`cmd_target_yaw_mode="rate"`)。
-
-    呼び出し側の義務:
-      * `dt` = **前の指令から今までの実時間**。制御周期を渡すと旋回速度が指令の
-        送信レートに比例してずれる (known_issues B-17)
-      * `lead_max` = 実測方位からの先行量の上限 (known_issues B-14 の 180 度の罠)
-    """
-    if yaw_sp is None:
-        yaw_sp = yaw_now
-    yaw_sp = _wrap(yaw_sp + rz * rate_scale * dt)
-    lead = _wrap(yaw_sp - yaw_now)
-    if abs(lead) > lead_max:      # 追随できない目標を先行させない
-        yaw_sp = _wrap(yaw_now + math.copysign(lead_max, lead))
-    return yaw_sp
 
 
 def slew(current, target, max_rate, dt):
