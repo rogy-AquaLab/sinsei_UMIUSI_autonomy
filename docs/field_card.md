@@ -50,10 +50,16 @@
 
 ### いまの状態（2026-09-20 更新）
 
-**実機では縮退が正しく働いている。** 9/13 のプール bag に
+**実機では縮退が働いていた。ただし設定は git に無い。** 9/13 のプール bag に
 `classical_attitude: live_thrusters=[False,True,True,True] (control から取得 (esc_disabled))`
-が残っており、`/cmd/direct` の lf の duty は全区間 0 だった。**control 側の
-`esc_disabled` は実機に入っている。**
+が残っており、`/cmd/direct` の lf の duty は全区間 0 だった。
+
+> **しかし control の PR #317 (`codex/left-front-thruster-failure`) は CLOSED で、
+> ブランチも削除されている。** `origin/main` の `params/controllers.yaml` は
+> **4 基とも `esc_disabled: false` / `is_forward: true`** で、`disabled_thruster` も無い。
+> つまり **9/13 に動いていた設定は Pi の上だけに在る未コミットの手編集**。
+> **Pi を再クローンすると消える。** 逆に Pi で `git pull` すると、手編集が消えるか衝突する。
+> **出艇前に `tools/preflight.py` で「control が実際に何と答えるか」を必ず見ること。**
 
 以下は**その設定が入っていない機体で動かすとき**の話。autonomy は既定で control の
 `esc_disabled` を読むので、入っていなければ「全基生きている」と判断して lf に配分し続ける。
