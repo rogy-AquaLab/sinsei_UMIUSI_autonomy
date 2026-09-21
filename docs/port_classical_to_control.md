@@ -18,6 +18,34 @@ out: `esc_thrusts[4]` / `servo_angles[4]`）。Eigen も既に依存に入って
 
 ---
 
+## 行き先 — **autonomy は最終的に navigator だけになる**
+
+（ユーザー方針 2026-09-22）移植が終わったあとの姿:
+
+```
+control (C++)                          autonomy (Python)
+  logic::attitude::Classical  <--- AttitudeTarget ---  navigator_node  (FSM)
+  ThrusterLimits / esc_disabled                        perception_node (検出器)
+  is_forward / servo_sign                              camera_bridge_node
+```
+
+- **autonomy に残るのは「認識して、どこへ行きたいかを出す」側だけ。** 姿勢の安定化・配分・
+  スラスタへの出力は全部 control。`classical_attitude_node` は役目を終えて消える。
+- **`/cmd/direct` を publish するノードが autonomy から無くなる。** これで B-12 の迂回が
+  構造的に起きなくなる（「publisher が居ると logic ごとスキップ」の publisher が居ない）。
+- `navigator_node` は既に `command_mode:=setpoint` で `AttitudeTarget` を出すだけの形に
+  なっている。**移植後はこれが唯一の経路**で、`direct` / `target` モードは消せる
+  （どちらも配分を自前に持ち姿勢の安定化が無い、という今の問題がそこで終わる）。
+- **消えるもの**: autonomy 側の `thrust_sign` / `servo_sign` / `live_thrusters` /
+  `max_duty` / スルーレート / 断の検出（B-19）。**全部 control 側の 1 箇所になる。**
+  それぞれ control に等価物を作ってから消すこと（§5・§6 がその表）。
+
+移植の順序としては、**navigator の setpoint 経路を壊さないことが唯一の制約**になる。
+`AttitudeTarget` の規約（下の §0 の 2 番目）さえ固定すれば、control 側の実装は
+差し替えとして進められる。
+
+---
+
 ## なぜ移すのか — 効く順
 
 1. **`/cmd/direct` の迂回が無くなる。** いまは autonomy が `/cmd/direct` に publish するため、
@@ -127,7 +155,9 @@ C++ に書き直すと**実装が 2 本**になり、片方だけ直る事故が
 
 ### 8. 撤去
 
-- [ ] autonomy の `classical_attitude_node` を「control が居ないとき用」に降格するか、消す
+- [ ] **autonomy の `classical_attitude_node` を消す**（行き先の図のとおり。残すと
+      `/cmd/direct` の publisher が居る構成が復活し、B-12 が戻る）
+- [ ] navigator の `command_mode` から `direct` / `target` を消し、`setpoint` 一本にする
 - [ ] `docs/` の経路の説明を 1 本に直す（`field_card` / `scenario_run` / `teleop_gamepad`）
 - [ ] `tools/preflight.py` の検査対象を control 側へ向け直す
 
