@@ -121,6 +121,7 @@ class CameraBridge(Node):
         # 合わせるとカメラの到着周期とビートして取りこぼし、速すぎても read() で落ちる
         self._fixed_dt = (1.0 / rate) if rate > 0 else None
         period = 1.0 / (rate * 2.0) if rate > 0 else 0.001
+        self.add_on_set_parameters_callback(self._on_params)
         self.create_timer(period, self._tick)
 
     # ------------------------------------------------------------------ capture
@@ -160,6 +161,48 @@ class CameraBridge(Node):
                 throttle_duration_sec=10.0)
 
     # --------------------------------------------------------------------- loop
+    def _on_params(self, params):
+        """`ros2 param set` を実行中に効かせる (JPEG の質と圧縮の間引きだけ)。
+
+        **受けられないものは成功を返さず理由を返す。** 黙って無視すると
+        「set は通ったのに変わらない」になる (known_issues B-17)。
+
+          * `max_rate_hz` はタイマ周期そのもの、`width`/`height`/`rtsp_url`/`hw_decode` は
+            gst のパイプライン — どちらも作り直しが要るので**再起動でしか変えられない**
+          * `jpeg_quality` / `compressed_max_rate_hz` は `publish_compressed:=true` で
+            起動したときだけ意味がある
+        """
+        from rcl_interfaces.msg import SetParametersResult
+        restart_only = ("max_rate_hz", "width", "height", "rtsp_url", "hw_decode",
+                        "image_topic", "latency_ms", "publish_compressed")
+        for p in params:
+            try:
+                if p.name in restart_only:
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f"{p.name} は再起動でしか変えられない "
+                               "(タイマ周期 / gst パイプラインの作り直しが要る)")
+                if p.name in ("jpeg_quality", "compressed_max_rate_hz") and self._pub_c is None:
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f"{p.name} は publish_compressed:=true で起動したときだけ効く")
+                if p.name == "jpeg_quality":
+                    q = int(p.value)
+                    if not 1 <= q <= 100:
+                        return SetParametersResult(
+                            successful=False, reason=f"jpeg_quality は 1..100: {q}")
+                    self._jpeg_q = q
+                    self.get_logger().warning(f"jpeg_quality={q}")
+                elif p.name == "compressed_max_rate_hz":
+                    r = float(p.value)
+                    self._c_dt = (1.0 / r) if r > 0.0 else None
+                    self.get_logger().warning(
+                        f"compressed_max_rate_hz={r:.1f}"
+                        + (" (制限なし)" if self._c_dt is None else ""))
+            except (TypeError, ValueError) as e:            # noqa: PERF203
+                return SetParametersResult(successful=False, reason=f"{p.name}: {e}")
+        return SetParametersResult(successful=True)
+
     def _tick(self) -> None:
         if self._cap is None:
             self._open()

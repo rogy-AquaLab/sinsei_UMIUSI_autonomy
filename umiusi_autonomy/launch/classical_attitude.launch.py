@@ -46,6 +46,13 @@ def generate_launch_description():
         DeclareLaunchArgument("cmd_target_topic", default_value="",
                               description="空以外で `/cmd/target` も目標として受ける。"
                                           "UI のテレオペが姿勢制御の上に乗る"),
+        # 断の検出 (known_issues B-19)。**既定で有効**。0 以下で無効
+        DeclareLaunchArgument("imu_timeout", default_value="1.0",
+                              description="IMU がこの秒数来なければ出力を 0 にする。"
+                                          "0 以下で無効"),
+        DeclareLaunchArgument("vel_timeout", default_value="1.0",
+                              description="速度指令がこの秒数来なければ並進を 0 にする"
+                                          " (姿勢目標は保持)。0 以下で無効"),
     ]
     return LaunchDescription(args + [
         Node(
@@ -56,6 +63,8 @@ def generate_launch_description():
             parameters=[{
                 "bundle_path": LaunchConfiguration("bundle_path"),
                 "max_duty": LaunchConfiguration("max_duty"),
+                "imu_timeout": LaunchConfiguration("imu_timeout"),
+                "vel_timeout": LaunchConfiguration("vel_timeout"),
                 "publish": LaunchConfiguration("publish"),
                 "start_armed": LaunchConfiguration("start_armed"),
                 "vel_cmd": LaunchConfiguration("vel_cmd"),

@@ -196,7 +196,33 @@ class NavigatorNode(Node):
         for p in params:
             try:
                 r = None
-                if p.name == "yaw_rate_scale":
+                # 符号と cap は **direct モードでスラスタを叩くときの現場の直し導線**。
+                # classical_attitude には同じ導線があり、こちらに無いと「どちらのノードで
+                # 動かしているか」で復旧手段が変わる (known_issues B-14)
+                if p.name in ("thrust_sign", "servo_sign", "max_duty"):
+                    # **direct モードでしか効かない。** setpoint / target では配分も符号も
+                    # 姿勢制御器の側にあるので、ここで受けると「set は通ったのに何も
+                    # 変わらない」になる (known_issues B-17 と同じ形)
+                    if self._mode != "direct":
+                        return SetParametersResult(
+                            successful=False,
+                            reason=f"{p.name} は command_mode=direct のときだけ効く "
+                                   f"(今は {self._mode})。姿勢制御器の側を直すこと: "
+                                   f"ros2 param set /classical_attitude {p.name} ...")
+                    if p.name == "max_duty":
+                        self._max_duty = abs(float(p.value))
+                        self.get_logger().warning(
+                            f"max_duty={self._max_duty:.2f}"
+                            + ("  **0 = 出力を止める**" if self._max_duty == 0.0 else ""))
+                    else:
+                        v = [float(x) for x in p.value]
+                        if len(v) != len(POSITIONS):
+                            return SetParametersResult(
+                                successful=False,
+                                reason=f"{p.name} は {len(POSITIONS)} 個 {POSITIONS} が要る")
+                        setattr(self, "_" + p.name, v)
+                        self.get_logger().warning(f"{p.name}={v}")
+                elif p.name == "yaw_rate_scale":
                     r = self._setpoint_knob(p, "_yaw_rate_scale", float(p.value))
                 elif p.name == "yaw_lead_max":
                     r = self._setpoint_knob(p, "_yaw_lead_max", abs(float(p.value)))
@@ -363,7 +389,10 @@ class NavigatorNode(Node):
         # 飽和したら 4 基まとめて同じ比率で縮める。ch ごとに clip すると推力ベクトルの
         # 向きが変わる (rl_attitude_node が per-channel なのは飽和込みで学習しているため)
         peak = max(abs(float(action[4 + k])) for k in range(len(POSITIONS)))
-        scale = self._max_duty / peak if peak > self._max_duty > 0.0 else 1.0
+        # **`max_duty = 0` は「上限なし」ではなく「出力を止める」。** 現場で推力を切りたい
+        # 操縦者が打つのは 0 で、そこで生の duty が素通しになるのは危険側に外れる
+        # (classical_attitude の `_emit` は 0 で 0 に clip する。挙動を揃える)
+        scale = min(1.0, self._max_duty / peak) if peak > 0.0 else 1.0
         for k, p in enumerate(POSITIONS):
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=True, servo=True)

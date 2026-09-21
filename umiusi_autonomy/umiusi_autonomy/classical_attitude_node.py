@@ -40,6 +40,9 @@ POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
 YAW_IDX = 2          # ori_err / gyro は REP-103 (x 前, y 左, z 上) なので yaw は添字 2
 CURRENT_SETPOINT_QOS = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+# 制御の計算が何周期続けて失敗したら disarm するか。50 Hz なので 10 = 0.2 秒。
+# 1 サンプルの化けで run を終わらせず、壊れ続けるなら止める、の折り合い
+FAIL_LIMIT = 10
 
 
 def _wrap(a):
@@ -180,6 +183,15 @@ class ClassicalAttitudeNode(Node):
         # 深度センサではなく指令からの推測 (VelocityObserver) を見るので、上げるのは
         # 鉛直の推定が当てになると確かめてから。`ros2 param set` で実行中に変更可
         self.declare_parameter("k_v_vert", -1.0)
+        # --- 断の検出。**どちらも「黙って走り続ける」のを防ぐためのもの** -----------------
+        # IMU が途切れたら姿勢制御は成立しない (凍った推定で一定トルクを出し続けて回り出す)。
+        # 途切れたら出力 0。**disarm はしない** — 正浮力なので 0 出力は浮上側に外れる。
+        # 0 以下で無効。`ImuSanity` は 1 サンプルの化けを見るだけで断は見ない
+        self.declare_parameter("imu_timeout", 1.0)
+        # デッドマン: 速度指令がこの秒数来なければ**並進を 0 にする**(姿勢目標は保持)。
+        # 2026-09-13 の bag では UI 側が更新を止めていた (`Target is not updated` 421 件)。
+        # 0 以下で無効。rl_attitude_node の同名パラメータと意味を揃えてある
+        self.declare_parameter("vel_timeout", 1.0)
         self.declare_parameter("imu_max_gyro", 10.0)
         self.declare_parameter("imu_max_step_deg", 30.0)
         self.declare_parameter("imu_sanity_enforce", False)
@@ -202,6 +214,13 @@ class ClassicalAttitudeNode(Node):
             max_gyro=float(self.get_parameter("imu_max_gyro").value),
             max_step_deg=float(self.get_parameter("imu_max_step_deg").value),
             enforce=bool(self.get_parameter("imu_sanity_enforce").value))
+
+        self._imu_timeout = float(self.get_parameter("imu_timeout").value)
+        self._vel_timeout = float(self.get_parameter("vel_timeout").value)
+        self._fail = 0            # 連続して制御の計算に失敗した周期数
+        self._imu_t = None        # 最後に IMU を受けた時刻。None = 一度も来ていない
+        self._vel_t = None        # 最後に速度指令を受けた時刻。None = デッドマン未武装
+        self._vel_dead = False
 
         self._quat = np.array([1.0, 0.0, 0.0, 0.0])   # (w, x, y, z)
         self._gyro = np.zeros(3)
@@ -250,7 +269,14 @@ class ClassicalAttitudeNode(Node):
         self.get_logger().info(
             f"classical attitude: {self._dt * 1000:.0f} ms, max_duty={self._max_duty:.2f}, "
             f"publish={self._publish}, hold_yaw={self._hold_yaw}, "
-            f"thrust_sign={self._thrust_sign}, servo_sign={self._servo_sign}")
+            f"thrust_sign={self._thrust_sign}, servo_sign={self._servo_sign}, "
+            f"imu_timeout={self._imu_timeout:.1f}s, vel_timeout={self._vel_timeout:.1f}s")
+        if abs(float(self.get_parameter("vel_cmd").value)) > 1e-9:
+            # `vel_cmd` は相手の居ない静的な巡航指令なので、**デッドマンでは守れない**
+            # (生存を確認する相手が居ない)。黙って守れていない状態にしない
+            self.get_logger().warning(
+                f"vel_cmd={float(self.get_parameter('vel_cmd').value):.2f} m/s で起動した。"
+                "**この指令はデッドマンの保護外** — 止めるのは disarm / e-stop だけ")
 
     def _apply_live(self):
         """`live_thrusters` をアロケータへ当てる。**全滅と 2 基以上の欠損は拒否する** —
@@ -346,7 +372,16 @@ class ClassicalAttitudeNode(Node):
                         self.get_logger().warning(f"k_v_vert={float(p.value):.2f}")
                 elif p.name == "vel_cmd":
                     self._vel_cmd = np.array([float(p.value), 0.0, 0.0])
-                    self.get_logger().warning(f"vel_cmd={float(p.value):.2f} m/s")
+                    # **デッドマンは叩かない。** これは相手の居ない静的な指令で、
+                    # 生存を確認しようが無い。叩くと vel_timeout 秒で勝手に 0 になる
+                    self.get_logger().warning(
+                        f"vel_cmd={float(p.value):.2f} m/s"
+                        + (" — **デッドマンの保護外**" if abs(float(p.value)) > 1e-9 else ""))
+                elif p.name in ("imu_timeout", "vel_timeout"):
+                    setattr(self, "_" + p.name, float(p.value))
+                    self.get_logger().warning(
+                        f"{p.name}={float(p.value):.1f} s"
+                        + (" — **無効**" if float(p.value) <= 0.0 else ""))
                 # --- テレオペのつまみ。**起動時に読んだきりにしない** ---------------
                 # 手順書 (docs/teleop_gamepad.md, docs/field_card.md) が現場で
                 # `ros2 param set` するよう書いているもの。受けないと set は成功を
@@ -426,16 +461,21 @@ class ClassicalAttitudeNode(Node):
             f"{self._ctl.reachable_speed(self._max_duty):.3f} m/s)")
         return True
 
+    def _now(self):
+        return self.get_clock().now().nanoseconds * 1e-9
+
     def _on_imu(self, msg):
         q = msg.orientation
         g = msg.angular_velocity
         sample, _reason = self._sanity.update((q.w, q.x, q.y, q.z), (g.x, g.y, g.z))
         if sample is None:
             return
+        self._imu_t = self._now()
         self._quat = np.asarray(sample.quat, dtype=float)
         self._gyro = np.asarray(sample.gyro, dtype=float)
 
     def _on_setpoint(self, msg):
+        self._vel_t = self._now()
         o = msg.orientation
         self._target = np.array([o.w, o.x, o.y, o.z], dtype=float)
         v = msg.velocity
@@ -478,6 +518,7 @@ class ClassicalAttitudeNode(Node):
         # (FSM や自前のノードが m/s で出しているとき)
         k = self._vel_scale if self._vel_scale > 0.0 else 1.0
         self._vel_cmd = np.array([v.x, v.y, v.z], dtype=float) * k
+        self._vel_t = self._now()
 
     def _yaw_now(self):
         """IMU の現在方位 [rad]。まだ受けていなければ None。"""
@@ -486,9 +527,80 @@ class ClassicalAttitudeNode(Node):
             return None
         return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
+    def _imu_stale(self):
+        """IMU が途切れているか。**途切れたら姿勢制御は成立しない。**
+
+        凍った姿勢推定で回し続けると、誤差が一定のまま同じトルクを出し続けて機体が
+        回り始める (誤差が縮まないので減りもしない)。`ImuSanity` は 1 サンプルの化けを
+        見るだけで**断は見ない**ので、ここで見る。
+        """
+        if self._imu_timeout <= 0.0:
+            return False
+        return self._imu_t is None or (self._now() - self._imu_t) > self._imu_timeout
+
+    def _vel_stale(self):
+        """速度指令が途切れているか (デッドマン)。
+
+        途切れても**姿勢目標は保つ**。止めるのは並進だけ — 出力ごと切ると正浮力で
+        浮上するので、操縦者が意図していない動きになる。実機では UI 側が更新を止めた
+        ことが実際にあった (2026-09-13 の bag に `Target is not updated` が 421 件)。
+        """
+        if self._vel_timeout <= 0.0 or self._vel_t is None:
+            return False
+        return (self._now() - self._vel_t) > self._vel_timeout
+
     def _tick(self):
+        """タイマ本体。**例外を外へ出さない。**
+
+        rclpy はタイマコールバックの例外を `spin` の外へ投げるので、1 サンプルの NaN や
+        特異な解で**走行中にノードごと落ちる**。`main` の `finally` が detach するので
+        機体は止まるが、**一発勝負の本番で run が終わる**のは割に合わない。
+        ここでは 1 ティック分を捨てて 0 を出し、**続くようなら disarm する**。
+        """
+        try:
+            self._tick_impl()
+        except Exception as e:  # noqa: BLE001
+            self._fail += 1
+            self.get_logger().error(
+                f"制御の計算に失敗 ({type(e).__name__}: {e})。この周期は 0 を出す "
+                f"[{self._fail}/{FAIL_LIMIT}]", throttle_duration_sec=1.0)
+            try:
+                # **disarm 中は publish しない。** `_emit` は runnable=true を付けるので、
+                # ここで出すと e-stop 中に毎周期 attach し直すことになる
+                if self._arm.armed:
+                    self._emit(np.zeros(8))
+            except Exception:  # noqa: BLE001
+                pass
+            if self._fail >= FAIL_LIMIT:
+                self.get_logger().error(
+                    f"{FAIL_LIMIT} 周期続けて失敗した。**disarm する。** "
+                    "原因を直すまで arm し直さないこと")
+                self._arm.disarm("制御の計算が連続で失敗")
+        else:
+            # **disarm 中は「復帰した」と言わない。** 制御の経路を通らずに抜けているだけで、
+            # 直った証拠が無い (壊れたまま disarm されている最中がまさにこれ)
+            if self._arm.armed and self._fail:
+                self.get_logger().warning(f"制御の計算が復帰した ({self._fail} 周期ぶん失敗)")
+                self._fail = 0
+
+    def _tick_impl(self):
         if not self._arm.armed:
             self._detach_all()
+            return
+
+        if self._imu_stale():
+            # 姿勢の基準が無いまま推力を出さない。**出力は 0 にするが disarm はしない** —
+            # 正浮力なので 0 出力は浮上側に外れる (沈むより安全)。IMU が戻れば自動で復帰
+            why = ("IMU が 1 つも来ていない" if self._imu_t is None
+                   else f"IMU が {self._now() - self._imu_t:.1f} s 途切れている")
+            self.get_logger().error(
+                f"{why} (imu_timeout={self._imu_timeout:.1f} s)。"
+                "**姿勢制御を止めて出力を 0 にする。** 戻れば自動で再開する",
+                throttle_duration_sec=2.0)
+            # 観測器は**止めずに 0 指令で進める**。止めると断の前の速度を保持したまま
+            # 復帰するので、初手で存在しない速度に制動をかける
+            self._ctl.obs.update(np.zeros(8), self._quat, self._dt)
+            self._emit(np.zeros(8))
             return
 
         from umiusi_perception.classical import cad_wrench_from_modes, rep103_from_cad
@@ -505,7 +617,18 @@ class ClassicalAttitudeNode(Node):
         # 速度を積分することになる。
         # 観測器は CAD 系で返し、制御器は REP-103 を取る。変換は必ずこの関数で行う
         v_hat = self._ctl.obs.update(self._action, self._quat, self._dt)
-        modes = self._ctl.wrench(ori_err, self._gyro, self._vel_cmd,
+        vel_cmd = self._vel_cmd
+        if self._vel_stale():
+            if not self._vel_dead:
+                self._vel_dead = True
+                self.get_logger().warning(
+                    f"速度指令が {self._vel_timeout:.1f} s 来ない。**並進を 0 にする**"
+                    " (姿勢目標は保持)。指令が再開すれば自動で戻る")
+            vel_cmd = np.zeros(3)
+        elif self._vel_dead:
+            self._vel_dead = False
+            self.get_logger().info("速度指令が戻った")
+        modes = self._ctl.wrench(ori_err, self._gyro, vel_cmd,
                                  rep103_from_cad(v_hat), self._max_duty)
         # モード ([-1,1]) -> CAD 系のニュートン。cap は wrench が更新したフィルタ後の値
         wrench = cad_wrench_from_modes(modes, self._ctl.f_max_total(self._ctl.cap))
@@ -548,6 +671,14 @@ class ClassicalAttitudeNode(Node):
         # (2026-09-12 に踏んだ形)。次の arm で現在方位に取り直す
         self._yaw_sp = None
         self._yaw_t_prev = None
+        # デッドマンも武装解除する。disarm 中に溜まった「来ていない時間」を持ち越すと、
+        # 再 arm の初手で「速度指令が来ない」と誤検出する。
+        # **同時に速度指令そのものも param の値へ戻す。** 時計だけ戻して指令を残すと、
+        # 「指令が途切れた -> disarm -> 再 arm」で**保護が外れたまま古い速度で走り出す**
+        self._vel_t, self._vel_dead = None, False
+        self._vel_cmd = np.array([float(self.get_parameter("vel_cmd").value), 0.0, 0.0])
+        # 失敗カウンタも戻す。持ち越すと再 arm 後の 1 回目の失敗で即 disarm になる
+        self._fail = 0
         self._servo_cmd[:] = 0.0
         self._duty_cmd[:] = 0.0
         self._action[:] = 0.0

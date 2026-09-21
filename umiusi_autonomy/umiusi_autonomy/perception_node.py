@@ -149,6 +149,17 @@ class PerceptionNode(Node):
                 self.get_logger().warning(
                     f"min_confidence={self._min_conf:.2f}"
                     f"{' (無効)' if self._min_conf <= 0.0 else ''}")
+            # 濁りの程度で当たりが変わる 2 つ。**検出器を読み直さずに変えられる**ので
+            # ここで受ける (`conf_thresh` は重みを読んだ時点で焼き込まれるので変えられない)
+            elif p.name == "sanitise_near":
+                self._sanitise = bool(p.value)
+                self.get_logger().warning(f"sanitise_near={self._sanitise}")
+            elif p.name == "max_rate_hz":
+                try:
+                    self._limiter = RateLimiter(float(p.value))
+                except (TypeError, ValueError) as e:
+                    return SetParametersResult(successful=False, reason=str(e))
+                self.get_logger().warning(f"max_rate_hz={self._limiter.rate_hz:.1f}")
         return SetParametersResult(successful=True)
 
     def _on_image(self, msg: Image):
