@@ -62,7 +62,8 @@ def quat_of_yaw(yaw):
 class FakeVehicle:
     """6 自由度の剛体。**バンドルの規約で力を出す** = 実機・control と同じ向き。"""
 
-    def __init__(self, contract, dt, dead_time=DEAD_TIME, live=(1, 1, 1, 1)):
+    def __init__(self, contract, dt, dead_time=DEAD_TIME, live=(1, 1, 1, 1),
+                 inertia_scale=1.0):
         self.axes = np.asarray(contract["thrust_axes"], float)
         self.piv = np.asarray(contract["pivots_from_com"], float)
         self.m = float(contract["mass"]) + np.asarray(contract["added_mass_diag"], float)
@@ -75,8 +76,9 @@ class FakeVehicle:
         # 惰性で回り続ける時間 [s]。**停止も実測で約 2.9 s かかる** ので、duty が一瞬
         # ゼロを横切っても止まらない。ここを入れないと死に時間を過大に見積もる
         self.coast = 2.9
-        # 回転の慣性は契約に無いので、幾何から概算する (相対比較にしか使わない)
-        self.inertia = np.array([0.35, 0.35, 0.55])
+        # **回転の慣性は契約に無い。概算である。** オーバーシュートと減衰の釣り合いは
+        # ここに直接依存するので、結論を出す前に `--inertia-scale` で振って頑健性を見ること
+        self.inertia = np.array([0.35, 0.35, 0.55]) * float(inertia_scale)
         self.reset()
 
     def reset(self):
@@ -128,17 +130,20 @@ class FakeVehicle:
 
 
 def run(bundle, cmds, yaw_rate=0.6, lead_max=1.05, surge=0.35, cap=0.25,
-        hz=50.0, dead_time=DEAD_TIME, live=(1, 1, 1, 1)):
+        hz=50.0, dead_time=DEAD_TIME, live=(1, 1, 1, 1), gains=None,
+        inertia_scale=1.0):
     """FSM の {surge, heave, yaw} 列を流し、navigator -> 姿勢制御器 -> 偽機体を回す。"""
     from umiusi_perception.classical import (ClassicalController, GeneralAllocator,
                                              PlantContract, cad_wrench_from_modes,
                                              rep103_from_cad)
     b = json.loads(Path(bundle).read_text())
     plant = PlantContract.from_dict(b["contract"])
-    ctl = ClassicalController(plant, **b.get("gains", {}))
+    g = dict(b.get("gains", {}))
+    g.update(gains or {})       # 制御ゲインを振るための口 (バンドルは書き換えない)
+    ctl = ClassicalController(plant, **g)
     alloc = GeneralAllocator(plant, **b.get("allocator", {}))
     alloc.set_live(np.asarray(live, bool))
-    veh = FakeVehicle(b["contract"], 1.0 / hz, dead_time, live)
+    veh = FakeVehicle(b["contract"], 1.0 / hz, dead_time, live, inertia_scale)
     dt = 1.0 / hz
     yaw_sp, action, log = None, np.zeros(8), []
     for cmd in cmds:
@@ -186,9 +191,24 @@ def summarise(log, cap, hz=50.0):
     err = np.degrees(np.abs((sp - yaw + math.pi) % (2 * math.pi) - math.pi))
     turned = np.degrees(np.unwrap(yaw)[-1] - np.unwrap(yaw)[0])
     tail = slice(int(len(log) * 0.6), None)
+    # **オーバーシュートと整定を見る。** 死に時間の効きはここに出る — 誤差の p95 や
+    # 総旋回量は「目標が先行して待つ」ので鈍い (kd を振っても動かなかった)
+    signed = np.degrees((sp - yaw + math.pi) % (2 * math.pi) - math.pi)
+    # 目標が止まったあと (指令が切れたあと) の行き過ぎ = 誤差が符号を変えて反対側へ出た量
+    lock = np.argmax(np.abs(np.diff(sp)) < 1e-12) if len(sp) > 1 else 0
+    after = signed[lock:] if lock else signed
+    over = float(np.max(-np.sign(after[0]) * after)) if len(after) and after[0] != 0 else 0.0
+    # 整定時間: |誤差| < 5 度に入って以降ずっと 5 度未満で居られるまでの時間
+    ok = np.abs(after) < 5.0
+    settle = float((len(after) - (np.argmin(ok[::-1]) if not ok.all() else len(after))) / hz)
+    # 振動: 誤差の微分が符号を変えた回数 / 秒
+    d = np.diff(after)
+    osc = float(np.sum(np.diff(np.sign(d[np.abs(d) > 1e-9])) != 0) / (len(after) / hz))
     return {
         "旋回量[deg]": turned,
-        "旋回レート[deg/s]": turned / (len(log) / hz),
+        "オーバーシュート[deg]": max(over, 0.0),
+        "整定[s]": settle,
+        "振動[回/s]": osc,
         "方位誤差 p95[deg]": float(np.percentile(err, 95)),
         "方位誤差 末尾中央[deg]": float(np.median(err[tail])),
         "前進速度 末尾[m/s]": float(np.median(vx[tail])),
@@ -211,7 +231,12 @@ def main():
     ap.add_argument("--cap", type=float, default=0.25)
     ap.add_argument("--dead-time", type=float, default=DEAD_TIME)
     ap.add_argument("--live", default="1,1,1,1", help="生きているスラスタ (lf,lb,rb,rf)")
-    ap.add_argument("--sweep", default="", choices=("", "yaw_rate", "lead_max", "surge", "cap"))
+    ap.add_argument("--sweep", default="",
+                    choices=("", "yaw_rate", "lead_max", "surge", "cap", "kd", "kp"))
+    ap.add_argument("--kd", type=float, default=None, help="姿勢の微分ゲイン (既定はバンドル)")
+    ap.add_argument("--kp", type=float, default=None)
+    ap.add_argument("--inertia-scale", type=float, default=1.0,
+                    help="回転慣性の倍率。概算値なので結論はこれを振って確かめる")
     a = ap.parse_args()
 
     path = a.bundle
@@ -221,17 +246,22 @@ def main():
                    / "config" / "classical_bundle.json")
     live = tuple(int(x) for x in a.live.split(","))
     cmds = scenario(a.scenario, a.secs)
+    gains = {k: v for k, v in (("kd", a.kd), ("kp", a.kp)) if v is not None}
     base = dict(yaw_rate=a.yaw_rate, lead_max=a.lead_max, surge=a.surge, cap=a.cap,
-                dead_time=a.dead_time, live=live)
+                dead_time=a.dead_time, live=live, gains=gains,
+                inertia_scale=a.inertia_scale)
     grids = {"yaw_rate": [0.2, 0.4, 0.6, 0.9, 1.2], "lead_max": [0.35, 0.52, 1.05, 1.57],
-             "surge": [0.15, 0.25, 0.35, 0.5], "cap": [0.25, 0.3, 0.4]}
+             "surge": [0.15, 0.25, 0.35, 0.5], "cap": [0.25, 0.3, 0.4],
+             "kd": [0.0, 0.1, 0.2, 0.35, 0.6], "kp": [0.4, 0.7, 1.0, 1.5]}
 
     print(f"# シナリオ {a.scenario} / {a.secs:.0f}s / 死に時間 {a.dead_time:.1f}s / live={live}")
     print(f"# bundle {path}")
     keys = None
     for val in (grids[a.sweep] if a.sweep else [None]):
         kw = dict(base)
-        if a.sweep:
+        if a.sweep in ("kd", "kp"):
+            kw["gains"] = dict(base["gains"], **{a.sweep: val})
+        elif a.sweep:
             kw[a.sweep] = val
         r = summarise(run(path, cmds, **kw), kw["cap"])
         if keys is None:
