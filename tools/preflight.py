@@ -113,6 +113,7 @@ def check_bundle(rep, path):
     except Exception as e:  # noqa: BLE001
         rep.add(FAIL, "バンドルが読めない", f"{path}: {type(e).__name__}: {e}")
         return
+    _check_bundle_knobs(rep, json.loads(Path(path).read_text()))
     axes = np.asarray(c["thrust_axes"], float)
     piv = np.asarray(c["pivots_from_com"], float)
     yaw = sum(float(np.cross(piv[k], axes[k])[1]) for k in range(4))   # CAD +Y まわり
@@ -123,6 +124,37 @@ def check_bundle(rep, path):
         rep.add(FAIL, "バンドルの水平の符号が**旧規約** (B-14)",
                 f"全基 +h で時計回り (yaw {yaw:+.3f})。control / 実機と逆。\n"
                 f"autonomy を main (7bb1d16 以降) に更新すること。\n{path}")
+
+
+def _check_bundle_knobs(rep, b):
+    """バンドルが**制御器とアロケータの引数を全部名指ししているか**。
+
+    名指ししていないものは `umiusi_perception` の**その日のライブラリ既定**に落ちる。
+    ライブラリの既定を 1 行変えると、**既に配ったバンドル全部が黙って別の意味になり、
+    ファイルには痕跡が残らない** — バンドルが防ぐために存在している問題 (known_issues
+    A-11) が 1 段下で起きている状態。**署名から導出する**ので、ノブが増えても追従する。
+    """
+    try:
+        import inspect
+
+        from umiusi_perception.classical import ClassicalController, GeneralAllocator
+    except Exception as e:  # noqa: BLE001
+        rep.add(WARN, "umiusi_perception を import できない", f"{type(e).__name__}: {e}")
+        return
+    miss = []
+    for key, cls in (("gains", ClassicalController), ("allocator", GeneralAllocator)):
+        have = set(b.get(key, {}))
+        # `live` はバンドルに焼き込んではいけない (どの基が生きているかは実機で決まる)
+        want = [p for p in inspect.signature(cls.__init__).parameters
+                if p not in ("self", "plant", "live")]
+        miss += [f"{key}.{p}" for p in want if p not in have]
+    if miss:
+        rep.add(WARN, "バンドルがライブラリ既定に頼っている (A-11)",
+                f"{len(miss)} 個が未指定: {', '.join(miss)}\n"
+                "**その日の umiusi_perception の既定が実機に届いている。**\n"
+                "sim 側で実効値を書き出すようにしたので、**バンドルを再 export して配り直す**こと")
+    else:
+        rep.add(OK, "バンドルが全ノブを名指ししている (A-11)", "ライブラリ既定に落ちていない")
 
 
 def check_is_forward(rep, node):
