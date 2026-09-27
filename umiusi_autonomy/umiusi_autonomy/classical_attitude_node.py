@@ -444,10 +444,21 @@ class ClassicalAttitudeNode(Node):
         # 較正前のバンドルで絶対値を信じないこと。相対比較には使える
         for k in b.get("uncalibrated", []):
             self.get_logger().warn(f"未較正の契約値: {k}")
+        # **fingerprint を起動ログに残す。** これが無いと、bag を見ても「どのプラントと
+        # どのゲインが作った run か」が言えない — 9/13 のプール実験がまさにそれで、
+        # 設定 9 個がライブラリ既定に落ちていたのに痕跡がどこにも残らなかった
+        # (known_issues A-11)。sim の tools/export_classical.py が書き出す
+        fp = str(b.get("fingerprint", "")).strip()
         self.get_logger().info(
             f"bundle: {path} (cap_ref={plant.cap_ref:.2f}, "
             f"{plant.control_rate_hz:.0f} Hz, 到達速度 @max_duty="
             f"{self._ctl.reachable_speed(self._max_duty):.3f} m/s)")
+        if fp:
+            self.get_logger().info(f"bundle fingerprint: {fp}")
+        else:
+            self.get_logger().warning(
+                "**バンドルに fingerprint が無い。** 古い export なので、この run を"
+                "あとから「どの設定で走ったか」に紐付けられない。再 export して配り直すこと")
         return True
 
     def _now(self):

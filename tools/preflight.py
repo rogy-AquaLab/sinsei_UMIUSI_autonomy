@@ -113,7 +113,12 @@ def check_bundle(rep, path):
     except Exception as e:  # noqa: BLE001
         rep.add(FAIL, "バンドルが読めない", f"{path}: {type(e).__name__}: {e}")
         return
-    _check_bundle_knobs(rep, json.loads(Path(path).read_text()))
+    b = json.loads(Path(path).read_text())
+    fp = str(b.get("fingerprint", "")).strip()
+    rep.add(OK if fp else WARN, "バンドルの fingerprint",
+            f"{fp}  (bag の起動ログと突き合わせる)" if fp else
+            "**無い。** 古い export。この run を「どの設定で走ったか」に紐付けられない")
+    _check_bundle_knobs(rep, b)
     axes = np.asarray(c["thrust_axes"], float)
     piv = np.asarray(c["pivots_from_com"], float)
     yaw = sum(float(np.cross(piv[k], axes[k])[1]) for k in range(4))   # CAD +Y まわり
