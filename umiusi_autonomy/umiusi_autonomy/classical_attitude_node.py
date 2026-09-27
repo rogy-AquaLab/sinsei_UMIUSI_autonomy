@@ -164,6 +164,13 @@ class ClassicalAttitudeNode(Node):
         # 深度センサではなく指令からの推測 (VelocityObserver) を見るので、上げるのは
         # 鉛直の推定が当てになると確かめてから。`ros2 param set` で実行中に変更可
         self.declare_parameter("k_v_vert", -1.0)
+        # **姿勢の PD ゲイン。負でバンドルの値を使う** (k_v_vert と同じ規約)。
+        # 2 つの独立した台 (偽機体 / MuJoCo) で、**起動の死に時間があると kd の最適が
+        # 0.35 -> 0.5 に上がる**と出た (docs/performance_tuning.md)。実機で未検証なので
+        # 既定はバンドルのまま。**現場で試せるようにここに置く** — 焼き込みだと
+        # バンドルを書き出し直すまで動かせない
+        self.declare_parameter("kd", -1.0)
+        self.declare_parameter("kp", -1.0)
         # --- 断の検出。**どちらも「黙って走り続ける」のを防ぐためのもの** -----------------
         # IMU が途切れたら姿勢制御は成立しない (凍った推定で一定トルクを出し続けて回り出す)。
         # 途切れたら出力 0。**disarm はしない** — 正浮力なので 0 出力は浮上側に外れる。
@@ -345,12 +352,12 @@ class ClassicalAttitudeNode(Node):
                         f"live_thrusters_source={src} — **この set だけでは読み直さない。** "
                         "続けて `ros2 param set /classical_attitude live_thrusters '[...]'` "
                         "を実行するか、再起動すること")
-                elif p.name == "k_v_vert":
+                elif p.name in ("k_v_vert", "kd", "kp"):
                     # 制御器は属性を持つだけなので、作り直さずその場で差し替えられる
                     ctl = getattr(self, "_ctl", None)
                     if ctl is not None and float(p.value) >= 0.0:
-                        ctl.k_v_vert = float(p.value)
-                        self.get_logger().warning(f"k_v_vert={float(p.value):.2f}")
+                        setattr(ctl, p.name, float(p.value))
+                        self.get_logger().warning(f"{p.name}={float(p.value):.2f}")
                 elif p.name == "vel_cmd":
                     self._vel_cmd = np.array([float(p.value), 0.0, 0.0])
                     # **デッドマンは叩かない。** これは相手の居ない静的な指令で、
@@ -427,9 +434,10 @@ class ClassicalAttitudeNode(Node):
         b = json.loads(Path(path).read_text())
         plant = PlantContract.from_dict(b["contract"])
         gains = dict(b.get("gains", {}))
-        kvv = float(self.get_parameter("k_v_vert").value)
-        if kvv >= 0.0:
-            gains["k_v_vert"] = kvv
+        for g in ("k_v_vert", "kd", "kp"):
+            v = float(self.get_parameter(g).value)
+            if v >= 0.0:                      # 負 = バンドルの値をそのまま使う
+                gains[g] = v
         self._ctl = ClassicalController(plant, **gains)
         self._alloc = GeneralAllocator(plant, **b.get("allocator", {}))
         self._apply_live()
