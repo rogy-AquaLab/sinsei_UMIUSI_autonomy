@@ -18,16 +18,23 @@ out: `esc_thrusts[4]` / `servo_angles[4]`）。Eigen も既に依存に入って
 
 ---
 
-## 行き先 — **autonomy は最終的に navigator だけになる**
+## 行き先 — **autonomy は最終的に無くなる**（2026-09-29 更新）
 
-（ユーザー方針 2026-09-22）移植が終わったあとの姿:
+ユーザー方針が 2 段で更新された:
+- 2026-09-22: 姿勢制御を control へ移し、**autonomy は navigator だけになる**
+- 2026-09-29: **その navigator も core へ移す。** つまり autonomy は最終的に消える
+- 2026-09-29: **仕様は control 側に統一する。** `dev-0921` の
+  `Target`(velocity のみ) + `AttitudeTarget`(roll/pitch + `yaw_rate`) に**こちらが合わせる**
 
 ```
-control (C++)                          autonomy (Python)
-  logic::attitude::Classical  <--- AttitudeTarget ---  navigator_node  (FSM)
-  ThrusterLimits / esc_disabled                        perception_node (検出器)
-  is_forward / servo_sign                              camera_bridge_node
+control (C++)                         core
+  logic::attitude::AttitudeFeedback  <-- AttitudeTarget --  FSM (navigator 相当)
+  mixer / ThrusterLimits             <-- Target(velocity) -  認識 / カメラ
+  is_forward / servo_sign / esc_disabled
 ```
+
+**なので移植は「autonomy を残すための作業」ではなく、畳むための作業。** 新しいものを
+autonomy 側に足さない。既にあるものを control / core が引き取れる形にすることだけをやる。
 
 - **autonomy に残るのは「認識して、どこへ行きたいかを出す」側だけ。** 姿勢の安定化・配分・
   スラスタへの出力は全部 control。`classical_attitude_node` は役目を終えて消える。
@@ -45,6 +52,35 @@ control (C++)                          autonomy (Python)
 差し替えとして進められる。
 
 ---
+
+## 仕様統一で autonomy 側が変わるところ（2026-09-29 の方針）
+
+`dev-0921` の msgs に合わせると、**autonomy が持っている 2 つの仕掛けが行き場を失う**。
+どちらも「消えてよい」か「control/core へ移す」かの判断が要る。
+
+### (a) yaw の絶対方位の積分 — **消える。おそらくそれでよい**
+
+いまの navigator は FSM の yaw レートを**絶対方位へ積分**し、`yaw_lead_max` で
+「実測から 60° 以上先行させない」という歯止めをかけている。**これは 180° の罠
+（known_issues B-14）への保護**で、積分が逃げると誤差 180° が安定平衡になって出られなくなる。
+
+`dev-0921` の `AttitudeFeedback` は **yaw をレート制御**にしている（roll/pitch だけ絶対姿勢）。
+つまり**方位の積分器が存在しない**。結果:
+
+  * **180° の罠は構造的に起きなくなる。** 積む対象が無い。**これは純粋な利得**
+  * **代わりに「手を放すと現在方位を保つ」が無くなる。** 波や推力の非対称で方位は流される
+  * `hold_yaw` パラメータの意味が無くなる
+
+→ **競技の FSM（探索→接近→突入）が方位保持を必要とするか**が判断の分かれ目。
+探索の旋回とターゲットへの指向はどちらもレート指令で書けるので、**保持は要らない見込み**。
+ただし**「流されても気付かない」**ので、`imu` の方位をログに出して事後に見えるようにすること。
+
+### (b) 並進指令 — `Target`(velocity) に残る。**ただし単位の規約を決め直す**
+
+control の `Target` は `velocity` だけになった。autonomy 側は
+`cmd_target_vel_scale` で「UI の正規化スティック値 → m/s」を吸収している
+（UI は物理単位を出さない。known_issues B-17 の周辺）。**control 側が velocity を
+m/s と解釈するのか正規化値と解釈するのかを決めること。** ここが割れると B-17 の再来になる。
 
 ## なぜ移すのか — 効く順
 
@@ -120,6 +156,14 @@ C++ に書き直すと**実装が 2 本**になり、片方だけ直る事故が
 - [ ] 幾何行列 A の構築（水平列 = `thrust_axes`、垂直列 = `_Y_UP`）と擬似逆行列。Eigen で可
 - [ ] **欠損対応** `set_live()`。1 基落として解き直す（rank 6 維持・条件数 5.34 → 8.05）。
       **2 基以上は拒否する**（6 自由度の権限が無くなり、黙って姿勢が崩れる）
+      > **2026-09-29: lf が直ったので当面の律速ではない。** ただし `dev-0921` の mixer は
+      > `feed_forward` と同じ固定行列で `esc_disabled` を読まないので、**次に 1 基死んだら
+      > 同じ穴に落ちる**（9/13 実測で yaw 実現誤差 240%）。
+      > **既存ブランチは無い** — PR #317 (`codex/left-front-thruster-failure`) は CLOSED で
+      > ブランチも削除済み。ただし **PR の差分は `gh pr diff 317` で回収できる**
+      > （`attitude_controller` / `feed_forward` / `params` の 7 ファイル）。
+      > あれは `ff` 経路の配分行列を直すもので、**`dev-0921` の mixer とは別物**。
+      > 流用するなら mixer 側に作り直しが要る
 - [ ] **零空間の特異点回避。** ここが移植の山。
       - 零空間の正規直交基底（SVD）
       - 特異点までの距離とサーボ移動量の**両方**を含むコスト
