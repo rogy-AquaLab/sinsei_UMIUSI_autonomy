@@ -29,6 +29,15 @@
 - **UI だけで回せる流れ**: Power On → **MANUAL**（core が 4 基を runnable にし、manual_target_generator を
   起動）→ ゲームパッド。**STANDBY = disarm**。**AUTO** は今は空の Target しか出さない仮実装なので、
   モード遷移の確認に安全に使える（姿勢は水平・ヨーレート 0 を保つはず）
+- **競技の自律 (AUTO)**: `ros2 launch umiusi_autonomy core_autonomy.launch.py` で core の代わりに起動する
+  （core の空の auto_target_generator の代わりに、FSM 入りの同名ノードが上がる）。UI で **AUTO** にすると
+  FSM が `/cmd/target`（正規化）と `/cmd/attitude_target`（ヨーレート、方位保持なし）を出す。**STANDBY で止まる**
+  - **前進の符号は UI と同じフィールド**。先に MANUAL でスティック前 → 前進を確認すること。逆なら
+    `surge_sign:=-1`（auto_target_generator のパラメータ）
+  - 風船が見えない間は SEARCH: その場で 0.5 rad/s 旋回 + 上下に小さく揺れる。これが出れば配線は通っている
+  - surge 0.22〜0.34 は duty 0.22〜0.34 になる（cap 0.5）。autonomy の旧経路 (cap 0.25) より強い
+  - **DEBUG モードは使わない**（`/debug_thruster_output` が無く core が待ち続ける）
+  - 実機の perception（カメラ → 検出）は未確認。検出が出なければ SEARCH のままになる
 - **シェルが要るもの**: `record_run.sh`（録画）/ `preflight.py` / `thruster_cmd.py`（duty の階段・サーボ 90° ステップ）。
   `thruster_cmd.py` は `/cmd/direct` を出すので、**走っている間は control の logic が迂回される**（B-12。この試験ではそれで正しい）。
   **STANDBY で使う**こと（MANUAL のゲームパッド指令と混ぜない）
