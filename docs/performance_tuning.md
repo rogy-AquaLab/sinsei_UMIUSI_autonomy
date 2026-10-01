@@ -104,6 +104,38 @@ Raspberry Pi 4 Model B (4 コア) 実機での実測にもとづく。数値は�
 `conf_thresh` は**速度に効かない** (0.3 → 0.5 で検出数 31 → 0 になっても 4.88 → 4.58 Hz)。
 CNN の推論コストは画像の中身に依らないため。誤検出を減らす目的でのみ使う。
 
+## 4b. ONNX Runtime バックエンド — **Pi で未測定。既定は torch のまま**（2026-10-01）
+
+仕様: `mujoco_ws/ai/spec_perception_onnx.md`。
+
+```bash
+ros2 launch ... perception_node ... backend:=onnx input_size:=320   # 起動時にだけ効く
+```
+
+- 同じ重みを onnxruntime で回す。出力は torch と一致する（umiusi_sim `tests/test_learned_onnx.py`）
+- 初回起動で ONNX を書き出し、`~/.cache/umiusi_perception/` にキャッシュする（重みと input_size ごと）。
+  初回だけ起動が数秒長い
+- **onnx が使えなければ ERROR を出して torch で動き続ける**（onnxruntime が無い / wheel が古い / 書き出し失敗）。
+  起動ログの `backend=` で実際に使われた方が分かる
+- `ros2 param set ... backend` は**拒否される**（読み込み後に変えても効かないため）
+- Pi への導入: `pip install onnxruntime`（CPU 版。rosdep には登録しない — torch と同じ方針）。
+  umiusi_perception の wheel も `feat/perception-onnx` 以降に入れ直すこと（古い wheel では onnx は使えず torch に戻る）
+
+x86・1 スレッド・`camp_real2` @320、実画像 708x977 での内訳:
+
+| | ms |
+|---|---:|
+| preprocess（全画面のリサイズ） | 10.7 |
+| モデル torch → **onnx** | 12.8 → **9.6**（x1.33） |
+| decode | 0.9 |
+
+**モデル単体の比 x1.33 は仕様の x1.97 より小さい**（機械と負荷が違う）。**1 フレーム全体では x1.15** —
+入力画像が大きいとリサイズがモデルと同じくらい掛かる。Pi のカメラ画像は小さいので比率は変わる。
+
+**未測定（受け入れ条件）**: Pi 単独と、スタック稼働中（UI なし）で 256 / 320 × torch / onnx の周期
+（`tools/bench_rates.py`）。**onnx・320 が torch・256 以上の周期なら**、競技構成の推奨として
+`backend:=onnx input_size:=320` をここに書く。既定はその後に変える。
+
 ## 5. 構成別の実測サマリ
 
 | 構成 | `/state/imu` | 姿勢制御 | 画像 | 認識 | アイドル |
