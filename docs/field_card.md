@@ -32,8 +32,8 @@
 - **シェルが要るもの**: `record_run.sh`（録画）/ `preflight.py` / `thruster_cmd.py`（duty の階段・サーボ 90° ステップ）。
   `thruster_cmd.py` は `/cmd/direct` を出すので、**走っている間は control の logic が迂回される**（B-12。この試験ではそれで正しい）。
   **STANDBY で使う**こと（MANUAL のゲームパッド指令と混ぜない）
-- **autonomy の `classical_attitude` / `navigator`（direct）は今日の control では使えない**（サーボ角の単位、B-22）。
-  `thruster_cmd.py` / `thrust_sign_check.py` は修正済み
+- **角度は全部 rad**（B-22）。`thruster_cmd.py` / `thrust_sign_check.py` の `--angle` も rad。
+  deg のつもりの値（|x| > pi/2）は弾く
 
 ---
 
@@ -218,8 +218,8 @@ arm すると振れが 2〜3 倍に悪化し、yaw は目標から 180° 離れ�
 
 ```bash
 python3 tools/thruster_cmd.py pose                  # 全基 servo 0° / duty 0.1 を 20 s 保持
-python3 tools/thruster_cmd.py pose --angle 45       # 全基 45° に寝かせて保持
-python3 tools/thruster_cmd.py pose --angle -90      # 全基 真下向き
+python3 tools/thruster_cmd.py pose --angle 0.785    # 全基 45° (rad で指定) に寝かせて保持
+python3 tools/thruster_cmd.py pose --angle -1.571   # 全基 真下向き (-90°)
 ```
 
 **指令を出す前に「何が起きるはずか」を表示する**ので、それと見比べる:
@@ -227,8 +227,8 @@ python3 tools/thruster_cmd.py pose --angle -90      # 全基 真下向き
 | 指令 | 起きるはず |
 |---|---|
 | `pose`（servo 0°・全基 +0.1） | **上から見て右回り**（合力ちょうど 0 の純粋な旋回） |
-| `pose --angle 45` | 上昇・右回り・機首が上がる |
-| `pose --angle -90` | 下降・機首が下がる（旋回なし） |
+| `pose --angle 0.785` | 上昇・右回り・機首が上がる |
+| `pose --angle -1.571` | 下降・機首が下がる（旋回なし） |
 
 見るもの: **4 基のサーボが同じ角度に寝ているか** / **噴流の向きが揃っているか** /
 **1 基だけ回っていない・逆を向いていないか**。

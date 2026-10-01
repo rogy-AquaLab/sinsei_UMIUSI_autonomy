@@ -32,6 +32,7 @@ from sensor_msgs.msg import Imu
 from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable
 
 from umiusi_common import thrust_sign
+from umiusi_common import servo_angle
 from umiusi_common.yaw_setpoint import YAW_DT_MAX, advance_yaw_setpoint
 from umiusi_common.arm import ArmState
 from umiusi_common.imu_sanity import ImuSanity
@@ -651,9 +652,9 @@ class ClassicalAttitudeNode(Node):
             # アロケータ、スルーレート) はモデルの座標系のままにしておく — 途中で掛けると
             # 観測器が「出していない指令」で速度を積分する
             out.duty_cycle = float(self._duty_cmd[k]) * self._thrust_sign[k]
-            # 単位は度 (known_issues B-13)。範囲外は CAN 送信が失敗するので ±90 に収める
-            out.angle = max(-90.0, min(90.0,
-                                       float(self._servo_cmd[k]) * self._servo_sign[k]))
+            # 内部 (_servo_cmd) は sim の設定に合わせて deg。送るときだけ rad
+            out.angle = servo_angle.to_wire(
+                math.radians(float(self._servo_cmd[k]) * self._servo_sign[k]))
             self._pubs[p].publish(out)
 
     def _detach_all(self):

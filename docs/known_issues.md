@@ -928,7 +928,10 @@ A-11 と同型の sim2real ギャップになる。
 
 撤去の優先順位は冒頭の引用ブロックのとおり (`servo_sign` だけが急ぎ)。
 
-### B-13. 【中】`ThrusterOutput.angle` の単位コメントが実装と逆
+### B-13. 【解決済み】`ThrusterOutput.angle` の単位コメントが実装と逆
+
+> **2026-09-14 (control `91cd49d`) で実装が rad に統一され、コメントの `[rad]` が正しくなった。**
+> 以下は当時 (deg) の記録。現行の規約と送信側の対応は B-22。
 
 msg のコメントは `[rad]` だが、受け側の実装は **DEGREES**:
 
@@ -1489,7 +1492,7 @@ python3 tools/idle_thrust_check.py data/20260913-signcheck-and-teleop/<run>/bag
 
 ---
 
-### B-22. 【高・ツールは修正済み / ノードは未修正】control のサーボ角は 2026-09-14 から rad。autonomy は deg を送っている
+### B-22. 【修正済み】control のサーボ角は 2026-09-14 から rad。autonomy は deg を送っていた
 
 control `91cd49d`（2026-09-14、main）で `ThrusterOutput.angle` と CAN 送信が **rad** に統一された
 （`VescModel::make_servo_angle_frame(double rad)`、範囲 ±π/2）。autonomy の `/cmd/direct` 送信側は
@@ -1500,9 +1503,12 @@ control `91cd49d`（2026-09-14、main）で `ThrusterOutput.angle` と CAN 送�
 
 | 送信側 | 状態 |
 |---|---|
-| `tools/thruster_cmd.py` / `tools/thrust_sign_check.py` | **修正済み**。CLI は deg のまま、送る直前に rad へ変換。古い control には `--servo-unit deg` |
-| `classical_attitude_node` / `navigator_node`（direct）/ `rl_attitude_node` | **未修正**。9/14 以降の control と組み合わせると上の通り壊れる |
+| `classical_attitude_node` / `navigator_node`（direct）/ `rl_attitude_node` | **修正済み**。内部は sim 設定に合わせて deg のまま、送る境界で rad (`umiusi_common.servo_angle.to_wire`) |
+| `tools/thruster_cmd.py` / `tools/thrust_sign_check.py` | **修正済み**。`--angle` は rad。\|x\| > pi/2 は deg の打ち間違いとして弾く |
 
-読む側（bag）: main 系 msgs の `ThrusterState.angle` は deg、dev-0921 系の `commanded_angle` は rad。
-`thrust_sign_from_bag.py` / `idle_thrust_check.py` は両方を読める。
+**方針（ユーザー 2026-10-01）: 角度は今後すべて rad。**
+
+読む側（bag）: **単位はフィールド名ではなく録った日で決まる**（main 系の `ThrusterState.angle` も 9/14 から rad）。
+`umiusi_common.servo_angle.from_bag` が 2026-09-14 00:00 JST より前を deg として読み替える。
+`thrust_sign_from_bag.py` / `idle_thrust_check.py` / `run_compare.py` / `bag_check.py` が使う。
 

@@ -28,7 +28,7 @@ COMMAND MODES (command_mode parameter):
 
 DEPLOY CALIBRATION (実機でしか確認できない):
   * yaw_rate_axis / yaw_rate_sign を実装済みの IMU に対して確認する (known_issues A-13)。
-  * ThrusterOutput.angle は DEGREES で出す。msg コメントの [rad] が誤り (known_issues B-13)。
+  * ThrusterOutput.angle は rad (umiusi_common.servo_angle)。
   * servo_sign — ch ごとの取り付け反転をここで吸収する。sim 側のアロケーションは
     4 基同符号が前提なので触らない。既定 [1,1,1,1]。
 
@@ -48,6 +48,7 @@ from std_srvs.srv import SetBool
 from umiusi_autonomy_msgs.msg import BalloonDetectionArray
 from umiusi_rl_control_msgs.msg import AttitudeTarget
 from umiusi_common import thrust_sign
+from umiusi_common import servo_angle
 from umiusi_common.arm import ArmState
 from umiusi_common.yaw_setpoint import advance_yaw_setpoint
 
@@ -400,10 +401,8 @@ class NavigatorNode(Node):
             out.runnable = ThrusterRunnable(esc=True, servo=True)
             # 符号は出口だけで掛ける (FSM と配分はモデルの座標系のまま)
             out.duty_cycle = float(action[4 + k]) * scale * self._thrust_sign[k]
-            # 正規化サーボ値 -> DEGREES (受け側の規約)。範囲外は CAN フレームが送れずに
-            # 落ちるだけなので、ここでハードの ±90 に収めてから出す。
             deg = float(action[k]) * self._servo_range_deg * self._servo_sign[k]
-            out.angle = max(-90.0, min(90.0, deg))
+            out.angle = servo_angle.to_wire(math.radians(deg))
             self._pubs[p].publish(out)
 
     def _detach_all(self):

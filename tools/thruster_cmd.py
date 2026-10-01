@@ -31,19 +31,15 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable
+from umiusi_common import servo_angle
 
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
 HZ = 50.0
 
 
-# ThrusterOutput.angle の単位。control は 91cd49d (2026-09-14) から rad。それより前は deg。
-# CLI の角度は常に deg で受け、送る直前にだけ変換する。
-SERVO_UNIT = "rad"
-
-
 def wire_angle(deg: float) -> float:
-    return math.radians(deg) if SERVO_UNIT == "rad" else float(deg)
+    return servo_angle.to_wire(math.radians(deg))
 
 
 class Driver(Node):
@@ -225,23 +221,28 @@ def cmd_excite(drv, a):
     print("励起終了")
 
 
+def _angle_arg_to_deg(rad: float) -> float:
+    """CLI の角度は rad。deg のつもりの値 (|x| > pi/2) は止める。"""
+    if abs(rad) > servo_angle.HALF_PI + 0.01:
+        sys.exit(f"--angle {rad} は範囲外。角度は rad で指定する (|x| <= {servo_angle.HALF_PI:.3f})")
+    return math.degrees(servo_angle.to_wire(rad))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--yes", action="store_true", help="確認プロンプトを省略")
-    ap.add_argument("--servo-unit", choices=("rad", "deg"), default="rad",
-                    help="送る角度の単位。control が 91cd49d より前なら deg")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("spin", help="実験 1: スラスタ ID (1 基ずつ回す)")
     s.add_argument("--duty", type=float, default=0.2)
     s.add_argument("--seconds", type=float, default=8.0, help="各ステップの保持時間 [s]")
-    s.add_argument("--angle", type=float, default=45.0, help="サーボの振り角 [deg]")
+    s.add_argument("--angle", type=float, default=0.785, help="サーボの振り角 [rad]")
     s.add_argument("--ch", nargs="+", choices=POSITIONS, default=None,
                    help="対象 ch (既定は 4 基すべて)")
 
     s = sub.add_parser("step", help="実験 3: サーボステップ応答")
     s.add_argument("--ch", choices=POSITIONS, required=True)
-    s.add_argument("--angle", type=float, default=80.0, help="ステップ量 [deg] (80 と 10 の両方取る)")
+    s.add_argument("--angle", type=float, default=1.4, help="ステップ量 [rad] (1.4 と 0.17 の両方取る)")
     s.add_argument("--repeat", type=int, default=3)
 
     s = sub.add_parser("sweep", help="実験 4: 推力ベンチの duty 階段")
@@ -257,7 +258,7 @@ def main():
     s.add_argument("--yaw", action="store_true", help="左右逆転で旋回")
 
     s = sub.add_parser("pose", help="全基を規定の姿勢 (サーボ角 + duty) に置いて保持する")
-    s.add_argument("--angle", type=float, default=0.0, help="サーボ角 [deg]。既定 0 = 水平")
+    s.add_argument("--angle", type=float, default=0.0, help="サーボ角 [rad]。既定 0 = 水平")
     s.add_argument("--duty", type=float, default=0.1, help="duty (負で逆)。既定 0.1")
     s.add_argument("--seconds", type=float, default=20.0)
     s.add_argument("--ch", nargs="+", choices=POSITIONS, default=None,
@@ -273,8 +274,8 @@ def main():
     s.add_argument("--seed", type=int, default=0)
 
     a = ap.parse_args()
-    global SERVO_UNIT
-    SERVO_UNIT = a.servo_unit
+    if hasattr(a, "angle"):
+        a.angle = _angle_arg_to_deg(a.angle)  # 以降の内部表現は deg
     if a.cmd in ("spin", "steady") and abs(getattr(a, "duty", 0.0)) > 0.4:
         sys.exit("duty > 0.4 は spin/steady では使いません (推力ベンチは sweep --allow-full)")
 

@@ -32,6 +32,7 @@ from std_msgs.msg import Float32, String
 from std_srvs.srv import Trigger
 
 from umiusi_common.arm import ArmState
+from umiusi_common import servo_angle
 from umiusi_rl_control.depth_supervisor import HORIZ, VERT, DepthSupervisor
 from umiusi_common.imu_sanity import ImuSanity
 from umiusi_rl_control.mode_action import MODE_DIM, ModeAction
@@ -714,9 +715,9 @@ class RlAttitudeNode(Node):
             # 符号は**出口だけ**で掛ける (_duty_cmd / _servo_cmd は sim 規約のまま保つ)。
             # 上流で掛けると、観測器と方策が「出していない指令」を前提に動く
             out.duty_cycle = float(self._duty_cmd[k]) * self._thrust_sign[k]
-            # 単位は度 (known_issues B-13)。ch 別のサーボ符号はこの境界でだけ当てる
-            # (_servo_cmd は sim 規約のまま保つ)。範囲外は CAN 送信が失敗するので ±90 に収める
-            out.angle = max(-90.0, min(90.0, float(self._servo_cmd[k]) * self._servo_sign[k]))
+            # ch 別のサーボ符号はこの境界でだけ当てる (_servo_cmd は sim 規約の deg のまま)
+            out.angle = servo_angle.to_wire(
+                math.radians(float(self._servo_cmd[k]) * self._servo_sign[k]))
             self._pubs[p].publish(out)
 
     def _detach_all(self):

@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from umiusi_common import servo_angle
 
 IMU_TOPIC = "/state/imu"
 CMD_TOPICS = tuple(f"/cmd/direct/thruster_controller/output_{p}" for p in ("lf", "lb", "rb", "rf"))
@@ -266,7 +267,9 @@ def main():
     if args.profile == "teleop" and have_cmd:
         # ch ごとにメッセージ数が違い得るので flat に連結して見る
         duties = np.concatenate([[m.duty_cycle for m in data[t][1]] for t in have_cmd])
-        servos = np.concatenate([[m.angle for m in data[t][1]] for t in have_cmd])
+        servos = np.degrees(np.concatenate([
+            [servo_angle.from_bag(m.angle, int(ts * 1e9)) for ts, m in zip(*data[t])]
+            for t in have_cmd]))
         bins = [(0.05, 0.2), (0.2, 0.4), (0.4, 1.01)]
         for lo, hi in bins:
             frac = float(np.mean((np.abs(duties) >= lo) & (np.abs(duties) < hi)))

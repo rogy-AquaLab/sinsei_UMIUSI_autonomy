@@ -40,6 +40,7 @@ from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from sinsei_umiusi_msgs.msg import ThrusterOutput, ThrusterRunnable
+from umiusi_common import servo_angle
 
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
@@ -98,13 +99,8 @@ def in_words(tau):
     return names[i][0 if tau[i] > 0 else 1]
 
 
-# ThrusterOutput.angle の単位。control は 91cd49d (2026-09-14) から rad。それより前は deg。
-# CLI の角度は常に deg で受け、送る直前にだけ変換する。
-SERVO_UNIT = "rad"
-
-
 def wire_angle(deg: float) -> float:
-    return math.radians(deg) if SERVO_UNIT == "rad" else float(deg)
+    return servo_angle.to_wire(math.radians(deg))
 
 
 class Rig(Node):
@@ -243,16 +239,21 @@ def ground_check(args, axes, pivots):
     return 1 if (bad or skip) else 0
 
 
+def _angle_arg_to_deg(rad: float) -> float:
+    """CLI の角度は rad。deg のつもりの値 (|x| > pi/2) は止める。"""
+    if abs(rad) > servo_angle.HALF_PI + 0.01:
+        sys.exit(f"--angle {rad} は範囲外。角度は rad で指定する (|x| <= {servo_angle.HALF_PI:.3f})")
+    return math.degrees(servo_angle.to_wire(rad))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--servo-unit", choices=("rad", "deg"), default="rad",
-                    help="送る角度の単位。control が 91cd49d より前なら deg")
     ap.add_argument("--ch", nargs="+", choices=POSITIONS, default=list(POSITIONS))
     ap.add_argument("--duty", type=float, default=0.15,
                     help="励起の duty 絶対値。反応が小さければ上げる (上限 0.3)")
     ap.add_argument("--pulse", type=float, default=6.0, help="1 パルスの秒数")
     ap.add_argument("--rest", type=float, default=5.0, help="パルス間の停止秒数 (回転を落ち着かせる)")
-    ap.add_argument("--angle", type=float, default=60.0, help="垂直成分を見るときのサーボ角 [deg]")
+    ap.add_argument("--angle", type=float, default=1.05, help="垂直成分を見るときのサーボ角 [rad]")
     ap.add_argument("--bundle", default="", help="classical_bundle.json のパス (既定は同梱)")
     ap.add_argument("--out", default="", help="生データの保存先 JSON")
     ap.add_argument("--dry", action="store_true", help="指令を出さず、手順と予測だけ表示")
@@ -261,8 +262,7 @@ def main() -> int:
                     help="**地上で**噴流の向きを目で見て符号を決める (IMU も水も使わない)。"
                          "機体を押さえなくてよいが、決まるのは符号だけで幾何は決まらない")
     args = ap.parse_args()
-    global SERVO_UNIT
-    SERVO_UNIT = args.servo_unit
+    args.angle = _angle_arg_to_deg(args.angle)  # 以降の内部表現は deg
     if args.ground:
         args.duty = min(abs(args.duty), 0.12)      # 空回しなので更に絞る
         args.pulse = min(args.pulse, 3.0)
