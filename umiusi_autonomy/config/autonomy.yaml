@@ -9,6 +9,7 @@ perception_node:
     detections_topic: "/perception_node/detections"
     conf_thresh: -1.0        # <0 -> use the checkpoint's stored confidence floor
     input_size: 0            # 0  -> use the checkpoint's stored input size
+    backend: "torch"         # torch | onnx (起動時のみ。onnx が使えなければ torch に戻る)
     fovy_deg: 60.0           # MUST match the physical camera vertical FOV
     max_rate_hz: 10.0        # cap detector rate (realistic Pi-4 timing); 0 = every frame
     sanitise_near: true      # near red/blue colour re-confirmation before the FSM commits
