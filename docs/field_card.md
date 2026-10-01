@@ -23,6 +23,9 @@
 **やらないこと**: ONNX（後で）/ autonomy の direct 経路（classical・navigator）/ int8・モデル変更
 
 **記録**: `record_run.sh --name <名前>`。bag ごとに **4 リポジトリのコミット**をメモ（msgs の系列で読めるかが変わる）
+- 映像（mp4）は control のカメラノードが出す RTSP (`cam1` 前 / `cam2` 下) から録るので、どのスタックでもそのまま録れる
+- **スタックは MANUAL の試験でも `core_autonomy.launch.py` で上げる**と、検出 (`/perception_node/detections`) も bag に入る
+  （素の core launch には画像ブリッジも認識も無い）。風船の映像は `record_vision:=true` で起動して `record_run.sh --vision`
 
 **dev-0921 との差**（exp に足してあるもの）: control = hold_yaw / B-20（`servo_max_angular_velocity` 4.0）/
 disarm 中の logic 初期化、msgs = `AttitudeTarget.hold_yaw`、ui = R1 トグル。core は dev-0921 のまま。
