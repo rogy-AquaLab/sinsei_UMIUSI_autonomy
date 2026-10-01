@@ -165,7 +165,8 @@ def _check_bundle_knobs(rep, b):
 def check_is_forward(rep, node):
     vals, missing = {}, []
     for p in POSITIONS:
-        r = get_params(node, f"/thruster_controller_{p}", ["is_forward", "esc_disabled"])
+        r = get_params(node, f"/thruster_controller_{p}",
+                       ["is_forward", "esc_disabled", "servo_max_angular_velocity"])
         if r is None:
             missing.append(p)
         else:
@@ -182,6 +183,22 @@ def check_is_forward(rep, node):
         rep.add(FAIL, "control の is_forward が false の基がある (B-14)",
                 f"{fwd}\n2026-09-13 の現場で入れた応急処置なら**戻すこと (全 true)**。\n"
                 "false のままだと roll / pitch / 深度が反転する (bag で測定済み)")
+    # B-20: 0 だと「サーボ角が永久に未確定」→ mixer が 1 基でも未確定なら指令を出さない =
+    # 推力が一切出ない。陸上では「静か」に見えるだけなので、ここで止める。
+    smav = {p: vals[p]["servo_max_angular_velocity"] for p in POSITIONS}
+    zero = [p for p in POSITIONS if smav[p] == 0.0]
+    unknown = [p for p in POSITIONS if smav[p] is None]
+    if zero:
+        rep.add(FAIL, "servo_max_angular_velocity が 0 の基がある (B-20)",
+                f"{zero}。サーボ角推定が永久に未確定になり、**4 基とも推力が一切出ない**。\n"
+                "control の params/controllers.yaml を 0 以外 (既定 4.0 rad/s) にして再起動する")
+    elif unknown:
+        rep.add(WARN, "servo_max_angular_velocity を読めない (B-20)",
+                f"{unknown} で未宣言。B-20 の修正前の古いバイナリが載っている可能性がある")
+    else:
+        rep.add(OK, "servo_max_angular_velocity (B-20)",
+                f"4 基とも 0 以外 ({sorted(set(smav.values()))} rad/s)")
+
     dead = [p for p in POSITIONS if dis[p]]
     if len(dead) > 1:
         rep.add(FAIL, "esc_disabled が 2 基以上 (B-16)", f"{dead}。6 自由度の権限が無い")

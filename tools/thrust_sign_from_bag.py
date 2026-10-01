@@ -41,6 +41,7 @@ R^2 は 0.1〜0.5 程度にしかならない (波・係留・推定していな
 from __future__ import annotations
 
 import argparse
+import math
 import json
 import sys
 from pathlib import Path
@@ -55,6 +56,13 @@ from sinsei_umiusi_msgs.msg import ThrusterStateAll
 POSITIONS = ("lf", "lb", "rb", "rf")
 Y_UP = np.array([0.0, 1.0, 0.0])
 STATE_TOPIC = "/state/thruster_state_all"
+
+
+def servo_deg(state) -> float:
+    """main 系 msgs は angle [deg]、dev-0921 系は commanded_angle [rad]。"""
+    if hasattr(state, "commanded_angle"):
+        return math.degrees(state.commanded_angle)
+    return state.angle
 IMU_TOPIC = "/state/imu"
 
 
@@ -78,7 +86,7 @@ def read(path):
             row = [ts]
             for p in POSITIONS:
                 s = getattr(m, p)
-                row += [s.duty_cycle, s.angle, s.rpm]
+                row += [s.duty_cycle, servo_deg(s), s.rpm]
             st.append(row)
         elif topic == IMU_TOPIC:
             m = deserialize_message(data, Imu)
