@@ -26,6 +26,12 @@
   左右キー = 横移動 ±0.5 / L2・R2 = 上下 ±0.3 / **R1 = 方位保持 ON/OFF（通知が出る）**
 - 方位保持中の左スティック横は**保持方位を回す**。0.1 s 入力が途切れると core が目標をクリアし、保持も外れる
 - **この組み合わせの bag は `dev-0921` 系の msgs で録られる。** main 系の msgs では読めない（逆も同じ）
+- **UI だけで回せる流れ**: Power On → **MANUAL**（core が 4 基を runnable にし、manual_target_generator を
+  起動）→ ゲームパッド。**STANDBY = disarm**。**AUTO** は今は空の Target しか出さない仮実装なので、
+  モード遷移の確認に安全に使える（姿勢は水平・ヨーレート 0 を保つはず）
+- **シェルが要るもの**: `record_run.sh`（録画）/ `preflight.py` / `thruster_cmd.py`（duty の階段・サーボ 90° ステップ）。
+  `thruster_cmd.py` は `/cmd/direct` を出すので、**走っている間は control の logic が迂回される**（B-12。この試験ではそれで正しい）。
+  **STANDBY で使う**こと（MANUAL のゲームパッド指令と混ぜない）
 - **autonomy の `classical_attitude` / `navigator`（direct）は今日の control では使えない**（サーボ角の単位、B-22）。
   `thruster_cmd.py` / `thrust_sign_check.py` は修正済み
 
