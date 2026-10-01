@@ -1548,3 +1548,22 @@ lf は 9/29 に修理している。「`is_forward` 全 true が正」は **lf �
 
 **直し方**: ハードで直すのが第一。ソフトで直すなら thruster_controller に基ごとの `servo_sign`（rad）を足す。
 `fix/deploy-hardening-2026-09` の `servo_sign`（`4568997`）は deg 前提で古い土台にあるので、そのままは使えない。
+
+#### B-23 追記: 「FF は正常、FB でサーボが逆に見える」の読み方
+
+- FF と FB は**同じ mixer・同じサーボ送信**を通る。FB が足すのは IMU（姿勢・角速度）だけ
+- その IMU は、FB が読む state interface と A-13 で検証した `/state/imu` が**同じ値**（gate_controller は
+  並べ替えも符号反転もせずに写すだけ。角速度は rad/s）。四元数の並びも `Eigen::Quaterniond(w, x, y, z)` で正しい
+- **FF の符号の誤りは「操作の向きが逆」としか見えないが、FB では正帰還になって暴れる。**
+  だから「FF で普通に動く」は鉛直の符号が正しい証拠にならない。FB が暴れるなら、鉛直の向き
+  （サーボ極性 / `is_forward`）が REP-103 に対して逆、と読むのが筋
+- **リポジトリの yaml と Pi の設定は別物の可能性が高い**: dev-0921 の yaml は `servo_max_angular_velocity: 0.0`
+  （推力が一切出ない、B-20）なのに実機は回っている → Pi は別の値で動いている。`is_forward` も同様に要確認
+
+**決め手になる確認**（オペレータの「正しい向き」の感覚に依存しない）:
+
+1. `ros2 param get /thruster_controller_{lf,lb,rb,rf} is_forward` と `servo_max_angular_velocity` を 4 基ぶん控える
+2. FF で右スティックを前（REP-103 の +pitch = **機首下げ**）→ **前の 2 基の噴流が上、後ろの 2 基の噴流が下**。
+   右スティックを右（+roll = **左舷上げ**）→ **左の 2 基の噴流が下、右の 2 基の噴流が上**。
+   **基ごとに**見ること（1 基だけ逆なら FF の見た目では気付けない。lf は未検証）
+3. 機体ごと逆なら鉛直の向き全体（`is_forward` か規約）、1 基だけ逆ならその基のサーボの向き
