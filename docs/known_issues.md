@@ -1589,3 +1589,85 @@ lf は 9/29 に修理している。「`is_forward` 全 true が正」は **lf �
 **扱い（ユーザー 2026-10-01）: 今日の実機の観察（全基逆 → `1d48d60` で直った）を正とする。**
 9/13 は機体が潜れていなかった可能性があり、鉛直は目視で確かめられていない。B-14 追記の鉛直の結論は
 代理変数の回帰だけが根拠なので、確度は低いものとして扱う。
+
+### B-24. 【解析・2026-10-01】プール run 2 本の bag — 「MANUAL が動かない」の正体と AUTO の旋回の弱さ
+
+データ: `mujoco_ws/data/20261001-pool/`（`20261001-200732-1001` = run1、`20261001-201551-1001` = run2）。
+4 repo は `pi_state_at_pull.txt` の組み合わせ。**control の yaml は 20:16:03 に書き換え**、run2 の control 起動は
+bag の 22 s 目（20:16:14）なので **run2 は書き換え後の yaml**（lf `esc_disabled: true` / `control_mode: ff`）。
+
+**run1 は推力が一度も出ていない（MANUAL も AUTO も duty 0）。** lf の mode が `(esc=-1, servo=-1)`（ESC もサーボも無効）
+→ dev-0921 の mixer は 1 基でも servo_disabled だと全基 0。lb/rb/rf は runnable `(1,1)` を受けて mode も 1 になっているのに
+duty は 0 のまま。「MANUAL が動かない」はこれ。**lf を止めるのは `esc_disabled` だけにする**（run2 で確認済み）。
+
+**run2 は MANUAL も AUTO も推力が出た**（lb/rb/rf、MANUAL で duty 0.5 / ~3800 rpm、AUTO で 0.1〜0.3）。
+
+- **MANUAL の前進は旋回になる。** vx=+0.52 で duty lb −0.29 / rb +0.29 / rf +0.29、IMU wz **+0.42 rad/s**。
+  lf が抜けた 3 基では前進にヨーのトルクが残る（B-16 の縮退）。前進の符号（`surge_sign`）はこの run からは判定できない
+- **AUTO の SEARCH 旋回: 向きは合っているが遅い。** 指令 ±0.5 rad/s → 実測 ±0.07〜0.2 rad/s（5 s 平均）。
+  ff の `k_yaw_rate: 0.2` で duty 0.10 しか出ていない（3 基）。fb か `k_yaw_rate` を上げる必要がある
+- SEARCH の上下の揺れはサーボ角 ±0.15 rad の往復として出ている
+- **run2 の AUTO は認識が動いていない（前カメラの配信元が途中で死んだ）。** 時系列（JST、`ros_log/` と journal）:
+  - 20:15:52〜 camera_bridge の「接続できません」は**起動順だけ**（control = RTSP の配信元がまだ上がっていない）。
+    bridge は 3 s ごとに再接続していて、20:16:18 に cam1 を読み始めている（MANUAL 中に検出 77 件）
+  - **20:17:17 前カメラ（`pi_camera` = imx708 / `libcamerasrc → v4l2h264enc → rtspclientsink`）が
+    `gstlibcamerasrc.cpp(441) processRequest: streaming stopped, reason error (-5)` で停止**。
+    gst_camera_node は自分では再起動しないので、それ以降 `cam1` は 404 → 検出 0 → AUTO はずっと SEARCH
+  - 下カメラ（USB）は無事（20:19:41 の停止はスタック停止の SIGINT）
+  - 原因: [assumed] -5 は GST_FLOW_ERROR = **下流の要素がエラーを返した**（libcamera 側の要求失敗ではない）。
+    直前の kernel/mediamtx に unicam・CSI・電源のエラーは無い（20:16:16 に RCU stall 1 件のみ）。
+    疑いはハードウェアエンコーダ（v4l2h264enc / bcm2835_codec）。CPU 負荷が高い状態だった
+    （camera_bridge がソフトウェアデコードに落ちている / controller_manager の overrun）。
+    この -5 は Pi の ros_log 全体でこの 1 回だけ
+  - 対策候補: gst_camera_node がパイプラインのエラーで自分を再起動する（またはノードを respawn）/ 実験前に cam1 を目視
+  run1 は映像が通っていて、AUTO 中に検出 443 件（推力 0 のまま）
+- STANDBY に戻ると rpm は ~1.5 s で 0 になる。`ThrusterState.duty_cycle` は最後の指令値のまま残る（表示上のみ。実回転ではない）
+
+その他: run1 の auto_target_generator が IMU の四元数ノルム異常を 4 回（|q|=0.0001〜2.2、破棄せず）/
+`Unsupported VESC packet status variant`（variant 1）が ~3 s ごと / run1 は controller_manager の overrun が ~1 Hz。
+
+他の bag: Pi の `~/1001-rosbags/`（18:47・19:21・19:47）と `~/ros2-ws/rosbag2_2026_10_01-18_16_19` は
+`mujoco_ws/data/20261001-pool/extra_bags/` に取得済み（下の追記）。
+
+#### B-24 追記: hold_yaw の実機結果（`rosbag2_2026_10_01-19_47_37`、19:47〜20:04、4 基とも稼働）
+
+- **fb では効いた。** bag 21〜315 s の MANUAL（control 起動はこの bag より前。指令 0 でも duty が出ているので fb）。
+  - hold OFF（21〜90 s）: 指令 0 でも方位が −8° → −82° へ流れる（レート制御だけでは止まらない）
+  - **hold ON（92〜315 s）: −75° ± 3° に 200 s 以上とどまる。** 95〜107 s の外乱（手で押したと思われる。−93° → −34° まで振れる）は
+    ~6 s で −75° 付近に戻った。保持中は duty ±0.05〜0.15 で補正し続けている
+- **ff では何も起きない（仕様どおり、ただし気づきにくい）。** 398 s で control を再起動し、`Control mode: ff` で上がった
+  （yaml の書き換えは 20:16 の 1 回だけではなかった [assumed]）。471 s 以降は hold=1 のまま方位が 0° → −45° へ流れ、duty は 0。
+  hold_yaw は `logic/attitude/feed_back.hpp` → `attitude_feedback.hpp` の経路にしか無い。
+  **ff だと UI の R1 は「方位保持 ON」の通知を出すのに、実際は何もしない** → 警告を出すか、ff では R1 を無効にする
+- 他の 3 本（18:16 / 18:47 / 19:21）にも MANUAL の区間がある（45–110 s / 5–252 s / 9–164 s、duty 最大 0.5）。
+  `/cmd/attitude_target` が hold_yaw 追加前の msgs で録られていて、今の msgs ではデシリアライズに失敗する
+  （**bag は録った日の msgs の系列で読む**。field_card の注意どおり）
+
+#### B-24 追記: 認識は誤検出だった（run1 / run2）
+
+- run1 の AUTO 中の検出 ~480 件は**ほぼ誤検出**。yellow 866 / red 6 / blue 5、confidence 中央値 0.49。
+  **赤い風船 2 個が画面中央に大きく映っていても一度も red にならない**（`run1_t0190.0` など、録画に bbox を重ねて確認）。
+  - 約 3 割は同じ画素位置（u≈16〜24, v≈104）に出続ける小さな箱。壁の掲示物の黄色いラベルの上
+  - 大きな yellow は何もない壁のひだ・影の上。赤い風船に yellow が重なるフレームもある
+- run2 の 3 件も yellow の誤検出（影の上）。AUTO 中はカメラが止まっていて検出 0
+- [assumed] 原因の候補: 照明がピンク・緑に変わる / **前カメラの映像が 90° 回っている（機体への付け方）** /
+  認識への入力が 320×240 で 16:9 を縦横比を崩して詰めている。学習データとの差を確かめること
+- 録画は ~23 fps（30 fps ではない）。bag と録画の時刻合わせは数秒ずれうる。extra_bags の 4 本には検出が入っていない
+
+#### B-24 追記: サーボ角の推定と遅れ
+
+- **`estimated_angle` は実測ではない。** 指令角を `servo_max_angular_velocity` で傾き制限しただけのモデル
+  （control `servo_angle_estimator.cpp` の `move_towards`）。**実サーボの遅れも lf のサーボの生死もここからは分からない**
+- 推定の傾き: 18:16 は 3.5〜3.8 rad/s（設定 4.0 どおり）。他の bag は 1.8〜2.6 rad/s で、[assumed] 上流の指令そのものが遅い
+- 実際の遅れの代わりに、ヨーレート指令 → IMU wz の相互相関: 4 基 0.36 s（fb / ff とも）、3 基・ff の AUTO 0.8 s
+  （サーボ・ESC・機体の慣性を全部含む）。サーボ単体の遅れを測るには、映像でホーンを見るか、サーボの位置フィードバックが要る
+
+#### B-24 追記: その他の数値（10/01 の 6 本）
+
+- ヨーレートの効き（実測 wz ÷ 指令）: fb 0.22〜0.33 / ff 0.17〜0.20。**fb でも指令の 1/3 しか出ていない**
+- 姿勢: pitch が全 bag で平均 −6〜−9°（[assumed] 重心かバラスト）。roll の標準偏差 0.8〜6.4°
+- rpm と duty: 0.1 → ~1200 / 0.25 → ~2100 / 0.35 → ~2900 / 0.45 → ~3400〜3900 rpm（4 基同傾向）。0.3 を超えると伸びが鈍る
+- IMU: 四元数ノルム異常 1〜10 件 / bag、1 サンプルで yaw が 20° 超飛ぶのが 0〜16 件（19:47 が 16）、ジャイロ 35.7 rad/s のスパイク 2 件
+- 周期: `/state/imu` は設計 50 Hz に対し 37.6〜49.9 Hz。run1 は `/cmd/*` が最大 3.1 s 途切れる（13 回）。
+  controller_manager の overrun は毎分 51〜101 回
+- **`/state/high_power_circuit_info` は全 bag で V / I / T が 0.0。bag からはバッテリー電圧が分からない**
