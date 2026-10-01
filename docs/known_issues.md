@@ -1512,3 +1512,39 @@ control `91cd49d`（2026-09-14、main）で `ThrusterOutput.angle` と CAN 送�
 `umiusi_common.servo_angle.from_bag` が 2026-09-14 00:00 JST より前を deg として読み替える。
 `thrust_sign_from_bag.py` / `idle_thrust_check.py` / `run_compare.py` / `bag_check.py` が使う。
 
+
+---
+
+### B-23. 【監査・2026-10-01】dev-0921 のサーボ極性 — コードは反転していない。lf は実機で一度も確かめていない
+
+「dev-0921 でサーボの極性が逆になっている可能性」を、9/13 に実機で正しく動いた autonomy の規約と突き合わせた。
+
+**コードの規約は 3 つとも同じ**（+角 = 推力軸を +水平から **+鉛直（上）** へ倒す）:
+
+| | 角度 | duty |
+|---|---|---|
+| autonomy `GeneralAllocator`（9/13 実機で検証） | `atan2(v, h)` を ±π/2 に折る、`v` は `_Y_UP` | 折った側の符号 × 大きさ |
+| control main の FF（mixer 以前） | `atan(v / h)` | `sign(h)` × 大きさ |
+| control dev-0921 の `mixer.hpp` | `atan2(v, h)` を ±π/2 に折る | `h·cos + v·sin`（現在角へ射影） |
+
+- sim も同じ（`umiusi_sim/.../umiusi.xml`: servo=+90 で上、ヒンジ軸を基ごとにそうなる向きに取ってある）
+- 送信の境界: `91cd49d` の deg→rad は `(deg+90)/180` → `(rad+π/2)/π` で、**+角が同じ物理位置**に写る
+- dev-0921 最新（`1466bf5` まで）の thruster_controller / gate / CAN / mixer に、サーボ角へ符号を掛ける箇所は無い。
+  `is_forward` は 4 基とも true
+- 9/13 の検証で効いたのは `servo_sign` 全 +1 / `is_forward` 全 true（B-14 追記）。dev-0921 はこれと同じ
+
+**ただし lf は実機で一度も確かめていない。** 9/13 の 5 run すべてで lf は 1 サンプルも回っていない
+（lb/rb/rf だけ。`/state/thruster_state_all` で esc Runnable かつ |duty|>0.01 を数えた）。
+lf は 9/29 に修理している。「`is_forward` 全 true が正」は **lf については外挿**。
+
+**現場で切り分ける**（STANDBY、地上で、小さい duty）:
+
+1. サーボ 0（水平）で噴流の向き → `thrust_sign_check.py --ground`（field_card 1-a）
+2. サーボ +90°（`thruster_cmd.py pose --angle 1.571`、duty は小さく）→ **全基とも噴流が下向き**（= 推力が上）
+3. 判定:
+   - 1 が正しく 2 だけ逆の基 → **その基のサーボの向きが逆**（ホーンの付け方 / VESC 側のサーボ設定）
+   - 1 も 2 も逆 → `is_forward`（モータ相・ESC の逆転設定）
+   - 全基そろって 2 が逆 → コードの規約か配線の問題。このときは報告に戻ること
+
+**直し方**: ハードで直すのが第一。ソフトで直すなら thruster_controller に基ごとの `servo_sign`（rad）を足す。
+`fix/deploy-hardening-2026-09` の `servo_sign`（`4568997`）は deg 前提で古い土台にあるので、そのままは使えない。
