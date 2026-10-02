@@ -5,6 +5,35 @@
 
 ---
 
+## 2026-10-01 今日やること（本番前の実験はあと 1 回。次回は競技の自律まで回す）
+
+上から順。**1〜3 は次回の自律の前提**、4〜6 は数値とデータ。
+
+1. **起動と検品**: 下の組み合わせで起動 → `preflight.py`。MANUAL で
+   **スティック前 → 前進**（= AUTO の `surge_sign` の確認を兼ねる）/ 左右ヨーの向き / roll・pitch
+2. **方位保持 (R1)**: 保持中に手で押して戻るか / 保持中にスティックで向きを変えられるか / OFF で戻るか
+3. **AUTO（競技の自律）**: 風船なしで SEARCH の旋回が出る → 風船を置いて寄る・突く。**STANDBY で止まる**こと
+4. **FSM の換算用**（映像 + bag）: ヨーレート（スティック全倒し・半分）/ 前進（0.3・0.6・1.0）の実速度 /
+   上下 ±0.3 の開ループ速度（深度センサが無いので、何秒でどれだけ動くかが要る）
+5. **機体の数値**（STANDBY で `thruster_cmd.py`）: 定常 duty の階段（`thrust_curve_exp`）/ サーボ 90° ステップ
+   （`servo_max_angular_velocity` 4.0 rad/s の裏取り）/ 自由減衰 / バラスト前後の「指令 0」30 秒 / 推力ありの長い IMU
+6. **映像**: 風船（赤黄青を同じ画角 / 距離を変える / 見上げ / 風船なしも同量）— mix と real_only のモデル比較にも使う。
+   並進しながらの cam2
+
+**やらないこと**: ONNX（後で）/ autonomy の direct 経路（classical・navigator）/ int8・モデル変更
+
+**記録**: `record_run.sh --name <名前>`。bag ごとに **4 リポジトリのコミット**をメモ（msgs の系列で読めるかが変わる）
+- 映像（mp4）は control のカメラノードが出す RTSP (`cam1` 前 / `cam2` 下) から録るので、どのスタックでもそのまま録れる
+- **スタックは MANUAL の試験でも `core_autonomy.launch.py` で上げる**と、検出 (`/perception_node/detections`) も bag に入る
+  （素の core launch には画像ブリッジも認識も無い）。風船の映像は `record_vision:=true` で起動して `record_run.sh --vision`
+
+**dev-0921 との差**（exp に足してあるもの）: control = hold_yaw / B-20（`servo_max_angular_velocity` 4.0）/
+disarm 中の logic 初期化、msgs = `AttitudeTarget.hold_yaw`、ui = R1 トグル。core は dev-0921 のまま。
+⚠ dev-0921 の yaml は `servo_max_angular_velocity: 0.0`（推力が出ない値）。向こうの実機で推力が出ているなら
+Pi 側で値を変えているはずなので、その値と 4.0 を突き合わせること
+
+---
+
 ## 2026-10-01: control 経路で回すときの組み合わせ
 
 **4 リポジトリを揃えないと黙って推力 0 になる。** 1 つでも main 系が混ざると成立しない。
@@ -29,6 +58,15 @@
 - **UI だけで回せる流れ**: Power On → **MANUAL**（core が 4 基を runnable にし、manual_target_generator を
   起動）→ ゲームパッド。**STANDBY = disarm**。**AUTO** は今は空の Target しか出さない仮実装なので、
   モード遷移の確認に安全に使える（姿勢は水平・ヨーレート 0 を保つはず）
+- **競技の自律 (AUTO)**: `ros2 launch umiusi_autonomy core_autonomy.launch.py` で core の代わりに起動する
+  （core の空の auto_target_generator の代わりに、FSM 入りの同名ノードが上がる）。UI で **AUTO** にすると
+  FSM が `/cmd/target`（正規化）と `/cmd/attitude_target`（ヨーレート、方位保持なし）を出す。**STANDBY で止まる**
+  - **前進の符号は UI と同じフィールド**。先に MANUAL でスティック前 → 前進を確認すること。逆なら
+    `surge_sign:=-1`（auto_target_generator のパラメータ）
+  - 風船が見えない間は SEARCH: その場で 0.5 rad/s 旋回 + 上下に小さく揺れる。これが出れば配線は通っている
+  - surge 0.22〜0.34 は duty 0.22〜0.34 になる（cap 0.5）。autonomy の旧経路 (cap 0.25) より強い
+  - **DEBUG モードは使わない**（`/debug_thruster_output` が無く core が待ち続ける）
+  - 実機の perception（カメラ → 検出）は未確認。検出が出なければ SEARCH のままになる
 - **シェルが要るもの**: `record_run.sh`（録画）/ `preflight.py` / `thruster_cmd.py`（duty の階段・サーボ 90° ステップ）。
   `thruster_cmd.py` は `/cmd/direct` を出すので、**走っている間は control の logic が迂回される**（B-12。この試験ではそれで正しい）。
   **STANDBY で使う**こと（MANUAL のゲームパッド指令と混ぜない）

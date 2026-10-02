@@ -12,20 +12,35 @@ alone does not move thrusters — core's AUTO node also publishes the runnable f
 on); this node only produces the setpoint while its lifecycle is active. Perception + FSM are the
 ROS-free umiusi_perception code, so behaviour is identical to the in-sim run.
 
-Target mapping mirrors the direct feed-forward allocation exactly (velocity.x = -surge,
-velocity.z = heave, orientation.z = yaw). See navigator_node for the standalone (no-core) drive
-path and the deploy-calibration notes.
+Target mapping (control dev-0921 interface, see to_control_setpoint):
+  Target.velocity          normalized command [-1, 1]; x = surge_sign * surge, z = heave
+  AttitudeTarget           level attitude, yaw_rate = yaw_rate_scale * yaw [rad/s], hold_yaw false
+surge_sign follows the UI gamepad (stick forward -> +x), which drives the same field.
 """
 
 from __future__ import annotations
 
 import rclpy
 from rclpy.lifecycle import LifecycleNode, LifecycleState, TransitionCallbackReturn
-from sinsei_umiusi_msgs.msg import Target
+from sinsei_umiusi_msgs.msg import AttitudeTarget, Target
 
 from umiusi_autonomy_msgs.msg import BalloonDetectionArray
 
 from umiusi_autonomy.imu_source import ImuSource
+
+
+def to_control_setpoint(cmd: dict, surge_sign: float, yaw_rate_scale: float):
+    """FSM の {surge, heave, yaw} -> (velocity.x, velocity.z, yaw_rate [rad/s])。"""
+    def clip(v: float) -> float:
+        return max(-1.0, min(1.0, float(v)))
+    return (clip(surge_sign * cmd["surge"]), clip(cmd["heave"]),
+            yaw_rate_scale * clip(cmd["yaw"]))
+
+
+def neutral_attitude_target() -> AttitudeTarget:
+    msg = AttitudeTarget()
+    msg.attitude.w = 1.0
+    return msg
 
 
 class AutoTargetGenerator(LifecycleNode):
@@ -33,6 +48,11 @@ class AutoTargetGenerator(LifecycleNode):
         super().__init__("auto_target_generator")
         self.declare_parameter("detections_topic", "/perception_node/detections")
         self.declare_parameter("target_topic", "/cmd/target")
+        self.declare_parameter("attitude_target_topic", "/cmd/attitude_target")
+        # UI のゲームパッドと同じ規約 (前に倒す -> +x)。実機で前進が逆なら -1
+        self.declare_parameter("surge_sign", 1.0)
+        # FSM の yaw [-1, 1] -> rad/s。UI のスティック最大 (MAX_YAW_RATE) と同じ
+        self.declare_parameter("yaw_rate_scale", 1.0)
         self.declare_parameter("control_hz", 50.0)
         self.declare_parameter("frame_h", 240)
         self.declare_parameter("frame_w", 320)
@@ -47,12 +67,15 @@ class AutoTargetGenerator(LifecycleNode):
         self._dets = []                # last reconstructed detections (held between perception ticks)
         self._new_dets = False         # a fresh detection message arrived since the last control tick
         self._pub = None
+        self._pub_att = None
         self._sub_det = None
         self._timer = None
 
     # ---- lifecycle transitions ----
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         self._pub = self.create_publisher(Target, self.get_parameter("target_topic").value, 10)
+        self._pub_att = self.create_publisher(
+            AttitudeTarget, self.get_parameter("attitude_target_topic").value, 10)
         self._sub_det = self.create_subscription(
             BalloonDetectionArray, self.get_parameter("detections_topic").value, self._on_detections, 10)
         self._imu.create_subscription()
@@ -68,6 +91,8 @@ class AutoTargetGenerator(LifecycleNode):
         self._timer.cancel()
         if self._pub is not None:
             self._pub.publish(Target())    # zero setpoint on leaving AUTO
+        if self._pub_att is not None:
+            self._pub_att.publish(neutral_attitude_target())
         return TransitionCallbackReturn.SUCCESS
 
     def on_cleanup(self, state: LifecycleState) -> TransitionCallbackReturn:
@@ -86,7 +111,9 @@ class AutoTargetGenerator(LifecycleNode):
         self._imu.destroy()
         if self._pub is not None:
             self.destroy_publisher(self._pub)
-        self._timer = self._sub_det = self._pub = None
+        if self._pub_att is not None:
+            self.destroy_publisher(self._pub_att)
+        self._timer = self._sub_det = self._pub = self._pub_att = None
 
     # ---- FSM plumbing (mirrors navigator_node) ----
     def _ensure_behavior(self) -> bool:
@@ -137,13 +164,17 @@ class AutoTargetGenerator(LifecycleNode):
         self._new_dets = False
         cmd, _info = self._behavior.step(self._dets, self._imu.yaw_rate, heading=0.0,
                                          dt=self._dt, fresh=fresh)
-        # {surge, heave, yaw} -> Target, the same six numbers the direct path feeds
-        # feedforward_allocation: forward surge = -velocity.x, heave = +velocity.z, yaw = orientation.z.
+        vx, vz, yaw_rate = to_control_setpoint(
+            cmd, float(self.get_parameter("surge_sign").value),
+            float(self.get_parameter("yaw_rate_scale").value))
         msg = Target()
-        msg.orientation.z = float(cmd["yaw"])
-        msg.velocity.x = float(-cmd["surge"])
-        msg.velocity.z = float(cmd["heave"])
+        msg.velocity.x = vx
+        msg.velocity.z = vz
         self._pub.publish(msg)
+        att = neutral_attitude_target()
+        att.header.stamp = self.get_clock().now().to_msg()
+        att.yaw_rate = yaw_rate
+        self._pub_att.publish(att)
 
 
 def main(args=None):

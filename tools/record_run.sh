@@ -116,6 +116,10 @@ mkdir -p "$OUT"
 #                                   gate_controller が受ける。**これが無いと「回らなかった
 #                                   のは arm していないからか、指令が 0 だからか」が
 #                                   bag から確定できない**
+# dev-0921 系 (2026-10-01) で足した 3 つ:
+#   * `/cmd/attitude_target` / `/user_input/attitude_target` … roll・pitch 目標、ヨーレート、
+#     hold_yaw。fb モードの指令の半分はこちらにある (並進は /cmd/target)
+#   * `/robot_state` … MANUAL / AUTO / STANDBY の遷移。AUTO で何が起きたかを切り出すのに使う
 # いずれも小さい (docs/logging.md の実測で重いのは /front_cam/image_raw ただ 1 つ)。
 #
 # **2 つのスタックのどちらでも録れるようにしてある。**
@@ -135,6 +139,9 @@ TOPICS="
 /perception_node/detections
 /cmd/target
 /user_input/target
+/cmd/attitude_target
+/user_input/attitude_target
+/robot_state
 /cmd/thruster_runnable_all
 /cmd/direct/thruster_controller/output_lf
 /cmd/direct/thruster_controller/output_lb
