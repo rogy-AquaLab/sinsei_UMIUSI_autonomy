@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import json
 import sys
 import time
@@ -97,6 +98,15 @@ def in_words(tau):
     return names[i][0 if tau[i] > 0 else 1]
 
 
+# ThrusterOutput.angle の単位。control は 91cd49d (2026-09-14) から rad。それより前は deg。
+# CLI の角度は常に deg で受け、送る直前にだけ変換する。
+SERVO_UNIT = "rad"
+
+
+def wire_angle(deg: float) -> float:
+    return math.radians(deg) if SERVO_UNIT == "rad" else float(deg)
+
+
 class Rig(Node):
     def __init__(self):
         super().__init__("thrust_sign_check")
@@ -118,7 +128,7 @@ class Rig(Node):
             out.runnable = ThrusterRunnable(esc=True, servo=True)
             on = (p == pos)
             out.duty_cycle = float(duty if on else 0.0)
-            out.angle = float(angle if on else 0.0)
+            out.angle = wire_angle(angle) if on else 0.0
             self.pubs[p].publish(out)
 
     def detach(self):
@@ -235,6 +245,8 @@ def ground_check(args, axes, pivots):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--servo-unit", choices=("rad", "deg"), default="rad",
+                    help="送る角度の単位。control が 91cd49d より前なら deg")
     ap.add_argument("--ch", nargs="+", choices=POSITIONS, default=list(POSITIONS))
     ap.add_argument("--duty", type=float, default=0.15,
                     help="励起の duty 絶対値。反応が小さければ上げる (上限 0.3)")
@@ -249,6 +261,8 @@ def main() -> int:
                     help="**地上で**噴流の向きを目で見て符号を決める (IMU も水も使わない)。"
                          "機体を押さえなくてよいが、決まるのは符号だけで幾何は決まらない")
     args = ap.parse_args()
+    global SERVO_UNIT
+    SERVO_UNIT = args.servo_unit
     if args.ground:
         args.duty = min(abs(args.duty), 0.12)      # 空回しなので更に絞る
         args.pulse = min(args.pulse, 3.0)

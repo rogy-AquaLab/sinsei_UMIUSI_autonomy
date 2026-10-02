@@ -5,6 +5,38 @@
 
 ---
 
+## 2026-10-01: control 経路で回すときの組み合わせ
+
+**4 リポジトリを揃えないと黙って推力 0 になる。** 1 つでも main 系が混ざると成立しない。
+
+| リポジトリ | ブランチ | 無いと何が起きるか |
+|---|---|---|
+| `sinsei_umiusi_msgs` | `feat/hold-yaw`（dev-0921 + hold_yaw） | control / core がビルドできない |
+| `sinsei_UMIUSI_control` | `exp/20261001-control` | dev-0921 素のままだと **B-20 で推力 0** |
+| `sinsei_UMIUSI_core` | `dev-0921` | main のままだと **誰も `/cmd/attitude_target` を出さない** → 目標 quaternion が 0 で fb が出力しない |
+| `sinsei_UMIUSI_ui` | `feat/hold-yaw`（dev-0921 + R1 トグル） | main のままだと AttitudeTarget を送らない |
+
+`exp/20261001-control` の中身: dev-0921 + **hold_yaw** + **B-20 修正**（`servo_max_angular_velocity` 4.0）+
+**disarm 中は logic を初期化し続ける**。build OK / 205 tests pass。
+**実機での起動は未確認**（mock ハードウェアが無いので手元で立ち上げられない）。
+
+- **autonomy の `classical_attitude` を同時に上げないこと。** `/cmd/direct` に publisher が居ると
+  control の logic が丸ごと迂回される（B-12）。`preflight.py` が検出する
+- **操縦**: 左スティック縦 = 前後 / 横 = ヨーレート（最大 1.0 rad/s）/ 右スティック = roll・pitch（最大 0.3 rad）/
+  左右キー = 横移動 ±0.5 / L2・R2 = 上下 ±0.3 / **R1 = 方位保持 ON/OFF（通知が出る）**
+- 方位保持中の左スティック横は**保持方位を回す**。0.1 s 入力が途切れると core が目標をクリアし、保持も外れる
+- **この組み合わせの bag は `dev-0921` 系の msgs で録られる。** main 系の msgs では読めない（逆も同じ）
+- **UI だけで回せる流れ**: Power On → **MANUAL**（core が 4 基を runnable にし、manual_target_generator を
+  起動）→ ゲームパッド。**STANDBY = disarm**。**AUTO** は今は空の Target しか出さない仮実装なので、
+  モード遷移の確認に安全に使える（姿勢は水平・ヨーレート 0 を保つはず）
+- **シェルが要るもの**: `record_run.sh`（録画）/ `preflight.py` / `thruster_cmd.py`（duty の階段・サーボ 90° ステップ）。
+  `thruster_cmd.py` は `/cmd/direct` を出すので、**走っている間は control の logic が迂回される**（B-12。この試験ではそれで正しい）。
+  **STANDBY で使う**こと（MANUAL のゲームパッド指令と混ぜない）
+- **autonomy の `classical_attitude` / `navigator`（direct）は今日の control では使えない**（サーボ角の単位、B-22）。
+  `thruster_cmd.py` / `thrust_sign_check.py` は修正済み
+
+---
+
 ## 先に読む — 慌てなくていいもの
 
 **以下は既知の未実装によるもので、故障ではない。** この日に直さない。
@@ -459,14 +491,24 @@ scp -r pi@umiusi2.local:runs/latest/ ./20260913/
 
 ---
 
-## 今日ほしいデータ
+## 今日ほしいデータ（2026-10-01 更新）
+
+> **符号は 9/13 の bag で決着済み**（B-14 追記）。この節の旧版は「符号確認が最重要」だったが、
+> もう済んでいる。**今日は `is_forward` が全 true であることを preflight で確かめるだけ。**
 
 | | なぜ |
 |---|---|
-| **符号確認の bag** | 今日の最重要。**ついでに `thrust_curve_exp` も決まる**（スラスタを回した bag がまだ 1 本も無い） |
-| 姿勢制御の bag（符号を直した後） | 発振が消えたかの判定。`run_compare.py` にかける |
+| **定常 duty の階段**（各 duty を数秒保持）| **`thrust_curve_exp` が未較正のまま残っている唯一の理由がこれ。** テレオペの bag では rpm が 3.3〜12 Hz しか更新されず、46 Hz の duty とペアにならないので回帰が壊れる（R² が負）。保持すればレートは問題にならない。`tools/thruster_cmd.py steady` → `tools/duty_rpm_fit.py` |
+| **自由減衰 1 分**（disarm で 15〜20° 傾けて放す）| sim の浮力復元が強すぎる問題（offset 実測 2〜4 mm vs sim 10 mm）を詰める材料。合否 = **2 軸で周期が違う / 振幅が減衰する** |
+| **バラスト調整の前後で「指令 0 のまま」の bag**（各 30 秒）| **B-21 の確認。** いま指令 0 でも 1 基 duty 中央 0.17〜0.21（cap の 52〜68%）を浮力トリムが食っている。調整後に `tools/idle_thrust_check.py` で `Σ|duty| ≈ 0` になるか |
+| **推力を出しながらの IMU**（長めに 1 本）| **yaw 跳躍の発生率が「推力あり」で一度も測れていない。** 169° の観測は陸上・スラスタ停止中の n=1。水中 61 分では 0 件。`tools/imu_jump_axis.py` |
+| 姿勢制御の bag | 発振が消えたかの判定。`run_compare.py` にかける |
 | **並進しながらの cam2 映像** | 速度推定の素材。sway 問題はこれ待ち |
 | **風船の実写** | 広いプールのものが 0 枚。赤黄青を同じ画角に / 距離を変える / **見上げ** / **風船なしも同量** |
+
+> **bag と一緒に `sinsei_umiusi_msgs` のコミットもメモすること。**
+> `dev-0921` 系の msgs は `ThrusterState.angle` を `commanded_angle` に改名しているので、
+> **録ったときと違う系列の msgs で読むと `RMWError: failed to deserialize` で落ちる。**
 
 ---
 

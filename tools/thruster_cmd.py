@@ -37,6 +37,15 @@ CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
 HZ = 50.0
 
 
+# ThrusterOutput.angle の単位。control は 91cd49d (2026-09-14) から rad。それより前は deg。
+# CLI の角度は常に deg で受け、送る直前にだけ変換する。
+SERVO_UNIT = "rad"
+
+
+def wire_angle(deg: float) -> float:
+    return math.radians(deg) if SERVO_UNIT == "rad" else float(deg)
+
+
 class Driver(Node):
     def __init__(self):
         super().__init__("thruster_cmd")
@@ -50,7 +59,7 @@ class Driver(Node):
             out = ThrusterOutput()
             out.runnable = ThrusterRunnable(esc=True, servo=True)
             out.duty_cycle = float(d)
-            out.angle = float(a)                      # degrees (rl_attitude_node と同じ規約)
+            out.angle = wire_angle(a)
             self.pubs[p].publish(out)
 
     def detach(self):
@@ -219,6 +228,8 @@ def cmd_excite(drv, a):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--yes", action="store_true", help="確認プロンプトを省略")
+    ap.add_argument("--servo-unit", choices=("rad", "deg"), default="rad",
+                    help="送る角度の単位。control が 91cd49d より前なら deg")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("spin", help="実験 1: スラスタ ID (1 基ずつ回す)")
@@ -262,6 +273,8 @@ def main():
     s.add_argument("--seed", type=int, default=0)
 
     a = ap.parse_args()
+    global SERVO_UNIT
+    SERVO_UNIT = a.servo_unit
     if a.cmd in ("spin", "steady") and abs(getattr(a, "duty", 0.0)) > 0.4:
         sys.exit("duty > 0.4 は spin/steady では使いません (推力ベンチは sweep --allow-full)")
 
