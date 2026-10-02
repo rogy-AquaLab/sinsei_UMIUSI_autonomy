@@ -5,6 +5,29 @@
 
 ---
 
+## 2026-10-03 最後の実験 — 競技の自律を通す
+
+**ブランチ**: 各 repo `develop`（PR マージ後）。exp は使わない。control の yaml は **`control_mode: fb`**（ff だと方位保持が効かずヨーも 0.18 しか出ない）。
+lf は 10/01 の 19:47 で回っていた → 地上で確かめて問題なければ 4 基（3 基だと前進が旋回になる）。**1 基止めるなら `esc_disabled` だけ**（`servo_disabled` は全基 0 になる）。
+
+上から順。
+
+1. **起動**: `ros2 launch umiusi_autonomy core_autonomy.launch.py`（core の main.yaml と同時に上げない）→ `preflight.py`。UI で cam1 が映っているか
+2. **カメラの向き**（B-24、未確定）: 風船を機体の**右**に置き、`/front_cam/image_raw` でも**右**に映るか / **上**に置いて上に映るか。
+   10/01 の映像は横倒し・上下逆に見える。違ったら FSM の左右・上下が入れ替わるので AUTO の前に報告に戻る
+3. **カメラが落ちても戻るか**（control #336）: `pkill -f "__node:=pi_camera"` → 2 s 後に UI で cam1 が戻る / bridge の「フレーム中継」ログが再開
+4. **認識**: 既定の検出器は **`camp_real.pt` + `min_confidence` 0.45**（10/01 の映像で `camp_real2` は赤い風船を 0/36、yellow と取り違える）。
+   風船を置いて `view_detections.py` で red が出るか。壁際の黄色いシール・掲示物に yellow が出るなら
+   `ros2 param set /perception_node min_confidence 0.5`（走らせたまま効く）
+5. **MANUAL**: スティック前 → 前進か（逆なら AUTO の `surge_sign:=-1`）/ R1 で方位保持 → ナビバーのコンパスが**緑**（黄なら ff）
+6. **AUTO**: 風船なしで SEARCH 旋回 → 風船ありで寄る・突く → **STANDBY で止まる**。
+   AUTO 中にカメラを落とす（3. と同じ）→ 0.5 s で「検出が途切れた」警告が出て SEARCH に戻る（autonomy #36）
+7. **記録**: `record_run.sh --vision --name <名前>`。AUTO の run は全部録る
+
+**競技時間で止まる仕組みは無い**。止めるのは UI の STANDBY（と UI 切断時の電源 OFF）だけ。
+
+---
+
 ## 2026-10-01 今日やること（本番前の実験はあと 1 回。次回は競技の自律まで回す）
 
 上から順。**1〜3 は次回の自律の前提**、4〜6 は数値とデータ。
