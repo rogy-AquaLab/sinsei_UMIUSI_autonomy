@@ -20,6 +20,8 @@ surge_sign follows the UI gamepad (stick forward -> +x), which drives the same f
 
 from __future__ import annotations
 
+import time
+
 import rclpy
 from rclpy.lifecycle import LifecycleNode, LifecycleState, TransitionCallbackReturn
 from sinsei_umiusi_msgs.msg import AttitudeTarget, Target
@@ -35,6 +37,20 @@ def to_control_setpoint(cmd: dict, surge_sign: float, yaw_rate_scale: float):
         return max(-1.0, min(1.0, float(v)))
     return (clip(surge_sign * cmd["surge"]), clip(cmd["heave"]),
             yaw_rate_scale * clip(cmd["yaw"]))
+
+
+def live_detections(dets: list, last_rx: float | None, now: float, timeout_s: float) -> list:
+    """最後に検出メッセージが届いてから timeout_s を超えたら空を返す。
+
+    カメラや認識が止まると検出メッセージが来なくなる。最後の検出を握ったまま FSM に渡すと、
+    トラッカーは同じ検出で見失い回数を 0 に戻すので、居ない風船を追い続ける (B-24)。
+    timeout_s <= 0 で無効 (握り続ける)。
+    """
+    if last_rx is None:
+        return []
+    if timeout_s > 0.0 and now - last_rx > timeout_s:
+        return []
+    return dets
 
 
 def neutral_attitude_target() -> AttitudeTarget:
@@ -54,6 +70,8 @@ class AutoTargetGenerator(LifecycleNode):
         # FSM の yaw [-1, 1] -> rad/s。UI のスティック最大 (MAX_YAW_RATE) と同じ
         self.declare_parameter("yaw_rate_scale", 1.0)
         self.declare_parameter("control_hz", 50.0)
+        # 検出がこれだけ途切れたら「何も見えていない」とみなす [s]。perception は最大 10 Hz
+        self.declare_parameter("detections_timeout_s", 0.5)
         self.declare_parameter("frame_h", 240)
         self.declare_parameter("frame_w", 320)
         self.declare_parameter("fovy_deg", 60.0)
@@ -66,6 +84,7 @@ class AutoTargetGenerator(LifecycleNode):
         self._Detection = None
         self._dets = []                # last reconstructed detections (held between perception ticks)
         self._new_dets = False         # a fresh detection message arrived since the last control tick
+        self._last_det_rx = None       # time.monotonic() of the last detection message
         self._pub = None
         self._pub_att = None
         self._sub_det = None
@@ -143,6 +162,7 @@ class AutoTargetGenerator(LifecycleNode):
             return
         self._dets = [self._to_detection(d) for d in msg.detections]
         self._new_dets = True
+        self._last_det_rx = time.monotonic()
 
     def _to_detection(self, d):
         return self._Detection(
@@ -162,7 +182,13 @@ class AutoTargetGenerator(LifecycleNode):
         self._imu.warn_if_stale()
         fresh = self._new_dets
         self._new_dets = False
-        cmd, _info = self._behavior.step(self._dets, self._imu.yaw_rate, heading=0.0,
+        dets = live_detections(self._dets, self._last_det_rx, time.monotonic(),
+                               float(self.get_parameter("detections_timeout_s").value))
+        if self._dets and not dets:
+            self.get_logger().warn(
+                "検出が途切れた (カメラ / 認識が止まっている?)。何も見えていないものとして扱う",
+                throttle_duration_sec=5.0)
+        cmd, _info = self._behavior.step(dets, self._imu.yaw_rate, heading=0.0,
                                          dt=self._dt, fresh=fresh)
         vx, vz, yaw_rate = to_control_setpoint(
             cmd, float(self.get_parameter("surge_sign").value),
