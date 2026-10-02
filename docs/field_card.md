@@ -19,10 +19,11 @@ lf は 10/01 の 19:47 で回っていた → 地上で確かめて問題なけ�
 4. **認識**: 既定の検出器は **`camp_real.pt` + `min_confidence` 0.45**（10/01 の映像で `camp_real2` は赤い風船を 0/36、yellow と取り違える）。
    風船を置いて `view_detections.py` で red が出るか。壁際の黄色いシール・掲示物に yellow が出るなら
    `ros2 param set /perception_node min_confidence 0.5`（走らせたまま効く）
-5. **MANUAL**: スティック前 → 前進か（逆なら AUTO の `surge_sign:=-1`）/ R1 で方位保持 → ナビバーのコンパスが**緑**（黄なら ff）
+5. **MANUAL**: スティック前 → 前進か（逆なら AUTO の `surge_sign` を -1.0 に、6. 参照）/ R1 で方位保持 → ナビバーのコンパスが**緑**（黄なら ff）
 6. **AUTO**: 風船なしで SEARCH 旋回 → 風船ありで寄る・突く → **STANDBY で止まる**。
    **風船を機体の右前に置いたら右に回るか**（FSM の yaw → `yaw_rate` の符号は control 経路で実機未確認。
-   逆に回って離れていくなら `yaw_rate_scale:=-1.0`、前後が逆なら `surge_sign:=-1.0` を auto_target_generator に）。
+   逆に回って離れていくなら `ros2 param set /auto_target_generator yaw_rate_scale -1.0`、前後が逆なら
+   `ros2 param set /auto_target_generator surge_sign -1.0`。毎周期読み直すので走らせたまま効く）。
    AUTO 中にカメラを落とす（3. と同じ）→ 0.5 s で「検出が途切れた」警告が出て SEARCH に戻る（autonomy #36）
 7. **記録**: `record_run.sh --vision --name <名前>`。AUTO の run は全部録る
 
