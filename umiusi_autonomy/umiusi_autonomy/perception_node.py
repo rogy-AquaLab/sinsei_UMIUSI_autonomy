@@ -46,7 +46,8 @@ class PerceptionNode(Node):
         # **上げる方向にしか効かない** — 検出器が出さなかったものは戻せない。
         # 8/25 のプール run では camp_real @0.30 が 4.6 個/枚の誤検出を出し、
         # ハードネガティブ再学習 (camp_real2 @0.40) で 267 -> 3 に落ちている。
-        # まずは同梱の camp_real2 (閾値 0.4) をそのまま使い、それでも回るなら 0.5 を試す
+        # 2026-10-01 のプール映像で camp_real2 は赤い風船を 0/36 (yellow と取り違える)。既定は camp_real、
+        # min_confidence は config/autonomy.yaml の 0.45 (赤 32/36・風船なしの誤検出 13/114、known_issues B-24)
         self.declare_parameter("min_confidence", -1.0)
         # 断の検出用。画像ゼロでも無言で回り続ける (known_issues A-18)。0 以下で無効
         self.declare_parameter("image_timeout", 5.0)
@@ -55,7 +56,7 @@ class PerceptionNode(Node):
         if not self._model_path:
             # 未指定なら同梱の検出器。版の比較と切り替えは models/detector/README.md
             self._model_path = str(Path(get_package_share_directory("umiusi_autonomy"))
-                                   / "models" / "detector" / "camp_real2.pt")
+                                   / "models" / "detector" / "camp_real.pt")
         self._fovy = float(self.get_parameter("fovy_deg").value)
         self._sanitise = bool(self.get_parameter("sanitise_near").value)
         self._min_conf = float(self.get_parameter("min_confidence").value)

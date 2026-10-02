@@ -12,6 +12,9 @@ perception_node:
     fovy_deg: 60.0           # MUST match the physical camera vertical FOV
     max_rate_hz: 10.0        # cap detector rate (realistic Pi-4 timing); 0 = every frame
     sanitise_near: true      # near red/blue colour re-confirmation before the FSM commits
+    # 後段の信頼度フィルタ。camp_real で 10/01 の映像: 0.40 赤 35/36・誤検出 42/114 / 0.45 赤 32/36・誤検出 13/114 /
+    # 0.50 赤 24/36・誤検出 5/114 (B-24)。現場で `ros2 param set /perception_node min_confidence 0.5` で変えられる
+    min_confidence: 0.45
     # 断の検出 (0 以下で無効)。画像ゼロでも無言で回り続けるので、無いと現場で気付けない
     image_timeout: 5.0
 
