@@ -54,6 +54,7 @@ auto_target_generator:          # lifecycle node for the on-core path (core_auto
     detections_topic: "/perception_node/detections"
     imu_topic: "/state/imu"
     target_topic: "/cmd/target"
+    detections_timeout_s: 0.5   # 検出が途切れたら「何も見えていない」扱い (B-24)
     control_hz: 50.0
     frame_h: 240
     frame_w: 320

@@ -1,6 +1,10 @@
 import pytest
 
-from umiusi_autonomy.auto_target_generator import neutral_attitude_target, to_control_setpoint
+from umiusi_autonomy.auto_target_generator import (
+    live_detections,
+    neutral_attitude_target,
+    to_control_setpoint,
+)
 
 
 def test_surge_follows_ui_convention_by_default():
@@ -29,3 +33,21 @@ def test_neutral_attitude_target_is_level_rate_mode():
     assert (msg.attitude.x, msg.attitude.y, msg.attitude.z, msg.attitude.w) == (0.0, 0.0, 0.0, 1.0)
     assert msg.yaw_rate == 0.0
     assert msg.hold_yaw is False
+
+
+def test_no_detection_message_yet_means_nothing_seen():
+    assert live_detections(["d"], None, 10.0, 0.5) == []
+
+
+def test_recent_detections_are_held_between_perception_frames():
+    # perception は最大 10 Hz、制御は 50 Hz なので、0.1 s 程度は同じ検出を使い回す
+    assert live_detections(["d"], 10.0, 10.1, 0.5) == ["d"]
+
+
+def test_detections_are_dropped_when_messages_stop():
+    # 2026-10-01: カメラが止まったあと、最後の検出で居ない風船を追い続けた
+    assert live_detections(["d"], 10.0, 10.6, 0.5) == []
+
+
+def test_timeout_zero_disables_dropping():
+    assert live_detections(["d"], 10.0, 100.0, 0.0) == ["d"]
