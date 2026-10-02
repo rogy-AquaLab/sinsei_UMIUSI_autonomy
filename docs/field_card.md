@@ -21,6 +21,8 @@ lf は 10/01 の 19:47 で回っていた → 地上で確かめて問題なけ�
    `ros2 param set /perception_node min_confidence 0.5`（走らせたまま効く）
 5. **MANUAL**: スティック前 → 前進か（逆なら AUTO の `surge_sign:=-1`）/ R1 で方位保持 → ナビバーのコンパスが**緑**（黄なら ff）
 6. **AUTO**: 風船なしで SEARCH 旋回 → 風船ありで寄る・突く → **STANDBY で止まる**。
+   **風船を機体の右前に置いたら右に回るか**（FSM の yaw → `yaw_rate` の符号は control 経路で実機未確認。
+   逆に回って離れていくなら `yaw_rate_scale:=-1.0`、前後が逆なら `surge_sign:=-1.0` を auto_target_generator に）。
    AUTO 中にカメラを落とす（3. と同じ）→ 0.5 s で「検出が途切れた」警告が出て SEARCH に戻る（autonomy #36）
 7. **記録**: `record_run.sh --vision --name <名前>`。AUTO の run は全部録る
 
