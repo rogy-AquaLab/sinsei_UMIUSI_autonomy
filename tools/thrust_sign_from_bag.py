@@ -52,17 +52,17 @@ from rclpy.serialization import deserialize_message
 from rosbag2_py import ConverterOptions, SequentialReader, StorageOptions
 from sensor_msgs.msg import Imu
 from sinsei_umiusi_msgs.msg import ThrusterStateAll
+from umiusi_common import servo_angle
 
 POSITIONS = ("lf", "lb", "rb", "rf")
 Y_UP = np.array([0.0, 1.0, 0.0])
 STATE_TOPIC = "/state/thruster_state_all"
 
 
-def servo_deg(state) -> float:
-    """main 系 msgs は angle [deg]、dev-0921 系は commanded_angle [rad]。"""
-    if hasattr(state, "commanded_angle"):
-        return math.degrees(state.commanded_angle)
-    return state.angle
+def servo_deg(state, stamp_ns: int) -> float:
+    """dev-0921 系 msgs は commanded_angle、main 系は angle。単位は録った日で決まる。"""
+    value = state.commanded_angle if hasattr(state, "commanded_angle") else state.angle
+    return math.degrees(servo_angle.from_bag(value, stamp_ns))
 IMU_TOPIC = "/state/imu"
 
 
@@ -86,7 +86,7 @@ def read(path):
             row = [ts]
             for p in POSITIONS:
                 s = getattr(m, p)
-                row += [s.duty_cycle, servo_deg(s), s.rpm]
+                row += [s.duty_cycle, servo_deg(s, t), s.rpm]
             st.append(row)
         elif topic == IMU_TOPIC:
             m = deserialize_message(data, Imu)

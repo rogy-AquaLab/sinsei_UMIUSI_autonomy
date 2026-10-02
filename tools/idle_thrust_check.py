@@ -25,6 +25,7 @@ import sys
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 import rosbag2_py
+from umiusi_common import servo_angle
 
 PREFIX = "/cmd/direct/thruster_controller/output_"
 STATE_TOPIC = "/state/thruster_state_all"
@@ -32,11 +33,10 @@ POSITIONS = ("lf", "lb", "rb", "rf")
 RUNNABLE = 1  # util::ThrusterMode::Runnable
 
 
-def servo_deg(state) -> float:
-    """main 系 msgs は angle [deg]、dev-0921 系は commanded_angle [rad]。"""
-    if hasattr(state, "commanded_angle"):
-        return math.degrees(state.commanded_angle)
-    return state.angle
+def servo_deg(state, stamp_ns: int) -> float:
+    """dev-0921 系 msgs は commanded_angle、main 系は angle。単位は録った日で決まる。"""
+    value = state.commanded_angle if hasattr(state, "commanded_angle") else state.angle
+    return math.degrees(servo_angle.from_bag(value, stamp_ns))
 
 
 def main(path: str) -> int:
@@ -78,19 +78,20 @@ def main(path: str) -> int:
         phis.extend(abs(a) for d, a in live)
 
     while r.has_next():
-        tn, data, _ts = r.read_next()
+        tn, data, ts = r.read_next()
         if tn == "/cmd/target":
             v = deserialize_message(data, msgs[tn]).velocity
             tgt = abs(v.x) + abs(v.y) + abs(v.z)
         elif use_direct and tn.startswith(PREFIX):
             m = deserialize_message(data, msgs[tn])
-            last[tn[len(PREFIX):]] = (m.duty_cycle, m.angle, m.runnable.esc)
+            last[tn[len(PREFIX):]] = (
+                m.duty_cycle, math.degrees(servo_angle.from_bag(m.angle, ts)), m.runnable.esc)
             accumulate()
         elif not use_direct and tn == STATE_TOPIC:
             m = deserialize_message(data, msgs[tn])
             for p in POSITIONS:
                 th = getattr(m, p)
-                last[p] = (th.duty_cycle, servo_deg(th), th.mode.esc == RUNNABLE)
+                last[p] = (th.duty_cycle, servo_deg(th, ts), th.mode.esc == RUNNABLE)
             accumulate()
 
     n = len(vert)

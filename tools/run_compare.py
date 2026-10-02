@@ -38,6 +38,7 @@ from rclpy.serialization import deserialize_message
 from rosbag2_py import ConverterOptions, SequentialReader, StorageOptions
 from sensor_msgs.msg import Imu
 from sinsei_umiusi_msgs.msg import ThrusterOutput
+from umiusi_common import servo_angle
 
 POSITIONS = ("lf", "lb", "rb", "rf")
 CMD_PREFIX = "/cmd/direct/thruster_controller/output_"
@@ -198,7 +199,8 @@ def actuator_stats(cmds, t0, t1, max_duty):
             out[p] = None
             continue
         duty = np.abs([m.duty_cycle for m in live])
-        angle = np.array([m.angle for m in live])
+        # 統計は deg。bag の単位は録った日で決まる (umiusi_common.servo_angle)
+        angle = np.degrees([servo_angle.from_bag(m.angle, int(t0 * 1e9)) for m in live])
         cap = max_duty if max_duty else float(np.max(duty))
         out[p] = {
             "n": len(live),
