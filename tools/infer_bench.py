@@ -38,5 +38,5 @@ if __name__ == "__main__":
     # 既定は同梱の検出器に合わせる (3 モデルとも同一アーキテクチャなので推論時間は変わらないが、
     # 計測対象が既定とずれていると読む側が混乱する)
     ckpt = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser(
-        "~/ros2-ws/install/umiusi_autonomy/share/umiusi_autonomy/models/detector/camp_real2.pt")
+        "~/ros2-ws/install/umiusi_autonomy/share/umiusi_autonomy/models/detector/camp_real.pt")
     run(int(os.environ.get("NT", "4")), ckpt)
