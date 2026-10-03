@@ -8,13 +8,38 @@ RL 姿勢制御のポリシー (`umiusi_rl_control/models/`) とは**別物**な
 
 | ファイル | 学習データ | 推奨 conf | val の F1 | 用途 |
 |---|---|---:|---:|---|
-| **`camp_real.pt`** (既定) | 実写 161 枚 | 0.3 (+ `min_confidence` 0.45) | 0.44 | **2026-10-01 から既定**。下の節 |
+| **`balloon_F320_20261003.pt`** (既定) | 1348 枚 (自チーム + 他チームの JAMSTEC 映像)、入力 320 | 0.3 (+ `min_confidence` **0.40**) | JAMSTEC 0.48 | **2026-10-03 から既定**。下の節 |
+| `balloon_F256_20261003.pt` | 同上、入力 256 | 0.3 (+ 0.40) | JAMSTEC 0.40 | 予備。**認識が 4 Hz を大きく下回るとき** |
+| `camp_real.pt` | 実写 161 枚 | 0.3 (+ 0.45) | 0.44 | 10/01〜10/03 の既定 |
 | `camp_real2.pt` | camp_real + 8/25 プール実写 265 枚 | 0.4 | 0.80 | **赤い風船を yellow と取り違える**。使わない |
 | `camp_mix.pt` | sim 1000 + 実写 161 | 0.3 | — | sim 寄り。sim_eval の F1 は最良 (0.47) |
 
 `cfg` は `width=16 / input_size=256`。`conf_thresh` は **`camp_real2` だけ 0.4**、
 他は 0.3 (チェックポイントに格納されているので、`conf_thresh` パラメータを
 指定しなければ自動でその値が使われる)。
+
+## 2026-10-03: 既定を `balloon_F320_20261003` にした
+
+umiusi_sim `chore/comment-diet` 0009a5d の `examples/balloon_detector/` と同一 (ONNX 版と学習の詳細はそちら、
+`docs/otherteam_balloon_data.md`)。入力サイズはチェックポイントに入っているので perception_node の設定変更は要らない。
+
+10/01 の映像 (赤 36 / 風船なし 114) での比較。**この映像は F320 / F256 の学習データに含まれるので甘い**:
+
+| モデル | min_confidence | 赤 (/36) | 風船なしで検出が出たフレーム (/114) |
+|---|---:|---:|---:|
+| F320 | 0.30 (チェックポイント) | 36 | 11 (うち赤 10) |
+| **F320** | **0.40 (既定)** | **34** | **0** |
+| F320 | 0.50 | 18 | 0 |
+| F256 | 0.40 | 33 | 0 |
+| camp_real | 0.45 | 32 | 13 |
+
+推論時間 (開発 PC の CPU、1 スレッド): F320 25 ms / F256 16 ms / camp_real 12 ms。Pi は数倍遅い。
+F256 への切り替え:
+
+```bash
+ros2 launch umiusi_autonomy core_autonomy.launch.py \
+  model_path:=$(ros2 pkg prefix umiusi_autonomy)/share/umiusi_autonomy/models/detector/balloon_F256_20261003.pt
+```
 
 ## 2026-10-01: 既定を `camp_real` に戻した
 
@@ -51,7 +76,7 @@ FSM は誤検出に引っ張られてロックし損ねるので、この交換�
 
 ## 使い分け
 
-既定は `camp_real.pt`。切り替えは launch 引数で:
+既定は `balloon_F320_20261003.pt`。切り替えは launch 引数で:
 
 ```bash
 ros2 launch umiusi_autonomy core_autonomy.launch.py \

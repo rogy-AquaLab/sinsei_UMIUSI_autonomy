@@ -12,7 +12,7 @@ IMU 待ちが要るなら `bringup.launch.py mode:=scenario` を使う。**こ�
 「control は既に居る」前提で、シナリオの 3 ノードだけを出し入れするためのもの。**
 
 立ち上がるもの:
-  * `perception_node`   検出器 (既定は同梱の camp_real.pt)
+  * `perception_node`   検出器 (既定は同梱の balloon_F320_20261003.pt)
   * `navigator_node`    FSM。`command_mode=setpoint` で AttitudeTarget を出すだけ
   * `classical_attitude` 姿勢の安定化 + 4 基への配分。**スラスタを叩くのはここだけ**
 
