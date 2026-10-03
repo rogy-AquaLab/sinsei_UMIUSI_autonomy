@@ -23,6 +23,7 @@ from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 
+from sinsei_umiusi_msgs.msg import RobotState
 from umiusi_autonomy_msgs.msg import BalloonDetection, BalloonDetectionArray
 
 from umiusi_autonomy.image_convert import image_to_rgb
@@ -52,6 +53,12 @@ class PerceptionNode(Node):
         self.declare_parameter("min_confidence", -1.0)
         # 断の検出用。画像ゼロでも無言で回り続ける (known_issues A-18)。0 以下で無効
         self.declare_parameter("image_timeout", 5.0)
+        # AUTO 以外では推論しない。認識を使うのは AUTO の auto_target_generator だけなのに、
+        # MANUAL / STANDBY でも 1 コアを推論で埋めていた (2026-10-03 実機)。
+        # `/robot_state` が 1 度も来ない (core なし: mode:=navigator や use_core:=false) 間は止めない。
+        # MANUAL の試験でも検出を bag に残したいときは false (`ros2 param set` で変えられる)
+        self.declare_parameter("infer_only_in_auto", True)
+        self.declare_parameter("robot_state_topic", "/robot_state")
 
         self._model_path = str(self.get_parameter("model_path").value).strip()
         if not self._model_path:
@@ -69,6 +76,9 @@ class PerceptionNode(Node):
         self._image_timeout = float(self.get_parameter("image_timeout").value)
         self._last_image_t = None      # None = まだ 1 枚も来ていない
         self._n_images = 0
+        self._only_in_auto = bool(self.get_parameter("infer_only_in_auto").value)
+        self._robot_state = None       # None = /robot_state がまだ来ていない (core なし)
+        self._preload_tried = False
 
         self._detector = None       # lazily loaded on the first frame (defer torch import)
         self._sanitise_fn = None
@@ -78,6 +88,8 @@ class PerceptionNode(Node):
         self._pub = self.create_publisher(BalloonDetectionArray, det_topic, 10)
         self._sub = self.create_subscription(Image, image_topic, self._on_image, 1)
         self._image_topic = image_topic
+        self._sub_state = self.create_subscription(
+            RobotState, self.get_parameter("robot_state_topic").value, self._on_robot_state, 10)
         if self._image_timeout > 0.0:
             self._watchdog = self.create_timer(self._image_timeout, self._check_image_flow)
 
@@ -86,7 +98,22 @@ class PerceptionNode(Node):
                 "parameter 'model_path' is empty — set it to a learned detector .pt checkpoint")
         self.get_logger().info(
             f"perception_node: image='{image_topic}' -> detections='{det_topic}' "
-            f"(fovy={self._fovy:.0f}deg, max_rate={self._limiter.rate_hz:.0f}Hz, sanitise_near={self._sanitise})")
+            f"(fovy={self._fovy:.0f}deg, max_rate={self._limiter.rate_hz:.0f}Hz, sanitise_near={self._sanitise}, "
+            f"infer_only_in_auto={self._only_in_auto})")
+
+    def _on_robot_state(self, msg: RobotState):
+        prev = self._robot_state
+        self._robot_state = int(msg.state)
+        if self._only_in_auto and (prev == RobotState.AUTO) != (self._robot_state == RobotState.AUTO):
+            if self._robot_state == RobotState.AUTO:
+                self.get_logger().info("AUTO になったので認識を始めます")
+            else:
+                self.get_logger().info(f"AUTO ではない (state={self._robot_state}) ので認識を止めます")
+
+    def _inference_enabled(self) -> bool:
+        if not self._only_in_auto or self._robot_state is None:
+            return True
+        return self._robot_state == RobotState.AUTO
 
     def _check_image_flow(self):
         """画像が途切れていないか (そもそも来ているか) を見張る。実機カメラは RTSP なので
@@ -162,12 +189,25 @@ class PerceptionNode(Node):
                 except (TypeError, ValueError) as e:
                     return SetParametersResult(successful=False, reason=str(e))
                 self.get_logger().warning(f"max_rate_hz={self._limiter.rate_hz:.1f}")
+            elif p.name == "infer_only_in_auto":
+                self._only_in_auto = bool(p.value)
+                self.get_logger().warning(f"infer_only_in_auto={self._only_in_auto}")
         return SetParametersResult(successful=True)
 
     def _on_image(self, msg: Image):
         # ウォッチドッグ用。レート制限より前に記録する — 落としたフレームも「来ている」ので。
         self._last_image_t = self.get_clock().now().nanoseconds * 1e-9
         self._n_images += 1
+        if not self._inference_enabled():
+            # 検出器の読み込み (数秒) だけは先に済ませる。AUTO に入った瞬間に止まらないように。
+            # 失敗したら AUTO に入るまで再試行しない (毎フレーム読み直して CPU を食わないように)
+            if self._model_path and not self._preload_tried:
+                self._preload_tried = True
+                if self._ensure_detector():
+                    # 起動の段の待ち (bringup の wait_perception / umiusi_stack.sh の wait_topic) は
+                    # 「検出器の読み込み + 初フレーム」を最初の detections で見ている。空を 1 回だけ出す
+                    self._pub.publish(self._to_msg(msg.header, []))
+            return
         # ヘッダの stamp を使うが、設定していない publisher だと 0 のまま進まず全フレームを
         # 落として沈黙するので、その場合はノードの時計に切り替える
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9

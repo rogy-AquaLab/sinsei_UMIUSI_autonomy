@@ -17,6 +17,8 @@ perception_node:
     min_confidence: 0.40
     # 断の検出 (0 以下で無効)。画像ゼロでも無言で回り続けるので、無いと現場で気付けない
     image_timeout: 5.0
+    # AUTO 以外では推論しない (MANUAL の検出は録った映像に後からかける)。/robot_state が来ない (core なし) 間は止めない
+    infer_only_in_auto: true
 
 navigator_node:
   ros__parameters:

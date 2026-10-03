@@ -57,7 +57,8 @@ lf は 10/01 の 19:47 で回っていた → 地上で確かめて問題なけ�
 
 **記録**: `record_run.sh --name <名前>`。bag ごとに **4 リポジトリのコミット**をメモ（msgs の系列で読めるかが変わる）
 - 映像（mp4）は control のカメラノードが出す RTSP (`cam1` 前 / `cam2` 下) から録るので、どのスタックでもそのまま録れる
-- **スタックは MANUAL の試験でも `core_autonomy.launch.py` で上げる**と、検出 (`/perception_node/detections`) も bag に入る
+- 検出 (`/perception_node/detections`) は **AUTO の間しか出ない**（`infer_only_in_auto`、CPU を空けるため）。
+  MANUAL 中も欲しいときは `ros2 param set /perception_node infer_only_in_auto false`。ふだんは録った映像に後からかける
   （素の core launch には画像ブリッジも認識も無い）。風船の映像は `record_vision:=true` で起動して `record_run.sh --vision`
 
 **dev-0921 との差**（exp に足してあるもの）: control = hold_yaw / B-20（`servo_max_angular_velocity` 4.0）/
