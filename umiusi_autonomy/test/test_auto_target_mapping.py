@@ -51,3 +51,47 @@ def test_detections_are_dropped_when_messages_stop():
 
 def test_timeout_zero_disables_dropping():
     assert live_detections(["d"], 10.0, 100.0, 0.0) == ["d"]
+
+
+def test_fsm_tuning_overrides_module_constants_and_ki_heave():
+    import types
+
+    from umiusi_autonomy.auto_target_generator import apply_fsm_tuning
+
+    module = types.ModuleType("fake_behavior_module")
+    module.RAM_SURGE, module.RAM_MAX_STEPS = 0.26, 85
+
+    class Behavior:
+        ki_heave = 0.0
+    Behavior.__module__ = module.__name__
+    import sys
+    sys.modules[module.__name__] = module
+    try:
+        b = Behavior()
+        apply_fsm_tuning(b, ram_surge=0.6, ram_max_steps=200, ki_heave=0.3)
+        assert (module.RAM_SURGE, module.RAM_MAX_STEPS, b.ki_heave) == (0.6, 200, 0.3)
+        apply_fsm_tuning(b, ram_surge=0.26, ram_max_steps=85, ki_heave=0.0)   # 元に戻せる
+        assert (module.RAM_SURGE, module.RAM_MAX_STEPS, b.ki_heave) == (0.26, 85, 0.0)
+    finally:
+        del sys.modules[module.__name__]
+
+
+def test_fsm_tuning_tolerates_old_wheel_without_ki_heave():
+    import sys
+    import types
+
+    from umiusi_autonomy.auto_target_generator import apply_fsm_tuning
+
+    module = types.ModuleType("old_behavior_module")
+
+    class Behavior:
+        pass
+    Behavior.__module__ = module.__name__
+    sys.modules[module.__name__] = module
+    try:
+        b = Behavior()
+        apply_fsm_tuning(b, ram_surge=0.6, ram_max_steps=200, ki_heave=0.3)
+        assert not hasattr(b, "ki_heave")
+        assert module.RAM_SURGE == 0.6
+    finally:
+        del sys.modules[module.__name__]

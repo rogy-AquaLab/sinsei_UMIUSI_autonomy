@@ -20,6 +20,7 @@ surge_sign follows the UI gamepad (stick forward -> +x), which drives the same f
 
 from __future__ import annotations
 
+import sys
 import time
 
 import rclpy
@@ -53,6 +54,19 @@ def live_detections(dets: list, last_rx: float | None, now: float, timeout_s: fl
     return dets
 
 
+def apply_fsm_tuning(behavior, ram_surge: float, ram_max_steps: int, ki_heave: float) -> None:
+    """FSM の調整値を入れる。
+
+    RAM_SURGE / RAM_MAX_STEPS は behavior.py のモジュール定数で、実行時に名前で引かれるので
+    モジュールの属性を書き換えれば効く。ki_heave は BalloonBehavior のフィールド (古い wheel には無い)。
+    """
+    module = sys.modules[type(behavior).__module__]
+    module.RAM_SURGE = ram_surge
+    module.RAM_MAX_STEPS = ram_max_steps
+    if hasattr(behavior, "ki_heave"):
+        behavior.ki_heave = ki_heave
+
+
 def neutral_attitude_target() -> AttitudeTarget:
     msg = AttitudeTarget()
     msg.attitude.w = 1.0
@@ -72,6 +86,15 @@ class AutoTargetGenerator(LifecycleNode):
         self.declare_parameter("control_hz", 50.0)
         # 検出がこれだけ途切れたら「何も見えていない」とみなす [s]。perception は最大 10 Hz
         self.declare_parameter("detections_timeout_s", 0.5)
+        # FSM の調整 (umiusi_sim docs/competition_scenario.md §3〜5 の推奨、2026-10-03)。毎周期読み直すので
+        # `ros2 param set` で走らせたまま変えられる。元の値: ram_surge 0.26 / ram_max_steps 85 / ki_heave 0.0
+        # ram_surge は Target.velocity.x にそのまま入る **推力の割合**。sim の 0.6 は surge_scale 0.35 を
+        # 掛けた m/s なので意味が違う。プールで突進を見て速すぎ・遅すぎを直すこと
+        self.declare_parameter("ram_surge", 0.6)
+        # 突進を諦めるまでの制御周期の回数。sim は 33.8 Hz (200 = 5.9 s)、ここは control_hz (50 Hz で 4.0 s)
+        self.declare_parameter("ram_max_steps", 200)
+        # カメラで heave の偏りを積分する (umiusi_perception f1879dd 以降)。古い wheel では効かない
+        self.declare_parameter("ki_heave", 0.3)
         self.declare_parameter("frame_h", 240)
         self.declare_parameter("frame_w", 320)
         self.declare_parameter("fovy_deg", 60.0)
@@ -154,8 +177,21 @@ class AutoTargetGenerator(LifecycleNode):
             dt=self._dt,
         )
         self._Detection = Detection
+        if not hasattr(self._behavior, "ki_heave"):
+            self.get_logger().warn(
+                "この umiusi_perception には ki_heave が無い (f1879dd より古い wheel)。ki_heave は効かない")
+        self._apply_fsm_tuning()
         self.get_logger().info("behaviour FSM initialised")
         return True
+
+    def _apply_fsm_tuning(self) -> None:
+        """ram_surge / ram_max_steps / ki_heave を FSM に反映する (毎周期呼ぶ)。"""
+        apply_fsm_tuning(
+            self._behavior,
+            ram_surge=float(self.get_parameter("ram_surge").value),
+            ram_max_steps=int(self.get_parameter("ram_max_steps").value),
+            ki_heave=float(self.get_parameter("ki_heave").value),
+        )
 
     def _on_detections(self, msg: BalloonDetectionArray) -> None:
         if not self._ensure_behavior():
@@ -180,6 +216,7 @@ class AutoTargetGenerator(LifecycleNode):
         if not self._ensure_behavior():
             return
         self._imu.warn_if_stale()
+        self._apply_fsm_tuning()
         fresh = self._new_dets
         self._new_dets = False
         dets = live_detections(self._dets, self._last_det_rx, time.monotonic(),
