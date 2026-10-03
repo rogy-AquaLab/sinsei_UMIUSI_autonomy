@@ -125,7 +125,11 @@ class CameraBridge(Node):
         self._fixed_dt = (1.0 / rate) if rate > 0 else None
         period = 1.0 / (rate * 2.0) if rate > 0 else 0.001
         self.add_on_set_parameters_callback(self._on_params)
-        self.create_timer(period, self._tick)
+        self._tick_timer = self.create_timer(period, self._tick)
+        # 開けない間は最速 1 ms の _tick を止め、こちらで reconnect_sec ごとにだけ開き直す。
+        # _tick のまま開き直すと gst / FFMPEG のパイプラインを作っては壊し続けて CPU を 1 コア食う (2026-10-03 実機)
+        self._reconnect_timer = self.create_timer(self._reconnect, self._try_reconnect)
+        self._reconnect_timer.cancel()
 
     # ------------------------------------------------------------------ capture
     def _pipeline(self, hw: bool, decimate: bool = True) -> str:
@@ -216,7 +220,8 @@ class CameraBridge(Node):
 
     def _tick(self) -> None:
         if self._cap is None:
-            self._open()
+            self._tick_timer.cancel()
+            self._reconnect_timer.reset()
             return
         ok, frame = self._cap.read()
         if not ok or frame is None:
@@ -257,6 +262,12 @@ class CameraBridge(Node):
         self._n += 1
         if self._n % 300 == 0:
             self.get_logger().info(f"{self._n} フレーム中継")
+
+    def _try_reconnect(self) -> None:
+        self._open()
+        if self._cap is not None:
+            self._reconnect_timer.cancel()
+            self._tick_timer.reset()
 
     def _compressed_due(self) -> bool:
         """圧縮画像を今フレーム出すか。cv2.imencode を呼ぶ前に判定すること —
