@@ -18,6 +18,18 @@ RL 姿勢制御のポリシー (`umiusi_rl_control/models/`) とは**別物**な
 他は 0.3 (チェックポイントに格納されているので、`conf_thresh` パラメータを
 指定しなければ自動でその値が使われる)。
 
+## ONNX 版（`backend:=onnx` 用）
+
+`balloon_F320_20261003_320.onnx` / `balloon_F256_20261003_256.onnx`。同じ重みを onnxruntime で回すためのもの
+（名前は `<重み名>_<input_size>.onnx`。perception_node はこの名前で .pt の隣を探す）。
+使い方と速度は `docs/performance_tuning.md` の 4b。
+
+- **.pt を差し替えたら書き出し直す**（umiusi_sim で
+  `uv run python -m tools.export_detector_onnx <この dir>/<重み>.pt`。torch と一致しなければ書き出さない）。
+  忘れると読み込み時の照合で使われず、`~/.cache` への書き出しになる（Pi に `onnx` パッケージが無いと torch に戻る）。
+  `test/test_bundled_onnx.py` が捕まえる
+- umiusi_sim `chore/comment-diet` の `examples/balloon_detector/` の .onnx とバイト単位で同じ
+
 ## 2026-10-03: 既定を `balloon_F320_20261003` にした
 
 umiusi_sim `chore/comment-diet` 0009a5d の `examples/balloon_detector/` と同一 (ONNX 版と学習の詳細はそちら、

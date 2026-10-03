@@ -36,6 +36,10 @@ def generate_launch_description():
     record_vision = LaunchConfiguration("record_vision")
 
     return LaunchDescription([
+        DeclareLaunchArgument("backend", default_value="torch",
+                              description="perception_node の推論 (torch | onnx)。onnx が使えなければ torch に戻る"),
+        DeclareLaunchArgument("input_size", default_value="0",
+                              description="perception_node の入力サイズ。0 ならチェックポイントの値"),
         DeclareLaunchArgument("model_path", default_value="",
                               description="learned detector .pt checkpoint。空なら同梱の "
                                           "balloon_F320_20261003.pt。認識が 4 Hz を大きく下回るなら "
@@ -76,7 +80,9 @@ def generate_launch_description():
             executable="perception_node",
             name="perception_node",
             output="screen",
-            parameters=[params, {"model_path": model_path, "image_topic": image_topic}],
+            parameters=[params, {"model_path": model_path, "image_topic": image_topic,
+                                    "backend": LaunchConfiguration("backend"),
+                                    "input_size": LaunchConfiguration("input_size")}],
             # torch は 1 スレッドに固定する。他ノードと CPU を奪い合うので増やすほど遅くなる
             additional_env={"OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"},
         ),

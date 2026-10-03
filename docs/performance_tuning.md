@@ -104,6 +104,87 @@ Raspberry Pi 4 Model B (4 コア) 実機での実測にもとづく。数値は�
 `conf_thresh` は**速度に効かない** (0.3 → 0.5 で検出数 31 → 0 になっても 4.88 → 4.58 Hz)。
 CNN の推論コストは画像の中身に依らないため。誤検出を減らす目的でのみ使う。
 
+## 4b. ONNX Runtime バックエンド — **Pi で未測定。既定は torch のまま**（2026-10-03 更新）
+
+仕様: `mujoco_ws/ai/spec_perception_onnx.md`。
+
+```bash
+ros2 launch umiusi_autonomy core_autonomy.launch.py backend:=onnx   # 起動時にだけ効く
+```
+
+- 同じ重みを onnxruntime で回す。出力は torch と一致する（hm / wh の差 4e-6 以下、Detection は一致。
+  umiusi_sim `tests/test_learned_onnx.py`、autonomy `test/test_bundled_onnx.py`）
+- **.onnx は .pt の隣に同梱**（`models/detector/<重み名>_<input_size>.onnx`、F320 @320 と F256 @256）。
+  読み込み時に torch と出力を比べ、合わなければ（.pt だけ差し替えた等）使わない
+- 同梱が無い組み合わせ（`input_size` を変えた / 他の .pt）は初回に書き出して `~/.cache/umiusi_perception/` に置く。
+  **書き出しには `onnx` パッケージが要る**。Pi に無ければ下の torch 戻りになる。
+  他の組み合わせを使うなら PC で umiusi_sim `tools/export_detector_onnx.py` を回して .pt の隣に置く
+- **onnx が使えなければ ERROR `onnx backend unavailable (...); falling back to torch` を出して torch で動き続ける**
+  （onnxruntime が無い / wheel が古い / 書き出し失敗）。起動ログの `backend=` で実際に使われた方が、
+  `onnx='...'` でどの .onnx かが分かる
+- `ros2 param set ... backend` は**拒否される**（読み込み後に変えても効かないため）
+- 前処理（リサイズ）は 2026-10-03 に速くした（出力はビット単位で同じ）。torch / onnx の両方に効く。
+  umiusi_perception の wheel を入れ直さないと効かない
+
+x86（開発 PC）・1 スレッド・前カメラと同じ 1280x720、`tools/infer_bench.py` の中央値 (ms):
+
+| モデル | backend | 前処理 | モデル | decode | **1 フレーム** |
+|---|---|---:|---:|---:|---:|
+| F320 | torch | 4.8 | 12.4 | 0.3 | **18.0** |
+| F320 | **onnx** | 4.9 | **10.5** | 0.3 | **15.5**（x1.16） |
+| F256 | torch | 4.3 | 7.9 | 0.2 | 13.0 |
+| F256 | **onnx** | 4.3 | **5.8** | 0.2 | 11.1（x1.17） |
+
+- 前処理の高速化: 1280x720 で 5.8 → 5.1 ms（繰り返し実行時）。確保し直しが起きる条件では 15.7 → 4.9 ms。
+  実機でどちらに近いかは未測定
+- perception_node を通した周期（x86、F320、画像を詰めて送った上限）: torch 44.0 Hz → onnx 49.7 Hz
+- int8（静的量子化）は x86 で fp32 より遅く（F320 11.3 ms）、検出も変わる（40 枚中 16 枚しか一致しない）。使わない
+- **x86 の比は Pi の比ではない**。Pi で測るまで既定は torch のまま
+
+### Pi で測る手順（受け入れ条件）
+
+Pi は PC 経由でネットに出られる前提。**4 つとも、起動ログの 1 行（`detector loaded from ...`）を控える。**
+
+```bash
+# 0. 入れる（autonomy と umiusi_sim の両方を feat/perception-onnx-2 に。ビルドはしない）
+cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && git fetch && git checkout feat/perception-onnx-2
+cd ~/umiusi_sim && git fetch && git checkout feat/perception-onnx-2
+python3 -m pip install --user --break-system-packages --no-deps --no-index ~/umiusi_sim/packages/perception
+# numpy を今の版に固定する（onnxruntime が numpy を上げると ROS / torch が壊れる）
+python3 -m pip install --user --break-system-packages onnxruntime "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
+python3 -c "import onnxruntime; print(onnxruntime.__version__)"
+# 新しい .onnx は install/ に入っていない（ビルドしないため）。src の .pt を直接指す
+M=~/ros2-ws/src/sinsei_UMIUSI_autonomy/umiusi_autonomy/models/detector
+```
+
+1. **Pi 単独の推論周期**（スタックを止めて）:
+   ```bash
+   cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy
+   NT=1 python3 tools/infer_bench.py $M/balloon_F320_20261003.pt
+   NT=1 python3 tools/infer_bench.py $M/balloon_F256_20261003.pt
+   ```
+   torch / onnx の 1 フレームと内訳（前処理 / モデル / decode）が出る。内訳が出なければ wheel が古い
+2. **core_autonomy.launch.py 稼働中の周期と CPU**（UI なし、STANDBY のまま）。backend ごとに起動し直す:
+   ```bash
+   ros2 launch umiusi_autonomy core_autonomy.launch.py backend:=onnx model_path:=$M/balloon_F320_20261003.pt
+   # 別の窓で。STANDBY では推論しないので止める設定を外す
+   ros2 param set /perception_node infer_only_in_auto false
+   python3 tools/bench_rates.py --duration 30 /front_cam/image_raw /perception_node/detections
+   top -bn1 | head -20        # perception_node（python3）の %CPU
+   ```
+   `backend:=torch` と、F256 の torch / onnx でも同じことをする（計 4 回）
+3. **onnxruntime が無いとき torch に戻るか**（パッケージを消さずに import だけ塞ぐ）:
+   ```bash
+   mkdir -p /tmp/noort/onnxruntime && echo 'raise ImportError("onnxruntime を塞いだ")' > /tmp/noort/onnxruntime/__init__.py
+   PYTHONPATH=/tmp/noort:$PYTHONPATH ros2 launch umiusi_autonomy core_autonomy.launch.py backend:=onnx model_path:=$M/balloon_F320_20261003.pt
+   ```
+   期待: ERROR `onnx backend unavailable (ImportError: ...); falling back to torch` → `backend=torch` の行 →
+   `ros2 param set /perception_node infer_only_in_auto false` の後に `/perception_node/detections` が出続ける。
+   本当に外して確かめるなら `python3 -m pip uninstall -y onnxruntime`（戻すときは 0. の install）
+
+判定: **onnx・F320 の周期が torch・F256 以上なら**、競技構成の推奨として `backend:=onnx` をここに書く。
+既定（config/autonomy.yaml と launch の `backend`）はその後に変える。
+
 ## 5. 構成別の実測サマリ
 
 | 構成 | `/state/imu` | 姿勢制御 | 画像 | 認識 | アイドル |

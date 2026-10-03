@@ -38,6 +38,8 @@ class PerceptionNode(Node):
         self.declare_parameter("detections_topic", "~/detections")
         self.declare_parameter("conf_thresh", -1.0)   # <0 -> use the checkpoint's stored floor
         self.declare_parameter("input_size", 0)        # 0 -> use the checkpoint's stored size
+        # "torch" | "onnx"。起動時 (最初の読み込み) にだけ読む。onnx が使えなければ torch に戻る
+        self.declare_parameter("backend", "torch")
         self.declare_parameter("fovy_deg", 60.0)
         self.declare_parameter("max_rate_hz", 10.0)
         self.declare_parameter("sanitise_near", True)
@@ -148,8 +150,9 @@ class PerceptionNode(Node):
         conf = self.get_parameter("conf_thresh").value
         size = self.get_parameter("input_size").value
         try:
-            self._detector = load_learned_detector(
-                self._model_path,
+            self._detector = load_detector(
+                load_learned_detector, self._model_path,
+                str(self.get_parameter("backend").value), self.get_logger().error,
                 input_size=(int(size) if int(size) > 0 else None),
                 conf_thresh=(float(conf) if float(conf) >= 0.0 else None),
                 fovy_deg=self._fovy,
@@ -159,7 +162,12 @@ class PerceptionNode(Node):
                                     f"{type(e).__name__}: {e}")
             return False
         self._sanitise_fn = sanitise_near_colours
-        self.get_logger().info(f"detector loaded from '{self._model_path}'")
+        d = self._detector
+        self.get_logger().info(
+            f"detector loaded from '{self._model_path}': backend={getattr(d, 'backend', 'torch')} "
+            f"input_size={getattr(d, 'input_size', '?')} width={getattr(d, 'width', '?')} "
+            f"conf={getattr(d, 'conf_thresh', '?')}"
+            + (f" onnx='{d.onnx_path}'" if getattr(d, "onnx_path", None) else ""))
         return True
 
     def _on_params(self, params):
@@ -170,6 +178,9 @@ class PerceptionNode(Node):
         """
         from rcl_interfaces.msg import SetParametersResult
         for p in params:
+            if p.name == "backend" and self._detector is not None:
+                return SetParametersResult(
+                    successful=False, reason="backend は起動時にだけ効く。launch 引数で指定すること")
             if p.name == "min_confidence":
                 try:
                     self._min_conf = float(p.value)
@@ -258,6 +269,22 @@ class PerceptionNode(Node):
             m.area_px = int(d.area_px)
             out.detections.append(m)
         return out
+
+
+def load_detector(load_fn, model_path, backend, log_error, **kwargs):
+    """backend の検出器を読む。onnx が使えなければ ERROR を出して torch で読み直す。
+
+    torch のときは backend 引数を渡さない (backend を知らない古い wheel でも動くように)。
+    """
+    if backend not in ("torch", "onnx"):
+        log_error(f"unknown backend '{backend}'; using torch")
+        backend = "torch"
+    if backend == "onnx":
+        try:
+            return load_fn(model_path, backend="onnx", **kwargs)
+        except Exception as e:  # noqa: BLE001
+            log_error(f"onnx backend unavailable ({type(e).__name__}: {e}); falling back to torch")
+    return load_fn(model_path, **kwargs)
 
 
 def main(args=None):
