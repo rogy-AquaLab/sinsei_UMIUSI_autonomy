@@ -128,14 +128,14 @@ class CameraBridge(Node):
         self.create_timer(period, self._tick)
 
     # ------------------------------------------------------------------ capture
-    def _pipeline(self, hw: bool) -> str:
+    def _pipeline(self, hw: bool, decimate: bool = True) -> str:
         tpl = _HW_PIPELINE if hw else _SW_PIPELINE
+        fps = int(self.get_parameter("max_fps").value) if decimate else 0
         return tpl.format(
             url=self._url,
             latency=int(self.get_parameter("latency_ms").value),
             decoder="avdec_h264",
-            rate=(f"videorate drop-only=true max-rate={fps} ! "
-                  if (fps := int(self.get_parameter("max_fps").value)) > 0 else ""),
+            rate=f"videorate drop-only=true max-rate={fps} ! " if fps > 0 else "",
             w=self._w, h=self._h,
         )
 
@@ -145,6 +145,12 @@ class CameraBridge(Node):
             self._cap = None
         want_hw = bool(self.get_parameter("hw_decode").value)
         cap = cv2.VideoCapture(self._pipeline(want_hw), cv2.CAP_GSTREAMER)
+        if not cap.isOpened() and want_hw and int(self.get_parameter("max_fps").value) > 0:
+            # 間引きのせいで HW 経路がつながらないなら、software (CPU 5 倍) より間引きなしの HW を選ぶ
+            self.get_logger().warning(
+                "max_fps の間引き付きで HW 経路を開けません; 間引きなしの HW で開き直します",
+                throttle_duration_sec=10.0)
+            cap = cv2.VideoCapture(self._pipeline(True, decimate=False), cv2.CAP_GSTREAMER)
         if not cap.isOpened() and want_hw:
             # RTSP が落ちている間は _reconnect 秒ごとにここを通るので、throttle しないと
             # 本当のエラーがログから流れてしまう (他の 2 つと同じ 10 秒に揃える)
