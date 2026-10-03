@@ -78,3 +78,20 @@ def test_can_be_disabled_at_runtime():
     finally:
         rclpy.shutdown()
 
+
+
+def test_publishes_one_empty_detection_while_gated():
+    """起動の段の待ち (wait_perception) が STANDBY のまま 35 s 待たないように。"""
+    rclpy.init()
+    try:
+        node, det = _make_node()
+        sent = []
+        node._pub.publish = sent.append
+        node._on_robot_state(_state(RobotState.STANDBY))
+        for t in range(100, 105):
+            node._on_image(_image(t))
+        assert det.calls == 0
+        assert len(sent) == 1 and len(sent[0].detections) == 0
+        node.destroy_node()
+    finally:
+        rclpy.shutdown()

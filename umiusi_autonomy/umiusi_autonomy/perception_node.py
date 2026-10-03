@@ -203,7 +203,10 @@ class PerceptionNode(Node):
             # 失敗したら AUTO に入るまで再試行しない (毎フレーム読み直して CPU を食わないように)
             if self._model_path and not self._preload_tried:
                 self._preload_tried = True
-                self._ensure_detector()
+                if self._ensure_detector():
+                    # 起動の段の待ち (bringup の wait_perception / umiusi_stack.sh の wait_topic) は
+                    # 「検出器の読み込み + 初フレーム」を最初の detections で見ている。空を 1 回だけ出す
+                    self._pub.publish(self._to_msg(msg.header, []))
             return
         # ヘッダの stamp を使うが、設定していない publisher だと 0 のまま進まず全フレームを
         # 落として沈黙するので、その場合はノードの時計に切り替える

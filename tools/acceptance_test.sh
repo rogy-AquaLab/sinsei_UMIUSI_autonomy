@@ -85,9 +85,12 @@ python3 -c "from umiusi_perception.autonomy import BalloonBehavior" 2>/dev/null 
 hdr "3. 周期 (20 秒計測)"
 BENCH="$(dirname "$0")/bench_rates.py"
 if [ -f "$BENCH" ]; then
+  # perception は AUTO の間しか推論しない (infer_only_in_auto)。認識の周期を測る間だけ外す
+  ros2 param set /perception_node infer_only_in_auto false > /dev/null 2>&1
   python3 "$BENCH" --duration 20 --json \
     /state/imu /state/thruster_state_all /front_cam/image_raw \
     /perception_node/detections /cmd/target > /tmp/_bench.json 2>/dev/null
+  ros2 param set /perception_node infer_only_in_auto true > /dev/null 2>&1
   python3 - <<'PY'
 import json
 d = json.load(open("/tmp/_bench.json"))
