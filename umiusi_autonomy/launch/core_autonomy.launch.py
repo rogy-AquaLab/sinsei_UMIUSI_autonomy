@@ -45,6 +45,9 @@ def generate_launch_description():
         DeclareLaunchArgument("use_rosbridge", default_value="true",
                               description="also start rosbridge_websocket (as core's main.yaml does). "
                                           "UI を使わない運用では false にすると CPU が空く"),
+        DeclareLaunchArgument("camera_max_fps", default_value="15",
+                              description="カメラブリッジがデコード直後に間引く fps (0 = 間引かない)。"
+                                          "カメラは 30 fps。認識は 6 Hz 前後なので 15 で足りる"),
         DeclareLaunchArgument("use_camera_bridge", default_value="true",
                               description="RTSP -> ROS Image のブリッジを起動する。実機カメラは "
                                           "gst_camera_node が RTSP に流すだけで ROS トピックを "
@@ -64,7 +67,8 @@ def generate_launch_description():
 
         # --- 実機カメラ映像を perception に渡す (umiusi_autonomy) ---
         camera_bridge_node(condition=use_camera_bridge, rtsp_url=rtsp_url,
-                           image_topic=image_topic, record_vision=record_vision),
+                           image_topic=image_topic, record_vision=record_vision,
+                           max_fps=LaunchConfiguration("camera_max_fps")),
 
         # --- autonomy side (umiusi_autonomy) ---
         Node(

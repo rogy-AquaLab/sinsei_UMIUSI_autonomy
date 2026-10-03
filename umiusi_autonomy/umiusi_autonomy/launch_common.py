@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from launch.conditions import IfCondition
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
-def camera_bridge_node(*, condition, rtsp_url, image_topic, record_vision="false") -> Node:
+def camera_bridge_node(*, condition, rtsp_url, image_topic, record_vision="false", max_fps="15") -> Node:
     """RTSP -> ROS Image のブリッジ。
 
     実機カメラ (gst_camera_node) は RTSP に流すだけで ROS トピックを出さないので、
@@ -33,7 +34,8 @@ def camera_bridge_node(*, condition, rtsp_url, image_topic, record_vision="false
             "rtsp_url": rtsp_url,
             "image_topic": image_topic,
             "width": 320, "height": 240,   # autonomy.yaml の frame_w/frame_h に合わせる
-            "max_rate_hz": 0.0,            # 制限をかけると取りこぼす (実測) — カメラ側で絞ること
+            "max_rate_hz": 0.0,            # 制限をかけると取りこぼす (実測) — 絞るなら max_fps で
+            "max_fps": ParameterValue(max_fps, value_type=int),
             "auto_rate": False,            # AIMD 追従は実験的。既定は無効
             "publish_compressed": record_vision,
             "compressed_max_rate_hz": 2.0,  # 突き合わせと「何が見えていたか」にはこれで足りる

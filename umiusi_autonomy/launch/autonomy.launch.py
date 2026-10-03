@@ -48,6 +48,9 @@ def generate_launch_description():
         DeclareLaunchArgument("setpoint_topic", default_value="/classical_attitude/setpoint"),
         DeclareLaunchArgument("max_duty", default_value="0.25",
                               description="duty upper bound (this path bypasses control's max_duty)"),
+        DeclareLaunchArgument("camera_max_fps", default_value="15",
+                              description="カメラブリッジがデコード直後に間引く fps (0 = 間引かない)。"
+                                          "カメラは 30 fps。認識は 6 Hz 前後なので 15 で足りる"),
         DeclareLaunchArgument("use_camera_bridge", default_value="true",
                               description="RTSP -> ROS Image のブリッジを起動する。実機カメラは "
                                           "gst_camera_node が RTSP に流すだけで ROS トピックを "
@@ -62,7 +65,8 @@ def generate_launch_description():
 
         # --- 実機カメラ映像を perception に渡す (core_autonomy.launch.py と同じ設定) ---
         camera_bridge_node(condition=use_camera_bridge, rtsp_url=rtsp_url,
-                           image_topic=image_topic, record_vision=record_vision),
+                           image_topic=image_topic, record_vision=record_vision,
+                           max_fps=LaunchConfiguration("camera_max_fps")),
         Node(
             package="umiusi_autonomy",
             executable="perception_node",
