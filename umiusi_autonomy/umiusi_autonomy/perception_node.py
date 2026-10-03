@@ -166,7 +166,8 @@ class PerceptionNode(Node):
         self.get_logger().info(
             f"detector loaded from '{self._model_path}': backend={getattr(d, 'backend', 'torch')} "
             f"input_size={getattr(d, 'input_size', '?')} width={getattr(d, 'width', '?')} "
-            f"conf={getattr(d, 'conf_thresh', '?')}")
+            f"conf={getattr(d, 'conf_thresh', '?')}"
+            + (f" onnx='{d.onnx_path}'" if getattr(d, "onnx_path", None) else ""))
         return True
 
     def _on_params(self, params):

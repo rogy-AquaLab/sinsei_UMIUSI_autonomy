@@ -135,6 +135,28 @@ Pi 側で値を変えているはずなので、その値と 4.0 を突き合わ
 切りたいときは `ros2 param set /classical_attitude vel_timeout 0`（`imu_timeout` も同様）。
 **切ったまま出艇しないこと。** `tools/preflight.py` が切れていないかを見る。
 
+## ONNX の計測（Pi が PC 経由でネットに出られるとき・水に入れなくてよい）
+
+認識の CPU を下げるため。**既定は torch のまま**なので、測るまで本番の起動は変わらない。
+手順の全文と判定は `performance_tuning.md` の 4b。要点:
+
+```bash
+cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy && git fetch && git checkout feat/perception-onnx-2
+cd ~/umiusi_sim && git fetch && git checkout feat/perception-onnx-2
+python3 -m pip install --user --break-system-packages --no-deps --no-index ~/umiusi_sim/packages/perception
+python3 -m pip install --user --break-system-packages onnxruntime "numpy==$(python3 -c 'import numpy; print(numpy.__version__)')"
+M=~/ros2-ws/src/sinsei_UMIUSI_autonomy/umiusi_autonomy/models/detector
+cd ~/ros2-ws/src/sinsei_UMIUSI_autonomy
+NT=1 python3 tools/infer_bench.py $M/balloon_F320_20261003.pt     # 1. 単独: torch / onnx の 1 フレーム
+ros2 launch umiusi_autonomy core_autonomy.launch.py backend:=onnx model_path:=$M/balloon_F320_20261003.pt
+ros2 param set /perception_node infer_only_in_auto false          # 2. 別の窓で（STANDBY でも推論させる）
+python3 tools/bench_rates.py --duration 30 /front_cam/image_raw /perception_node/detections; top -bn1 | head -20
+```
+
+- 2. は `backend:=torch` と F256 でも（計 4 回）。起動ログの `detector loaded from ... backend=...` を控える
+- 3. onnxruntime が無いとき: 4b の `/tmp/noort` の手順。ERROR `falling back to torch` の後も検出が出続けること
+- numpy を固定しているのは、onnxruntime が numpy を上げると ROS / torch が壊れるため
+
 ## 次に実機を回すとき、**ついでに測っておくもの**
 
 sim 側の評価が、ここの実測値に依存している。**姿勢制御を 3 分回した bag が 1 本あれば足りる**。
