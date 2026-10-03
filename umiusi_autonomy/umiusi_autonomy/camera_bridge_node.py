@@ -28,9 +28,10 @@ from sensor_msgs.msg import CompressedImage, Image
 
 # drop=true/max-buffers=1 で遅いコンシューマに引きずられず常に最新フレームを渡す。
 # スケール/色変換も HW へ逃がすこと — software の videoconvert は CPU を 5 倍食う
+# {rate} はデコード直後の間引き (max_fps)。以降の変換・Python・publish・perception の受信が全部減る
 _HW_PIPELINE = (
     "rtspsrc location={url} latency={latency} protocols=tcp ! "
-    "rtph264depay ! h264parse ! v4l2h264dec ! v4l2convert ! "
+    "rtph264depay ! h264parse ! v4l2h264dec ! {rate}v4l2convert ! "
     "video/x-raw,format=BGR,width={w},height={h} ! "
     "appsink drop=true max-buffers=1 sync=false"
 )
@@ -38,9 +39,9 @@ _HW_PIPELINE = (
 # v4l2convert が使えない環境向けのフォールバック (CPU を大きく食うので最後の手段)
 _SW_PIPELINE = (
     "rtspsrc location={url} latency={latency} protocols=tcp ! "
-    "rtph264depay ! h264parse ! {decoder} ! "
-    "videoconvert ! videoscale ! "
-    "video/x-raw,format=BGR,width={w},height={h} ! "
+    "rtph264depay ! h264parse ! {decoder} ! {rate}"
+    "videoscale ! video/x-raw,width={w},height={h} ! videoconvert ! "
+    "video/x-raw,format=BGR ! "
     "appsink drop=true max-buffers=1 sync=false"
 )
 
@@ -53,9 +54,11 @@ class CameraBridge(Node):
         self.declare_parameter("width", 320)          # publish する幅 (autonomy.yaml の frame_w と揃える)
         self.declare_parameter("height", 240)         # publish する高さ (frame_h と揃える)
         self.declare_parameter("frame_id", "front_cam_optical")
-        # 既定 0 = 制限なし。ここで絞るとフレームを取りこぼして逆に認識が落ちる。
-        # 供給を減らしたいならカメラ側の framerate (cameras.yaml) を下げる
+        # 既定 0 = 制限なし。ここで絞るとフレームを取りこぼして逆に認識が落ちる。供給を減らすなら max_fps
         self.declare_parameter("max_rate_hz", 0.0)
+        # デコード直後に GStreamer の中で間引く [fps]。0 = 間引かない。カメラ (cameras.yaml) は 30 fps で、
+        # UI の映像と共有なのでカメラ側では下げられない。max_rate_hz と違いタイマとビートしない
+        self.declare_parameter("max_fps", 15)
         self.declare_parameter("latency_ms", 100)     # rtspsrc のジッタバッファ
         self.declare_parameter("hw_decode", True)     # False -> software デコード (avdec_h264)
         self.declare_parameter("reconnect_sec", 3.0)  # 読めなくなったときの再接続間隔
@@ -125,12 +128,14 @@ class CameraBridge(Node):
         self.create_timer(period, self._tick)
 
     # ------------------------------------------------------------------ capture
-    def _pipeline(self, hw: bool) -> str:
+    def _pipeline(self, hw: bool, decimate: bool = True) -> str:
         tpl = _HW_PIPELINE if hw else _SW_PIPELINE
+        fps = int(self.get_parameter("max_fps").value) if decimate else 0
         return tpl.format(
             url=self._url,
             latency=int(self.get_parameter("latency_ms").value),
             decoder="avdec_h264",
+            rate=f"videorate drop-only=true max-rate={fps} ! " if fps > 0 else "",
             w=self._w, h=self._h,
         )
 
@@ -140,6 +145,12 @@ class CameraBridge(Node):
             self._cap = None
         want_hw = bool(self.get_parameter("hw_decode").value)
         cap = cv2.VideoCapture(self._pipeline(want_hw), cv2.CAP_GSTREAMER)
+        if not cap.isOpened() and want_hw and int(self.get_parameter("max_fps").value) > 0:
+            # 間引きのせいで HW 経路がつながらないなら、software (CPU 5 倍) より間引きなしの HW を選ぶ
+            self.get_logger().warning(
+                "max_fps の間引き付きで HW 経路を開けません; 間引きなしの HW で開き直します",
+                throttle_duration_sec=10.0)
+            cap = cv2.VideoCapture(self._pipeline(True, decimate=False), cv2.CAP_GSTREAMER)
         if not cap.isOpened() and want_hw:
             # RTSP が落ちている間は _reconnect 秒ごとにここを通るので、throttle しないと
             # 本当のエラーがログから流れてしまう (他の 2 つと同じ 10 秒に揃える)
@@ -173,7 +184,7 @@ class CameraBridge(Node):
             起動したときだけ意味がある
         """
         from rcl_interfaces.msg import SetParametersResult
-        restart_only = ("max_rate_hz", "width", "height", "rtsp_url", "hw_decode",
+        restart_only = ("max_rate_hz", "max_fps", "width", "height", "rtsp_url", "hw_decode",
                         "image_topic", "latency_ms", "publish_compressed")
         for p in params:
             try:
