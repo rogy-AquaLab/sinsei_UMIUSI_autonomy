@@ -13,11 +13,17 @@ RELIABLE QoS では転送だけで頭打ちになる)。
     ros2 run umiusi_autonomy camera_bridge_node --ros-args \
         -p rtsp_url:=rtsp://localhost:8554/cam1 -p width:=320 -p height:=240
 
+shm_socket を渡すと RTSP ではなく共有メモリ (カメラ側 tee の分岐) から読み、デコードしない
+(launch 引数 camera_source:=shm。docs/performance_tuning.md「共有メモリ経路」)。
+
 QoS は RELIABLE 固定。perception_node の購読が RELIABLE のため、BEST_EFFORT にすると
 No messages will be received となって一切届かない。
 """
 
 from __future__ import annotations
+
+import glob
+import os
 
 import cv2
 import rclpy
@@ -45,6 +51,27 @@ _SW_PIPELINE = (
     "appsink drop=true max-buffers=1 sync=false"
 )
 
+# shm_socket 指定時。書き手は sinsei_umiusi_control の params/cameras_shm.yaml (pi_camera の分岐側)。
+# 規約: caps (BGR / width / height) は書き手と一致させる。shmsrc は caps を交渉しない
+_SHM_PIPELINE = (
+    "shmsrc socket-path={sock} is-live=true do-timestamp=true ! "
+    "video/x-raw,format=BGR,width={w},height={h},framerate=0/1 ! "
+    "appsink drop=true max-buffers=1 sync=false"
+)
+
+
+def _live_shm_socket(path: str) -> str:
+    """書き手が異常終了して socket が残ると、shmsink は <path>.0 などに作り直す。
+    そのとき最も新しいものを返す (無ければ path)。"""
+    def mtime(p: str) -> float:
+        try:
+            return os.path.getmtime(p)
+        except OSError:                  # 書き手が止まって消えた
+            return float("-inf")
+
+    cands = glob.glob(glob.escape(path)) + glob.glob(glob.escape(path) + ".[0-9]*")
+    return max(cands, key=mtime) if cands else path
+
 
 class CameraBridge(Node):
     def __init__(self):
@@ -61,6 +88,9 @@ class CameraBridge(Node):
         self.declare_parameter("max_fps", 15)
         self.declare_parameter("latency_ms", 100)     # rtspsrc のジッタバッファ
         self.declare_parameter("hw_decode", True)     # False -> software デコード (avdec_h264)
+        # 空以外: RTSP ではなく共有メモリ (shmsrc) から読む。デコードしない。
+        # 間引きは書き手側でやるので max_fps / latency_ms / hw_decode は使わない
+        self.declare_parameter("shm_socket", "")
         self.declare_parameter("reconnect_sec", 3.0)  # 読めなくなったときの再接続間隔
         # --- ロギング: rosbag に残せる圧縮画像も出す (生 Image は 320x240 でも 3.5 MB/s ある) ---
         self.declare_parameter("publish_compressed", False)
@@ -78,6 +108,7 @@ class CameraBridge(Node):
         self.declare_parameter("auto_rate_step", 1.0)   # 加算増加の刻み [Hz]
 
         self._url = str(self.get_parameter("rtsp_url").value)
+        self._shm = str(self.get_parameter("shm_socket").value)
         self._w = int(self.get_parameter("width").value)
         self._h = int(self.get_parameter("height").value)
         self._frame_id = str(self.get_parameter("frame_id").value)
@@ -147,6 +178,9 @@ class CameraBridge(Node):
         if self._cap is not None:
             self._cap.release()
             self._cap = None
+        if self._shm:
+            self._open_shm()
+            return
         want_hw = bool(self.get_parameter("hw_decode").value)
         cap = cv2.VideoCapture(self._pipeline(want_hw), cv2.CAP_GSTREAMER)
         if not cap.isOpened() and want_hw and int(self.get_parameter("max_fps").value) > 0:
@@ -175,6 +209,19 @@ class CameraBridge(Node):
                 f"接続できません: {self._url} (RTSP サーバとカメラは動いていますか?)",
                 throttle_duration_sec=10.0)
 
+    def _open_shm(self) -> None:
+        sock = _live_shm_socket(self._shm)
+        cap = cv2.VideoCapture(
+            _SHM_PIPELINE.format(sock=sock, w=self._w, h=self._h), cv2.CAP_GSTREAMER)
+        if cap.isOpened():
+            self._cap = cap
+            self.get_logger().info(f"接続しました: shm {sock} -> {self._w}x{self._h}")
+        else:
+            cap.release()
+            self.get_logger().error(
+                f"接続できません: shm {sock} (pi_camera を cameras_shm.yaml で起動していますか?)",
+                throttle_duration_sec=10.0)
+
     # --------------------------------------------------------------------- loop
     def _on_params(self, params):
         """`ros2 param set` を実行中に効かせる (JPEG の質と圧縮の間引きだけ)。
@@ -189,7 +236,7 @@ class CameraBridge(Node):
         """
         from rcl_interfaces.msg import SetParametersResult
         restart_only = ("max_rate_hz", "max_fps", "width", "height", "rtsp_url", "hw_decode",
-                        "image_topic", "latency_ms", "publish_compressed")
+                        "image_topic", "latency_ms", "publish_compressed", "shm_socket")
         for p in params:
             try:
                 if p.name in restart_only:

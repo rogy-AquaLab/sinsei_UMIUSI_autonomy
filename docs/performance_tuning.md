@@ -10,6 +10,7 @@ Raspberry Pi 4 Model B (4 コア) 実機での実測にもとづく。数値は�
 |---|---|---|
 | **torch のスレッドを 1 に固定** | 認識 5.32 → **6.34 Hz** (+19%)、CPU −12 pt | なし。既に launch に組込済 |
 | **カメラブリッジを HW デコードに** | CPU 102% → **33〜43%** | なし。既定 |
+| カメラブリッジを共有メモリ経路に (`camera_source:=shm`) | デコードが消える。x86 でブリッジ 25% → 2.5% (Pi は `[未検証]`) | control 側の設定を切り替える (opt-in、下記) |
 | **カメラの解像度/fps を下げる** | `gst_camera_node` 32.7% → **12.8%**、全体アイドル 19% → 52% | 画質 |
 | **UI (rosbridge) を止める** | 約 22% のコアを解放 | UI が使えない |
 | ブリッジ側でレート制限する | **逆効果** (下記) | — |
@@ -72,6 +73,54 @@ Raspberry Pi 4 Model B (4 コア) 実機での実測にもとづく。数値は�
 > 「供給 = 消費」に追従させると、起動直後の低消費に引きずられて供給が落ち、
 > 消費もそれ以上出せなくなるデススパイラルに陥る。AIMD で自己回復するようにしたが、
 > 上記のフレーム取りこぼしの問題が残るため実験扱い。
+
+### 共有メモリ経路 (`camera_source:=shm`、opt-in)
+
+既定の経路は Pi の中で「エンコード → RTSP → 即デコード」している。shm 経路はカメラの
+パイプラインを `tee` で分け、エンコード前の映像を縮小・間引きして共有メモリに出し、
+ブリッジはそれを読むだけにする (デコードしない)。
+
+```
+libcamerasrc 1280x720@30 ─ tee ─ videoconvert ! v4l2h264enc ! … ! rtspclientsink (cam1 = UI、既定と同じ)
+                                └ queue leaky=downstream max-size-buffers=1 ! videorate max-rate=15
+                                  ! videoconvertscale ! BGR 320x240 ! identity drop-allocation=true
+                                  ! shmsink socket-path=/tmp/umiusi_cam1.sock
+camera_bridge_node: shmsrc socket-path=/tmp/umiusi_cam1.sock ! BGR 320x240 ! appsink
+```
+
+- 書き手: `sinsei_umiusi_control` の `params/cameras_shm.yaml` (既定の `cameras.yaml` は変えていない)
+- 読み手: `camera_bridge_node` の `shm_socket` (空 = 従来の RTSP)。launch 引数は `camera_source:=rtsp|shm`
+  (`core_autonomy` / `autonomy` / `scenario` / `bringup`)。`umiusi_stack.sh` は `UMIUSI_CAMERA_SOURCE=shm`
+- 間引き (15 fps) と縮小はカメラ側でやる。shm のときブリッジの `max_fps` / `hw_decode` / `latency_ms` は使わない
+- 分岐側は software (`videoconvertscale`)。`v4l2convert` は使えないと negotiation に失敗して
+  **UI の映像ごと**落ちるので入れていない
+
+起動:
+
+```bash
+ros2 launch sinsei_umiusi_control main.yaml \
+  cameras_param_file:=$(ros2 pkg prefix sinsei_umiusi_control)/share/sinsei_umiusi_control/params/cameras_shm.yaml
+ros2 launch umiusi_autonomy core_autonomy.launch.py camera_source:=shm
+# まとめて: ros2 launch umiusi_autonomy bringup.launch.py camera_source:=shm
+#           (cameras_param_file を渡さなければ control の cameras_shm.yaml を使う)
+# スクリプト: UMIUSI_CAMERA_SOURCE=shm tools/umiusi_stack.sh start
+```
+
+手元 (x86、`videotestsrc` 1280x720@30 + x264enc、2026-10-05) の実測。% は 1 コア比:
+
+| | カメラ (gst_camera_node) | ブリッジ | RTSP サーバ | 計 | `/front_cam/image_raw` |
+|---|---:|---:|---:|---:|---:|
+| RTSP (既定) | 61% | 25% | 3.7% | 90% | 13.3〜13.6 Hz |
+| shm | 67% | **2.5%** | 1.7% | **71%** | **15.0 Hz** |
+
+- x86 にはデコーダが無く、ブリッジは FFMPEG の software デコードで比べている。Pi の HW 経路
+  (33〜43%) との比は Pi で測ること (`field_card.md` の手順)
+- 分岐側のコストは x86 で +5 pt。Pi の software 縮小がどれだけ食うかは `[未検証]`
+- 確認済み (手元): ブリッジを起動しない / 後から起動 / SIGSTOP / SIGKILL のどれでも RTSP 側は 30 fps のまま。
+  ブリッジは `reconnect_sec` ごとに開き直し、待機中の CPU は 0.1%。カメラ側の再起動・異常終了
+  (古い socket が残ると shmsink は `<path>.0` に作る。ブリッジは最も新しい socket を選ぶ) からも戻る
+- ブリッジが止まっていた後は、止まっていた時間ほど 30 Hz で出てから 15 Hz に戻る (`videorate` の追いつき)
+- RTSP サーバが落ちるとカメラのパイプラインごと止まる (既定の経路と同じ。shm も止まる)
 
 ## 3. 供給レートと認識レートの関係
 

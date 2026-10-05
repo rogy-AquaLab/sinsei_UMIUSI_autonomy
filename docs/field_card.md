@@ -135,6 +135,40 @@ Pi 側で値を変えているはずなので、その値と 4.0 を突き合わ
 切りたいときは `ros2 param set /classical_attitude vel_timeout 0`（`imu_timeout` も同様）。
 **切ったまま出艇しないこと。** `tools/preflight.py` が切れていないかを見る。
 
+## カメラの共有メモリ経路を試す（opt-in、CPU 張り付き対策）
+
+既定 (RTSP をブリッジがデコード) との A/B。中身は `performance_tuning.md` の「共有メモリ経路」。
+**戻すときは引数を外して起動し直すだけ**（既定の `cameras.yaml` は変えていない）。
+
+```bash
+# 0. 要素があるか (無いとカメラのパイプラインごと起動しない = UI も映らない)
+gst-inspect-1.0 shmsink videoconvertscale identity >/dev/null && echo ok
+# 1. control (tmux の別窓)
+ros2 launch sinsei_umiusi_control main.yaml \
+  cameras_param_file:=$(ros2 pkg prefix sinsei_umiusi_control)/share/sinsei_umiusi_control/params/cameras_shm.yaml
+# 2. 自律
+ros2 launch umiusi_autonomy core_autonomy.launch.py camera_source:=shm
+# 3. 確かめる
+ls -la /tmp/umiusi_cam1.sock*                    # socket がある
+ros2 topic hz /front_cam/image_raw               # 15 Hz 前後
+ros2 topic echo --once --field width /front_cam/image_raw   # 320
+pidstat -u -p $(pgrep -d, -f "gst_camera_node|camera_bridge_node|perception_node") 10 3
+```
+
+見るもの:
+
+| 項目 | 合格 |
+|---|---|
+| UI の cam1 | 既定と同じく動く (30 fps) |
+| `/front_cam/image_raw` | 15 Hz 前後・320x240。風船の左右・上下が既定経路と同じ |
+| CPU | `camera_bridge_node` が既定の経路より大きく下がる。`gst_camera_node` の増分と差し引きで得か。control の周期超過が減るか |
+| ブリッジを止めても UI が止まらない | `pkill -STOP -f lib/umiusi_autonomy/camera_bridge_node` → 10 秒 UI を見る → `pkill -CONT -f lib/umiusi_autonomy/camera_bridge_node` で 15 Hz に戻る |
+| カメラが落ちても戻る | `pkill -f "__node:=pi_camera"` → 2 s 後に UI が戻り、ブリッジの「接続しました: shm」が出て hz が戻る |
+
+- UI が映らない / `gst_camera_node` が起動直後に落ち続ける → 分岐側が Pi で通らない。**引数を外して既定に戻し**、
+  `control.log` の `GStreamer pipeline error` を持ち帰る
+- hz が 0 のまま → `ls /tmp/umiusi_cam1.sock*` が無ければ control が既定の `cameras.yaml` で上がっている
+
 ## 次に実機を回すとき、**ついでに測っておくもの**
 
 sim 側の評価が、ここの実測値に依存している。**姿勢制御を 3 分回した bag が 1 本あれば足りる**。
