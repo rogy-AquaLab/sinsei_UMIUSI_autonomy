@@ -24,10 +24,12 @@ class FsmParam:
     target: str        # FSM 側の名前
     kind: str          # "float" | "int" | "deg"
     on_instance: bool = False   # True: BalloonBehavior のフィールド / False: behavior.py のモジュール定数
+    # 同じ値を入れる別のモジュール定数。behavior.py が import 時に派生させている定数を、揃えたまま動かす
+    mirrors: tuple[str, ...] = ()
 
 
-def _p(name, target, kind="float", on_instance=False):
-    return FsmParam(name, target, kind, on_instance)
+def _p(name, target, kind="float", on_instance=False, mirrors=()):
+    return FsmParam(name, target, kind, on_instance, tuple(mirrors))
 
 
 FSM_PARAMS: tuple[FsmParam, ...] = (
@@ -65,7 +67,8 @@ FSM_PARAMS: tuple[FsmParam, ...] = (
     _p("centre_el_deg", "CENTRE_EL", "deg"),
     _p("settle_steps", "SETTLE_STEPS", "int"),
     # 突進
-    _p("ram_commit_bbox", "RAM_COMMIT_BBOX"),
+    # behavior.py の CONFIRM_MIN_PEAK = RAM_COMMIT_BBOX (突進の距離まで近づけたときだけ「割れた」を信じる)
+    _p("ram_commit_bbox", "RAM_COMMIT_BBOX", mirrors=("CONFIRM_MIN_PEAK",)),
     _p("commit_el_deg", "COMMIT_EL", "deg"),
     _p("ram_surge", "RAM_SURGE"),
     _p("ram_max_steps", "RAM_MAX_STEPS", "int"),
@@ -78,7 +81,6 @@ FSM_PARAMS: tuple[FsmParam, ...] = (
     _p("recover_steps", "RECOVER_STEPS", "int"),
     _p("confirm_frames", "CONFIRM_FRAMES", "int"),
     _p("confirm_surge", "CONFIRM_SURGE"),
-    _p("confirm_min_peak", "CONFIRM_MIN_PEAK"),
     _p("confirm_edge_deg", "CONFIRM_EDGE", "deg"),
     # 青 (減点) の回避
     _p("avoid_az_deg", "AVOID_AZ", "deg"),
@@ -108,7 +110,9 @@ def current_value(behavior, p: FsmParam):
 
 def apply(behavior, p: FsmParam, value) -> None:
     v = math.radians(float(value)) if p.kind == "deg" else (int(value) if p.kind == "int" else float(value))
-    setattr(_holder(behavior, p), p.target, v)
+    holder = _holder(behavior, p)
+    for target in (p.target, *p.mirrors):
+        setattr(holder, target, v)
 
 
 def by_ros_name(name: str) -> FsmParam | None:

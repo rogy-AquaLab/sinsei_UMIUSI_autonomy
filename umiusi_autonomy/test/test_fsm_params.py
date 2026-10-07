@@ -26,7 +26,8 @@ def _fake_fsm(**module_values):
 
 @pytest.fixture
 def fake():
-    module, b = _fake_fsm(SEARCH_YAW=0.5, FACE_TOL=math.radians(45.0), RAM_MAX_STEPS=85)
+    module, b = _fake_fsm(SEARCH_YAW=0.5, FACE_TOL=math.radians(45.0), RAM_MAX_STEPS=85,
+                          RAM_COMMIT_BBOX=0.26, CONFIRM_MIN_PEAK=0.26)
     yield module, b
     del sys.modules[module.__name__]
 
@@ -49,6 +50,20 @@ def test_int_params_stay_int(fake):
     module, b = fake
     fsm_params.apply(b, fsm_params.by_ros_name("fsm.ram_max_steps"), 200.0)
     assert module.RAM_MAX_STEPS == 200 and isinstance(module.RAM_MAX_STEPS, int)
+
+
+def test_ram_commit_bbox_moves_confirm_min_peak_with_it(fake):
+    module, b = fake
+    fsm_params.apply(b, fsm_params.by_ros_name("fsm.ram_commit_bbox"), 0.30)
+    assert (module.RAM_COMMIT_BBOX, module.CONFIRM_MIN_PEAK) == (0.30, 0.30)
+
+
+def test_yaml_number_types_match_the_table():
+    with open(CONFIG) as f:
+        fsm = yaml.safe_load(f)["auto_target_generator"]["ros__parameters"]["fsm"]
+    for p in fsm_params.FSM_PARAMS:
+        want = int if p.kind == "int" else float
+        assert type(fsm[p.name]) is want, (p.name, fsm[p.name])
 
 
 def test_instance_fields_are_set_on_the_behavior(fake):

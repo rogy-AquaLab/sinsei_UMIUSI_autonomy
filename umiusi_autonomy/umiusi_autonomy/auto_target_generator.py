@@ -23,6 +23,7 @@ from __future__ import annotations
 import time
 
 import rclpy
+from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.lifecycle import LifecycleNode, LifecycleState, TransitionCallbackReturn
 from sinsei_umiusi_msgs.msg import AttitudeTarget, Target
 
@@ -173,8 +174,10 @@ class AutoTargetGenerator(LifecycleNode):
         for p in fsm_params.FSM_PARAMS:
             if p.name in absent:
                 continue
+            # 型は固定しない: yaml の 5 と 5.0 の違いで configure が落ちないように (値は apply が変換する)
             value = self.declare_parameter(
-                fsm_params.PREFIX + p.name, fsm_params.current_value(self._behavior, p)).value
+                fsm_params.PREFIX + p.name, fsm_params.current_value(self._behavior, p),
+                ParameterDescriptor(dynamic_typing=True)).value
             fsm_params.apply(self._behavior, p, value)
 
     def _on_set_fsm_params(self, params):
