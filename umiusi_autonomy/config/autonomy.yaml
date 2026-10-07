@@ -12,9 +12,14 @@ perception_node:
     fovy_deg: 60.0           # MUST match the physical camera vertical FOV
     max_rate_hz: 10.0        # cap detector rate (realistic Pi-4 timing); 0 = every frame
     sanitise_near: true      # near red/blue colour re-confirmation before the FSM commits
-    # 後段の信頼度フィルタ。balloon_F320 で 10/01 の映像 (学習に含まれるので甘い): 0.30 赤 36/36・誤検出 11/114 (赤 10) /
-    # 0.40 赤 34/36・誤検出 0 / 0.50 赤 18/36。現場で `ros2 param set /perception_node min_confidence 0.45` で変えられる
-    min_confidence: 0.40
+    # 後段の信頼度の足切り (走らせたまま `ros2 param set /perception_node min_confidence 0.35` などで変わる)。
+    # 既定の balloon_F320_20261007 は 0.30 で運用する (umiusi_sim の指定。濁りの中では信頼度が上がらず、
+    # 0.40 だと 10/03 の黄は全部落ちる)。10/03 の 15:19 の映像 (赤い風船なし) で、重りを red と誤検出:
+    # 0.30 で最長 36 フレーム連続 / 0.45 で 5 / 0.50 で 1。FSM は 3 フレーム続くと突進するので赤だけ 0.50
+    min_confidence: 0.30
+    min_confidence_red: 0.50     # 0 以下なら min_confidence に従う。本物の赤も拾いにくくなる点に注意
+    min_confidence_yellow: -1.0
+    min_confidence_blue: -1.0
     # 断の検出 (0 以下で無効)。画像ゼロでも無言で回り続けるので、無いと現場で気付けない
     image_timeout: 5.0
     # AUTO 以外では推論しない (MANUAL の検出は録った映像に後からかける)。/robot_state が来ない (core なし) 間は止めない
@@ -54,25 +59,4 @@ navigator_node:
                              #             needs power-on + AUTO mode; see navigator_node docstring).
     target_topic: "/cmd/target"   # only used when command_mode == "target"
 
-auto_target_generator:          # lifecycle node for the on-core path (core_autonomy.launch.py)
-  ros__parameters:
-    detections_topic: "/perception_node/detections"
-    imu_topic: "/state/imu"
-    target_topic: "/cmd/target"
-    detections_timeout_s: 0.5   # 検出が途切れたら「何も見えていない」扱い (B-24)
-    # FSM の調整 (umiusi_sim の推奨、2026-10-03)。元の値: 0.26 / 85 / 0.0。`ros2 param set` で走らせたまま変わる
-    ram_surge: 0.6             # 突進の推力の割合 (Target.velocity.x)。sim の m/s とは意味が違う
-    ram_max_steps: 200         # 突進を諦めるまでの周期数 (50 Hz で 4.0 s。sim は 33.8 Hz で 5.9 s)
-    ki_heave: 0.3              # umiusi_perception f1879dd 以降
-    control_hz: 50.0
-    frame_h: 240
-    frame_w: 320
-    fovy_deg: 60.0
-    # DEPLOY CALIBRATION — verify against the mounted IMU (sensor_msgs/Imu.angular_velocity is RAD/S):
-    yaw_rate_axis: "z"       # IMU axis carrying the vehicle yaw rate (x/y/z); REP-103 body frame -> z (up)
-    yaw_rate_sign: 1.0
-    # IMU サニティフィルタ。既定は検出とログだけで破棄しない (known_issues A-1)
-    imu_sanity_enforce: false
-    imu_max_gyro: 10.0        # [rad/s] 検出の閾値 (フルスケールは 35.74)
-    imu_max_step_deg: 30.0    # 1 サンプルの姿勢跳躍上限 [deg]。50Hz なら 1500 deg/s 相当
-    imu_timeout: 1.0          # IMU がこの秒数来なければ警告 (0 以下で無効)。navigator_node と同じ
+# auto_target_generator (競技の自律) の設定は competition.yaml にある。

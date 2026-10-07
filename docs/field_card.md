@@ -16,9 +16,12 @@ lf は 10/01 の 19:47 で回っていた → 地上で確かめて問題なけ�
 2. **カメラの向き**（B-24、未確定）: 風船を機体の**右**に置き、`/front_cam/image_raw` でも**右**に映るか / **上**に置いて上に映るか。
    10/01 の映像は横倒し・上下逆に見える。違ったら FSM の左右・上下が入れ替わるので AUTO の前に報告に戻る
 3. **カメラが落ちても戻るか**（control #336）: `pkill -f "__node:=pi_camera"` → 2 s 後に UI で cam1 が戻る / bridge の「フレーム中継」ログが再開
-4. **認識**: 既定の検出器は **`balloon_F320_20261003.pt` + `min_confidence` 0.40**（umiusi_sim、JAMSTEC 映像込みで学習。
-   `models/detector/README.md`）。風船を置いて `view_detections.py` で色が合っているか。誤検出が多ければ
-   `ros2 param set /perception_node min_confidence 0.45`（走らせたまま効く。0.5 以上は赤の検出が半分に落ちる）。
+4. **認識**: 既定の検出器は **`balloon_F320_20261007.pt`、`min_confidence` 0.30・赤だけ 0.50**（`models/detector/README.md`）。
+   風船を置いて `view_detections.py` で色が合っているか。誤検出が多ければ `ros2 param set /perception_node min_confidence 0.35`、
+   赤だけなら `min_confidence_red`（走らせたまま効く）。**重りを赤と誤検出しないか**を必ず見る（FSM は 3 フレーム続くと突進する）。
+   旧モデルに戻すなら `model_path:=$(ros2 pkg prefix umiusi_autonomy)/share/umiusi_autonomy/models/detector/balloon_F320_20261003.pt`
+   で起動し、閾値も戻す: `ros2 param set /perception_node min_confidence 0.40` と `ros2 param set /perception_node min_confidence_red -1.0`
+   （閾値は launch 引数では渡せない — 渡しても黙って無視される）。
    **周期**: `ros2 topic hz /perception_node/detections` が 4 Hz を大きく下回るなら予備の F256 で起動し直す
    （`model_path:=$(ros2 pkg prefix umiusi_autonomy)/share/umiusi_autonomy/models/detector/balloon_F256_20261003.pt`）
 5. **MANUAL**: スティック前 → 前進か（逆なら AUTO の `surge_sign` を -1.0 に、6. 参照）/ R1 で方位保持 → ナビバーのコンパスが**緑**（黄なら ff）
@@ -26,9 +29,10 @@ lf は 10/01 の 19:47 で回っていた → 地上で確かめて問題なけ�
    **風船を機体の右前に置いたら右に回るか**（FSM の yaw → `yaw_rate` の符号は control 経路で実機未確認。
    逆に回って離れていくなら `ros2 param set /auto_target_generator yaw_rate_scale -1.0`、前後が逆なら
    `ros2 param set /auto_target_generator surge_sign -1.0`。毎周期読み直すので走らせたまま効く）。
-   **突進を 1 回見る**: FSM は sim の推奨（`ram_surge` 0.6 / `ram_max_steps` 200 / `ki_heave` 0.3）。`ram_surge` は
-   **推力の割合**で sim の m/s とは意味が違う。速すぎ・遅すぎなら `ros2 param set /auto_target_generator ram_surge 0.4` など。
-   元の値は 0.26 / 85 / 0.0。起動ログに「ki_heave が無い」と出たら Pi の umiusi_perception が古い（wheel を更新）
+   **突進を 1 回見る**: FSM の調整値は全部 `config/competition.yaml`（`fsm.*`、意味ごとに分けて単位付き）。
+   走らせたまま変える: `ros2 param set /auto_target_generator fsm.ram_surge 0.4`（突進の推力の割合。sim の m/s とは別）/
+   `fsm.search_yaw 0.3`（探索の旋回。0.35 で実測およそ 0.27 rad/s の見込み）。起動ログに「FSM に無い調整値」と出たら Pi の
+   umiusi_perception が古い（wheel を更新）。一覧と置き場所は `docs/parameters.md`
    AUTO 中にカメラを落とす（3. と同じ）→ 0.5 s で「検出が途切れた」警告が出て SEARCH に戻る（autonomy #36）
 7. **記録**: `record_run.sh --vision --name <名前>`。AUTO の run は全部録る
 
