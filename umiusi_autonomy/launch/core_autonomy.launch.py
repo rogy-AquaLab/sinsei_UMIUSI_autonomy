@@ -43,8 +43,8 @@ def generate_launch_description():
                               description="競技の自律 (auto_target_generator / FSM) の調整値の yaml"),
         DeclareLaunchArgument("model_path", default_value="",
                               description="learned detector .pt checkpoint。空なら同梱の "
-                                          "balloon_F320_20261003.pt。認識が 4 Hz を大きく下回るなら "
-                                          "balloon_F256_20261003.pt。models/detector/README.md"),
+                                          "balloon_F320_20261007.pt。旧版に戻すなら "
+                                          "balloon_F320_20261003.pt。models/detector/README.md"),
         DeclareLaunchArgument("image_topic", default_value="/front_cam/image_raw",
                               description="onboard camera topic"),
         DeclareLaunchArgument("use_rosbridge", default_value="true",

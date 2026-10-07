@@ -6,7 +6,7 @@
 |---|---|---|---|
 | 競技の自律（探索の旋回、接近、突進、後退、青の回避） | `umiusi_autonomy/config/competition.yaml` の `fsm.*` | `/auto_target_generator` | 変わる（`ros2 param set`） |
 | AUTO の指令の向き（`surge_sign` / `yaw_rate_scale`）と、検出の途切れの判定 | 同上（`fsm` の外） | 同上 | 変わる |
-| 認識（モデル、閾値 `min_confidence`、推論の周期、AUTO 以外で止めるか） | `umiusi_autonomy/config/autonomy.yaml` の `perception_node` | `/perception_node` | 閾値は変わる。モデルは起動し直し |
+| 認識（モデル、閾値 `min_confidence` と色ごとの `min_confidence_<色>`、推論の周期、AUTO 以外で止めるか） | `umiusi_autonomy/config/autonomy.yaml` の `perception_node` | `/perception_node` | 閾値は変わる。モデルは起動し直し |
 | カメラブリッジ（fps の間引き、経路 rtsp / shm） | launch 引数 `camera_max_fps` / `camera_source` | `/camera_bridge_node` | 起動し直し |
 | 姿勢制御のゲイン、mixer、推力の上限、サーボ | `sinsei_UMIUSI_control/params/controllers.yaml` | `/attitude_controller` ほか | configure 時に読む（再 configure か起動し直し） |
 | カメラのパイプライン（解像度、fps、フォーカス） | `sinsei_UMIUSI_control/params/cameras.yaml`（shm 経路は `cameras_shm.yaml`） | `pi_camera` / `usb_camera` | 起動し直し |
