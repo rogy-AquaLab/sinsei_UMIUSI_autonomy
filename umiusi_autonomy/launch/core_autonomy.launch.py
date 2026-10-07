@@ -25,6 +25,7 @@ from umiusi_autonomy.launch_common import camera_bridge_node
 
 def generate_launch_description():
     params = PathJoinSubstitution([FindPackageShare("umiusi_autonomy"), "config", "autonomy.yaml"])
+    competition_params = LaunchConfiguration("competition_params")
     behavior_tree_file = PathJoinSubstitution(
         [FindPackageShare("sinsei_umiusi_core"), "behavior_tree", "tree_main.xml"])
     model_path = LaunchConfiguration("model_path")
@@ -36,6 +37,10 @@ def generate_launch_description():
     record_vision = LaunchConfiguration("record_vision")
 
     return LaunchDescription([
+        DeclareLaunchArgument("competition_params",
+                              default_value=PathJoinSubstitution(
+                                  [FindPackageShare("umiusi_autonomy"), "config", "competition.yaml"]),
+                              description="競技の自律 (auto_target_generator / FSM) の調整値の yaml"),
         DeclareLaunchArgument("model_path", default_value="",
                               description="learned detector .pt checkpoint。空なら同梱の "
                                           "balloon_F320_20261003.pt。認識が 4 Hz を大きく下回るなら "
@@ -85,7 +90,7 @@ def generate_launch_description():
             executable="auto_target_generator",   # FSM-driven Target; replaces core's placeholder
             name="auto_target_generator",
             output="screen",
-            parameters=[params],
+            parameters=[competition_params],
         ),
 
         # --- core strategy stack (sinsei_umiusi_core), minus its auto_target_generator ---
