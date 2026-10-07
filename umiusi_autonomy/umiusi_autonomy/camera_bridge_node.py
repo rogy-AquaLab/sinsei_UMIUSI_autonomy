@@ -22,7 +22,6 @@ No messages will be received となって一切届かない。
 
 from __future__ import annotations
 
-import contextlib
 import glob
 import os
 import threading
@@ -83,6 +82,7 @@ class _Worker:
         self.gen = gen
         self.busy = None          # (op, time.monotonic() の開始) — open / read の最中だけ
         self.thread = None
+        self.died_at = None       # 例外で落ちた時刻 (time.monotonic())。watchdog が作り直す
 
     def call(self, op, fn, *args):
         self.busy = (op, time.monotonic())
@@ -287,7 +287,9 @@ class CameraBridge(Node):
                     # 詰めて開き直さない: test_開けない間はreconnect_secごとにだけ開き直す
                     self._stop.wait(self._reconnect)
         except Exception as e:                           # noqa: BLE001
-            self.get_logger().error(f"取得スレッドが落ちました: {type(e).__name__}: {e}")
+            w.died_at = time.monotonic()
+            self.get_logger().error(
+                f"取得スレッドが落ちました: {type(e).__name__}: {e}; {self._reconnect:.1f} 秒後に作り直します")
         finally:
             if cap is not None:
                 cap.release()
@@ -297,12 +299,21 @@ class CameraBridge(Node):
             if not self._current(w):
                 return
             self._frame = frame
-        with contextlib.suppress(Exception):             # destroy_node と競合したとき
+        try:
             self._frame_gc.trigger()
+        except Exception as e:                           # noqa: BLE001 — destroy_node と競合したとき
+            if not self._stop.is_set():
+                self.get_logger().warning(f"guard condition を起こせません: {type(e).__name__}: {e}",
+                                          throttle_duration_sec=10.0)
 
     def _watchdog(self) -> None:
         """今のワーカーの open / read が stall_timeout_sec 返らなければ作り直す。"""
         w = self._worker
+        if w is not None and w.died_at is not None and not self._stop.is_set():
+            # 詰まりではなく例外で落ちた。放っておくと映像が黙って止まったままになる
+            if time.monotonic() - w.died_at >= self._reconnect:
+                self._start_worker()
+            return
         busy = w.busy if w is not None else None
         if busy is None or self._stop.is_set():
             return
