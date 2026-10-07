@@ -12,9 +12,14 @@ perception_node:
     fovy_deg: 60.0           # MUST match the physical camera vertical FOV
     max_rate_hz: 10.0        # cap detector rate (realistic Pi-4 timing); 0 = every frame
     sanitise_near: true      # near red/blue colour re-confirmation before the FSM commits
-    # 後段の信頼度フィルタ。balloon_F320 で 10/01 の映像 (学習に含まれるので甘い): 0.30 赤 36/36・誤検出 11/114 (赤 10) /
-    # 0.40 赤 34/36・誤検出 0 / 0.50 赤 18/36。現場で `ros2 param set /perception_node min_confidence 0.45` で変えられる
-    min_confidence: 0.40
+    # 後段の信頼度の足切り (走らせたまま `ros2 param set /perception_node min_confidence 0.35` などで変わる)。
+    # 既定の balloon_F320_20261007 は 0.30 で運用する (umiusi_sim の指定。濁りの中では信頼度が上がらず、
+    # 0.40 だと 10/03 の黄は全部落ちる)。10/03 の 15:19 の映像 (赤い風船なし) で、重りを red と誤検出:
+    # 0.30 で最長 36 フレーム連続 / 0.45 で 5 / 0.50 で 1。FSM は 3 フレーム続くと突進するので赤だけ 0.50
+    min_confidence: 0.30
+    min_confidence_red: 0.50     # 0 以下なら min_confidence に従う。本物の赤も拾いにくくなる点に注意
+    min_confidence_yellow: -1.0
+    min_confidence_blue: -1.0
     # 断の検出 (0 以下で無効)。画像ゼロでも無言で回り続けるので、無いと現場で気付けない
     image_timeout: 5.0
     # AUTO 以外では推論しない (MANUAL の検出は録った映像に後からかける)。/robot_state が来ない (core なし) 間は止めない

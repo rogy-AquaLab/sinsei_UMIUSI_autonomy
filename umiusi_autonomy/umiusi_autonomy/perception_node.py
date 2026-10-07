@@ -30,6 +30,18 @@ from umiusi_autonomy.image_convert import image_to_rgb
 from umiusi_autonomy.rate_limiter import RateLimiter
 
 
+
+COLOURS = ("red", "yellow", "blue")
+
+
+def filter_by_confidence(dets, floor: float, floor_by_colour: dict) -> list:
+    """信頼度の足切り。色ごとの値が正ならそれ、そうでなければ floor。どちらも 0 以下なら落とさない。"""
+    def keep(d):
+        f = floor_by_colour.get(d.colour, -1.0)
+        f = f if f > 0.0 else floor
+        return f <= 0.0 or float(d.confidence) >= f
+    return [d for d in dets if keep(d)]
+
 class PerceptionNode(Node):
     def __init__(self):
         super().__init__("perception_node")
@@ -48,9 +60,12 @@ class PerceptionNode(Node):
         # 8/25 のプール run では camp_real @0.30 が 4.6 個/枚の誤検出を出し、
         # ハードネガティブ再学習 (camp_real2 @0.40) で 267 -> 3 に落ちている。
         # 2026-10-01 のプール映像で camp_real2 は赤い風船を 0/36 (yellow と取り違える)。2026-10-03 から既定は
-        # balloon_F320 (umiusi_sim、JAMSTEC 映像込みで学習)。min_confidence は config/autonomy.yaml の 0.40
-        # (チェックポイントの 0.3 のままだと風船なしに赤の誤検出が出る。models/detector/README.md)
+        # balloon_F320、2026-10-08 から balloon_F320_20261007。運用値は config/autonomy.yaml (models/detector/README.md)
         self.declare_parameter("min_confidence", -1.0)
+        # 色ごとの足切り。0 以下ならその色は min_confidence に従う。赤だけ上げる用途
+        # (風船の下の重りを red と誤検出し、FSM は 3 フレーム続くと突進する。2026-10-03 の映像)
+        for colour in COLOURS:
+            self.declare_parameter(f"min_confidence_{colour}", -1.0)
         # 断の検出用。画像ゼロでも無言で回り続ける (known_issues A-18)。0 以下で無効
         self.declare_parameter("image_timeout", 5.0)
         # AUTO 以外では推論しない。認識を使うのは AUTO の auto_target_generator だけなのに、
@@ -64,10 +79,12 @@ class PerceptionNode(Node):
         if not self._model_path:
             # 未指定なら同梱の検出器。版の比較と切り替えは models/detector/README.md
             self._model_path = str(Path(get_package_share_directory("umiusi_autonomy"))
-                                   / "models" / "detector" / "balloon_F320_20261003.pt")
+                                   / "models" / "detector" / "balloon_F320_20261007.pt")
         self._fovy = float(self.get_parameter("fovy_deg").value)
         self._sanitise = bool(self.get_parameter("sanitise_near").value)
         self._min_conf = float(self.get_parameter("min_confidence").value)
+        self._min_conf_by_colour = {
+            c: float(self.get_parameter(f"min_confidence_{c}").value) for c in COLOURS}
         self.add_on_set_parameters_callback(self._on_params)
         # 位相追従の間引き。素朴な「一定時間空ける」方式は入力がわずかに速いだけで
         # 1 フレームおきに落ち、目標の半分近くまで下がる。RateLimiter 参照
@@ -178,6 +195,12 @@ class PerceptionNode(Node):
                 self.get_logger().warning(
                     f"min_confidence={self._min_conf:.2f}"
                     f"{' (無効)' if self._min_conf <= 0.0 else ''}")
+            elif p.name.startswith("min_confidence_") and p.name[len("min_confidence_"):] in COLOURS:
+                try:
+                    self._min_conf_by_colour[p.name[len("min_confidence_"):]] = float(p.value)
+                except (TypeError, ValueError) as e:
+                    return SetParametersResult(successful=False, reason=str(e))
+                self.get_logger().warning(f"{p.name}={float(p.value):.2f}")
             # 濁りの程度で当たりが変わる 2 つ。**検出器を読み直さずに変えられる**ので
             # ここで受ける (`conf_thresh` は重みを読んだ時点で焼き込まれるので変えられない)
             elif p.name == "sanitise_near":
@@ -229,13 +252,12 @@ class PerceptionNode(Node):
         dets = self._detector(rgb)
         if self._sanitise:
             dets = self._sanitise_fn(rgb, dets)
-        if self._min_conf > 0.0:
-            n_before = len(dets)
-            dets = [d for d in dets if float(d.confidence) >= self._min_conf]
-            if n_before != len(dets):
-                self.get_logger().info(
-                    f"min_confidence={self._min_conf:.2f} で {n_before - len(dets)} 件を落とした",
-                    throttle_duration_sec=5.0)
+        n_before = len(dets)
+        dets = filter_by_confidence(dets, self._min_conf, self._min_conf_by_colour)
+        if n_before != len(dets):
+            self.get_logger().info(
+                f"信頼度の足切り (min_confidence={self._min_conf:.2f}、色ごと {self._min_conf_by_colour}) で "
+                f"{n_before - len(dets)} 件を落とした", throttle_duration_sec=5.0)
         self._pub.publish(self._to_msg(msg.header, dets))
         # 末尾でも更新する。初回は _ensure_detector() の同期ロードが image_timeout を
         # 超えることがあり、そのままだと復帰直後に偽の「画像が途切れた」警告が出る
