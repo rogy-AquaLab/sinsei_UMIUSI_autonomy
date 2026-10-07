@@ -1,0 +1,95 @@
+# 競技の自律 (AUTO) の調整値 — ここ 1 箇所で見る・変える。core_autonomy.launch.py が読む。
+# 現場で走らせたまま変える: ros2 param set /auto_target_generator fsm.search_yaw 0.3
+# 別のファイルで起動する:   ros2 launch umiusi_autonomy core_autonomy.launch.py competition_params:=/abs/my.yaml
+#
+# 単位の約束 (umiusi_autonomy/fsm_params.py):
+#   * surge / heave / yaw は FSM の指令 [-1, 1]。surge・heave はそのまま Target.velocity の推力の割合、
+#     yaw は yaw_rate_scale を掛けて rad/s になる (control fb で実測 0.78 倍: 指令 0.5 -> 0.39 rad/s、10/03)
+#   * *_steps / *_frames は FSM の周期数。周期は control_hz (50 Hz) を目指すが CPU 次第 (10/03 の AUTO は 26 Hz)
+#   * *_deg は度
+#   * ここに書いていない調整値は FSM (umiusi_perception の behavior.py) の既定値
+# 認識の閾値 (min_confidence など) は autonomy.yaml の perception_node、姿勢制御・推力は
+# sinsei_umiusi_control の params/controllers.yaml。
+
+auto_target_generator:
+  ros__parameters:
+    # --- 指令の出し方 ---------------------------------------------------------------------
+    surge_sign: 1.0               # UI のスティックと同じ規約 (前 -> +x)。前後が逆なら -1.0
+    yaw_rate_scale: 1.0           # FSM の yaw [-1,1] -> rad/s。逆に回って離れていくなら -1.0
+    control_hz: 50.0
+    detections_timeout_s: 0.5     # 検出がこれだけ途切れたら「何も見えていない」扱い (B-24)
+    detections_topic: "/perception_node/detections"
+    target_topic: "/cmd/target"
+    frame_h: 240                  # perception と同じ画像の大きさ・画角
+    frame_w: 320
+    fovy_deg: 60.0
+
+    # --- IMU (navigator_node と共通) -------------------------------------------------------
+    imu_topic: "/state/imu"
+    yaw_rate_axis: "z"            # REP-103 の機体座標ならヨーは z
+    yaw_rate_sign: 1.0
+    imu_sanity_enforce: false     # 化けサンプルを検出・ログするだけで捨てない (known_issues A-1)
+    imu_max_gyro: 10.0            # [rad/s]
+    imu_max_step_deg: 30.0        # 1 サンプルの姿勢跳躍上限 [deg]
+    imu_timeout: 1.0              # [s] これ以上来なければ警告 (0 以下で無効)
+
+    fsm:
+      # --- 探索: その場で 1 周 -> 少し前進 -> また 1 周 ----------------------------------
+      search_yaw: 0.35            # 旋回の yaw 指令。10/03 は 0.5 (実測 0.39 rad/s = 22 deg/s) で速かった
+      search_surge: 0.30          # 1 周ごとの前進の指令
+      scan_heave: 0.15            # 旋回中に上下に揺らす振幅 (高さの違う風船を探す)
+      scan_rate: 1.5              # その揺らしの角周波数 [rad/s]
+      translate_steps: 50         # 前進する周期数
+      sweep_timeout_s: 30.0       # IMU が死んで 1 周を数えられないときの打ち切り [s]。1 周の実時間より長く
+
+      # --- 目標の選び方・諦め方 ------------------------------------------------------------
+      max_target_range: 4.5       # [m] これより遠い検出は無視
+      preempt_margin: 0.30        # [m] 今の目標よりこれだけ近い別の風船が出たら乗り換える
+      path_clear_radius: 0.40     # [m] 割っていない風船のひもの周りの立ち入り禁止幅
+      max_attempts: 6             # 1 つの目標への突進の回数上限
+      max_pursuit_steps: 500      # 1 つの目標を追う周期数の上限
+      giveup_fails: 4             # 同じ色で外したらほかの色を探す回数
+      suppress_steps: 350         # 諦めた色を後回しにする周期数
+
+      # --- 接近 -------------------------------------------------------------------------
+      speed_cap: 0.35             # 接近中の surge / heave の上限
+      kp_yaw: 1.1                 # 方位誤差 [rad] -> yaw 指令
+      kd_yaw: 0.15                # ヨーレートの減衰
+      kp_heave: 1.5               # 仰角誤差 [rad] -> heave 指令
+      ki_heave: 0.3               # カメラで見た高さの偏りの積分 (umiusi_sim の推奨、10/03)
+      heave_bias_max: 0.25        # その積分の上限
+      face_tol_deg: 45.0          # 方位誤差がこれ以内になってから前進を強める
+      el_full_surge_deg: 5.0      # 仰角誤差がこれ以内なら前進を落とさない
+      el_zero_surge_deg: 15.0     # これ以上なら前進を el_min_surge まで落とす (先に高さを合わせる)
+      el_min_surge: 0.22
+
+      # --- 正対: 近づいたら中央に合わせてから突進 -------------------------------------------
+      align_bbox: 0.18            # 箱の高さ / 画面の高さがこれ以上で正対を始める
+      align_creep: 0.12           # 正対中の前進
+      align_timeout: 110          # 正対できないまま続いたら位置を変える周期数
+      centre_az_deg: 6.0          # 「中央」とみなす方位
+      centre_el_deg: 6.0          # 「中央」とみなす仰角
+      settle_steps: 3             # 中央で止まっている周期数 (行き過ぎ防止)
+
+      # --- 突進 -------------------------------------------------------------------------
+      ram_commit_bbox: 0.26       # 箱がこれ以上で中央なら突進に入る
+      commit_el_deg: 12.0         # 突進に入ってよい仰角
+      ram_surge: 0.6              # 突進の前進 (推力の割合、umiusi_sim の推奨、10/03。sim の m/s とは意味が違う)
+      ram_max_steps: 200          # 見えたまま割れなければ外れとみなす周期数
+      lunge_steps: 26             # 突進に入ったら見えなくても直進する周期数
+      aim_above_deg: 5.0          # 黄 (背の高い風船) を少し上に狙う
+      pass_peak_bbox: 0.45        # 「通り過ぎた」とみなす最大の箱の大きさ...
+      pass_drop_frac: 0.5         # ...からこの割合まで縮んだら外れ
+
+      # --- 外したあとの後退と、割れたかの確認 -----------------------------------------------
+      recover_surge: 0.28         # 後退の速さ
+      recover_steps: 30           # 後退する周期数
+      confirm_frames: 55          # 後退中に目標がこの周期数見えなければ「割れた」
+      confirm_surge: 0.34         # 確認中の後退
+      confirm_min_peak: 0.26      # 突進の距離まで近づけていたときだけ「割れた」を信じる (ram_commit_bbox と揃える)
+      confirm_edge_deg: 18.0      # 中央近くで見失ったときだけ「割れた」を信じる
+
+      # --- 青 (減点) の回避 ---------------------------------------------------------------
+      avoid_az_deg: 28.0          # 正面からこの方位以内の青が「邪魔」
+      avoid_range: 1.6            # [m] これより近い青を避ける
+      avoid_yaw: 0.5              # 避けるときに足す yaw 指令

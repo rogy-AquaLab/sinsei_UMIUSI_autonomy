@@ -108,6 +108,7 @@ Policy bundles, observation layout and the wrench-mode action contract are descr
 [`umiusi_rl_control/README.md`](umiusi_rl_control/README.md).
 Experiment procedures are in [`docs/experiment_guide.md`](docs/experiment_guide.md).
 Recording and log layout are in [`docs/logging.md`](docs/logging.md).
+Where every tunable lives (competition FSM, perception, control) is in [`docs/parameters.md`](docs/parameters.md).
 
 `bringup.launch.py` is the only entry point, and `mode` picks one path, so you cannot
 start two that conflict.

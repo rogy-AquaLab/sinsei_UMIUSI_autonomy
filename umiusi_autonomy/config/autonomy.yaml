@@ -54,25 +54,4 @@ navigator_node:
                              #             needs power-on + AUTO mode; see navigator_node docstring).
     target_topic: "/cmd/target"   # only used when command_mode == "target"
 
-auto_target_generator:          # lifecycle node for the on-core path (core_autonomy.launch.py)
-  ros__parameters:
-    detections_topic: "/perception_node/detections"
-    imu_topic: "/state/imu"
-    target_topic: "/cmd/target"
-    detections_timeout_s: 0.5   # 検出が途切れたら「何も見えていない」扱い (B-24)
-    # FSM の調整 (umiusi_sim の推奨、2026-10-03)。元の値: 0.26 / 85 / 0.0。`ros2 param set` で走らせたまま変わる
-    ram_surge: 0.6             # 突進の推力の割合 (Target.velocity.x)。sim の m/s とは意味が違う
-    ram_max_steps: 200         # 突進を諦めるまでの周期数 (50 Hz で 4.0 s。sim は 33.8 Hz で 5.9 s)
-    ki_heave: 0.3              # umiusi_perception f1879dd 以降
-    control_hz: 50.0
-    frame_h: 240
-    frame_w: 320
-    fovy_deg: 60.0
-    # DEPLOY CALIBRATION — verify against the mounted IMU (sensor_msgs/Imu.angular_velocity is RAD/S):
-    yaw_rate_axis: "z"       # IMU axis carrying the vehicle yaw rate (x/y/z); REP-103 body frame -> z (up)
-    yaw_rate_sign: 1.0
-    # IMU サニティフィルタ。既定は検出とログだけで破棄しない (known_issues A-1)
-    imu_sanity_enforce: false
-    imu_max_gyro: 10.0        # [rad/s] 検出の閾値 (フルスケールは 35.74)
-    imu_max_step_deg: 30.0    # 1 サンプルの姿勢跳躍上限 [deg]。50Hz なら 1500 deg/s 相当
-    imu_timeout: 1.0          # IMU がこの秒数来なければ警告 (0 以下で無効)。navigator_node と同じ
+# auto_target_generator (競技の自律) の設定は competition.yaml にある。
