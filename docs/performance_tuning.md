@@ -61,7 +61,8 @@ Raspberry Pi 4 Model B (4 コア) 実機での実測にもとづく。数値は�
 | 10 Hz 制限 | 6.70 Hz | 4.08 Hz |
 
 タイマ周期を目標レートにするとカメラのフレーム到着とビートし、1 ms まで速めると
-`read()` を叩きすぎて別の意味で落ちる。
+`read()` を叩きすぎて別の意味で落ちる。(この表は取得をタイマで回していたころの実測。
+今は取得スレッドが全フレームを読み、`max_rate_hz` は publish を時間で間引くだけ — 下記「取得スレッド」)
 
 **供給を絞るのは `max_fps`（既定 15、launch 引数 `camera_max_fps`）。** デコード直後に
 `videorate drop-only=true max-rate=<fps>` で間引くので、タイマとはビートしない。間引いた後の
@@ -120,7 +121,22 @@ ros2 launch umiusi_autonomy core_autonomy.launch.py camera_source:=shm
   ブリッジは `reconnect_sec` ごとに開き直し、待機中の CPU は 0.1%。カメラ側の再起動・異常終了
   (古い socket が残ると shmsink は `<path>.0` に作る。ブリッジは最も新しい socket を選ぶ) からも戻る
 - ブリッジが止まっていた後は、止まっていた時間ほど 30 Hz で出てから 15 Hz に戻る (`videorate` の追いつき)
+- 書き手が生きたまま詰まる (SIGSTOP) と shmsrc の open / read が返らない。下記「取得スレッド」で
+  ノードは固まらない。手元 (2026-10-08): 詰まっている間も `ros2 param get` は返り、ERROR が出て、
+  SIGCONT 後すぐ 15.0 Hz。書き手を SIGKILL した間は 3 s ごとに開き直して CPU 0.2%
 - RTSP サーバが落ちるとカメラのパイプラインごと止まる (既定の経路と同じ。shm も止まる)
+
+### 取得スレッド (RTSP / shm 共通)
+
+`cv2.VideoCapture` の open / read はブロッキングで、OpenCV 4.6 の GStreamer 経路では
+`CAP_PROP_OPEN_TIMEOUT_MSEC` / `CAP_PROP_READ_TIMEOUT_MSEC` が使えない (`can't set property` で open ごと失敗)。
+そこで open / read は取得スレッドで回し、executor 側は最新フレームを publish するだけにしている。
+
+- 取得スレッド: 開く → 読み続ける → 読めなくなったら `reconnect_sec` (既定 3 s) 待って開き直す
+- open / read が `stall_timeout_sec` (既定 5 s) 返らないと ERROR (10 s に 1 回) を出し、取得スレッドを作り直す。
+  止まったスレッドは殺せないので残し、後で戻っても結果は捨てる。残してよい本数は `max_stalled_workers` (既定 2)。
+  上限に達したら作り直さず、戻るのを待つ
+- 終了時は取得スレッドを最大 2 s 待ち、止まったままなら残して終了する
 
 ## 3. 供給レートと認識レートの関係
 

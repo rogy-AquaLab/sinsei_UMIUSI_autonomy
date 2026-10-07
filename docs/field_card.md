@@ -166,7 +166,8 @@ pidstat -u -p $(pgrep -d, -f "gst_camera_node|camera_bridge_node|perception_node
 | UI の cam1 | 既定と同じく動く (30 fps) |
 | `/front_cam/image_raw` | 15 Hz 前後・320x240。風船の左右・上下が既定経路と同じ |
 | CPU | `camera_bridge_node` が既定の経路より大きく下がる。`gst_camera_node` の増分と差し引きで得か。control の周期超過が減るか |
-| ブリッジを止めても UI が止まらない | `pkill -STOP -f lib/umiusi_autonomy/camera_bridge_node` → 10 秒 UI を見る → `pkill -CONT -f lib/umiusi_autonomy/camera_bridge_node` で 15 Hz に戻る |
+| ブリッジを止めても UI が止まらない | `pkill -STOP -f lib/umiusi_autonomy/camera_bridge_node` → 10 秒 UI を見る → `pkill -CONT -f lib/umiusi_autonomy/camera_bridge_node` で 15 Hz に戻る (直後は止めていた時間ほど 30 Hz 前後が出てから 15 Hz に落ち着く。異常ではない) |
+| カメラが詰まってもブリッジが固まらない | `pkill -STOP -f "__node:=pi_camera"` → 10 秒の間に `ros2 param get /camera_bridge_node max_fps` が返り、ブリッジのログに「カメラの read が … 秒返りません」の ERROR → `pkill -CONT -f "__node:=pi_camera"` で hz が 15 Hz に戻る。**STOP 中は UI も止まる** (戻し忘れないこと) |
 | カメラが落ちても戻る | `pkill -f "__node:=pi_camera"` → 2 s 後に UI が戻り、ブリッジの「接続しました: shm」が出て hz が戻る |
 
 - UI が映らない / `gst_camera_node` が起動直後に落ち続ける → 分岐側が Pi で通らない。**引数を外して既定に戻し**、
