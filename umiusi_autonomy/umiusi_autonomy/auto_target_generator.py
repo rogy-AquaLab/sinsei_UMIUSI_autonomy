@@ -20,15 +20,16 @@ surge_sign follows the UI gamepad (stick forward -> +x), which drives the same f
 
 from __future__ import annotations
 
-import sys
 import time
 
 import rclpy
+from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.lifecycle import LifecycleNode, LifecycleState, TransitionCallbackReturn
 from sinsei_umiusi_msgs.msg import AttitudeTarget, Target
 
 from umiusi_autonomy_msgs.msg import BalloonDetectionArray
 
+from umiusi_autonomy import fsm_params
 from umiusi_autonomy.imu_source import ImuSource
 
 
@@ -54,19 +55,6 @@ def live_detections(dets: list, last_rx: float | None, now: float, timeout_s: fl
     return dets
 
 
-def apply_fsm_tuning(behavior, ram_surge: float, ram_max_steps: int, ki_heave: float) -> None:
-    """FSM の調整値を入れる。
-
-    RAM_SURGE / RAM_MAX_STEPS は behavior.py のモジュール定数で、実行時に名前で引かれるので
-    モジュールの属性を書き換えれば効く。ki_heave は BalloonBehavior のフィールド (古い wheel には無い)。
-    """
-    module = sys.modules[type(behavior).__module__]
-    module.RAM_SURGE = ram_surge
-    module.RAM_MAX_STEPS = ram_max_steps
-    if hasattr(behavior, "ki_heave"):
-        behavior.ki_heave = ki_heave
-
-
 def neutral_attitude_target() -> AttitudeTarget:
     msg = AttitudeTarget()
     msg.attitude.w = 1.0
@@ -86,15 +74,7 @@ class AutoTargetGenerator(LifecycleNode):
         self.declare_parameter("control_hz", 50.0)
         # 検出がこれだけ途切れたら「何も見えていない」とみなす [s]。perception は最大 10 Hz
         self.declare_parameter("detections_timeout_s", 0.5)
-        # FSM の調整 (umiusi_sim docs/competition_scenario.md §3〜5 の推奨、2026-10-03)。毎周期読み直すので
-        # `ros2 param set` で走らせたまま変えられる。元の値: ram_surge 0.26 / ram_max_steps 85 / ki_heave 0.0
-        # ram_surge は Target.velocity.x にそのまま入る **推力の割合**。sim の 0.6 は surge_scale 0.35 を
-        # 掛けた m/s なので意味が違う。プールで突進を見て速すぎ・遅すぎを直すこと
-        self.declare_parameter("ram_surge", 0.6)
-        # 突進を諦めるまでの制御周期の回数。sim は 33.8 Hz (200 = 5.9 s)、ここは control_hz (50 Hz で 4.0 s)
-        self.declare_parameter("ram_max_steps", 200)
-        # カメラで heave の偏りを積分する (umiusi_perception f1879dd 以降)。古い wheel では効かない
-        self.declare_parameter("ki_heave", 0.3)
+        # FSM の調整値 fsm.* は FSM を作るとき (configure) に宣言する。値は config/competition.yaml
         self.declare_parameter("frame_h", 240)
         self.declare_parameter("frame_w", 320)
         self.declare_parameter("fovy_deg", 60.0)
@@ -108,6 +88,7 @@ class AutoTargetGenerator(LifecycleNode):
         self._dets = []                # last reconstructed detections (held between perception ticks)
         self._new_dets = False         # a fresh detection message arrived since the last control tick
         self._last_det_rx = None       # time.monotonic() of the last detection message
+        self._last_tick = None         # time.monotonic() of the previous control tick
         self._pub = None
         self._pub_att = None
         self._sub_det = None
@@ -122,10 +103,12 @@ class AutoTargetGenerator(LifecycleNode):
             BalloonDetectionArray, self.get_parameter("detections_topic").value, self._on_detections, 10)
         self._imu.create_subscription()
         self._timer = self.create_timer(self._dt, self._tick, autostart=False)
+        self._ensure_behavior()        # fsm.* を AUTO の前から `ros2 param set` できるように
         self.get_logger().info("auto_target_generator configured (FSM-driven Target on /cmd/target)")
         return TransitionCallbackReturn.SUCCESS
 
     def on_activate(self, state: LifecycleState) -> TransitionCallbackReturn:
+        self._last_tick = None
         self._timer.reset()
         return TransitionCallbackReturn.SUCCESS
 
@@ -177,21 +160,38 @@ class AutoTargetGenerator(LifecycleNode):
             dt=self._dt,
         )
         self._Detection = Detection
-        if not hasattr(self._behavior, "ki_heave"):
-            self.get_logger().warn(
-                "この umiusi_perception には ki_heave が無い (f1879dd より古い wheel)。ki_heave は効かない")
-        self._apply_fsm_tuning()
+        self._declare_fsm_params()
         self.get_logger().info("behaviour FSM initialised")
         return True
 
-    def _apply_fsm_tuning(self) -> None:
-        """ram_surge / ram_max_steps / ki_heave を FSM に反映する (毎周期呼ぶ)。"""
-        apply_fsm_tuning(
-            self._behavior,
-            ram_surge=float(self.get_parameter("ram_surge").value),
-            ram_max_steps=int(self.get_parameter("ram_max_steps").value),
-            ki_heave=float(self.get_parameter("ki_heave").value),
-        )
+    def _declare_fsm_params(self) -> None:
+        """fsm.* を宣言して FSM に入れる。既定は FSM が今持っている値、yaml にあればそちらが勝つ。"""
+        absent = set(fsm_params.missing(self._behavior))
+        if absent:
+            self.get_logger().warn(
+                f"この umiusi_perception の FSM に無い調整値 (古い wheel): {sorted(absent)}。これらは効かない")
+        self.add_on_set_parameters_callback(self._on_set_fsm_params)
+        for p in fsm_params.FSM_PARAMS:
+            if p.name in absent:
+                continue
+            # 型は固定しない: yaml の 5 と 5.0 の違いで configure が落ちないように (値は apply が変換する)
+            value = self.declare_parameter(
+                fsm_params.PREFIX + p.name, fsm_params.current_value(self._behavior, p),
+                ParameterDescriptor(dynamic_typing=True)).value
+            fsm_params.apply(self._behavior, p, value)
+
+    def _on_set_fsm_params(self, params):
+        """`ros2 param set /auto_target_generator fsm.<名前> <値>` を走らせたまま効かせる。"""
+        from rcl_interfaces.msg import SetParametersResult
+        for param in params:
+            p = fsm_params.by_ros_name(param.name)
+            if p is None:
+                continue
+            try:
+                fsm_params.apply(self._behavior, p, param.value)
+            except (TypeError, ValueError) as e:
+                return SetParametersResult(successful=False, reason=f"{param.name}: {e}")
+        return SetParametersResult(successful=True)
 
     def _on_detections(self, msg: BalloonDetectionArray) -> None:
         if not self._ensure_behavior():
@@ -216,7 +216,11 @@ class AutoTargetGenerator(LifecycleNode):
         if not self._ensure_behavior():
             return
         self._imu.warn_if_stale()
-        self._apply_fsm_tuning()
+        now = time.monotonic()
+        dt = fsm_params.measured_dt(self._last_tick, now, self._dt)
+        self._last_tick = now
+        # BalloonBehavior の探索は step() の dt ではなく self.dt で積分するので、両方に入れる
+        self._behavior.dt = dt
         fresh = self._new_dets
         self._new_dets = False
         dets = live_detections(self._dets, self._last_det_rx, time.monotonic(),
@@ -226,7 +230,7 @@ class AutoTargetGenerator(LifecycleNode):
                 "検出が途切れた (カメラ / 認識が止まっている?)。何も見えていないものとして扱う",
                 throttle_duration_sec=5.0)
         cmd, _info = self._behavior.step(dets, self._imu.yaw_rate, heading=0.0,
-                                         dt=self._dt, fresh=fresh)
+                                         dt=dt, fresh=fresh)
         vx, vz, yaw_rate = to_control_setpoint(
             cmd, float(self.get_parameter("surge_sign").value),
             float(self.get_parameter("yaw_rate_scale").value))

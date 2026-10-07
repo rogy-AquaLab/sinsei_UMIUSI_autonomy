@@ -27,9 +27,10 @@ lf は 10/01 の 19:47 で回っていた → 地上で確かめて問題なけ�
    **風船を機体の右前に置いたら右に回るか**（FSM の yaw → `yaw_rate` の符号は control 経路で実機未確認。
    逆に回って離れていくなら `ros2 param set /auto_target_generator yaw_rate_scale -1.0`、前後が逆なら
    `ros2 param set /auto_target_generator surge_sign -1.0`。毎周期読み直すので走らせたまま効く）。
-   **突進を 1 回見る**: FSM は sim の推奨（`ram_surge` 0.6 / `ram_max_steps` 200 / `ki_heave` 0.3）。`ram_surge` は
-   **推力の割合**で sim の m/s とは意味が違う。速すぎ・遅すぎなら `ros2 param set /auto_target_generator ram_surge 0.4` など。
-   元の値は 0.26 / 85 / 0.0。起動ログに「ki_heave が無い」と出たら Pi の umiusi_perception が古い（wheel を更新）
+   **突進を 1 回見る**: FSM の調整値は全部 `config/competition.yaml`（`fsm.*`、意味ごとに分けて単位付き）。
+   走らせたまま変える: `ros2 param set /auto_target_generator fsm.ram_surge 0.4`（突進の推力の割合。sim の m/s とは別）/
+   `fsm.search_yaw 0.3`（探索の旋回。0.35 で実測およそ 0.27 rad/s の見込み）。起動ログに「FSM に無い調整値」と出たら Pi の
+   umiusi_perception が古い（wheel を更新）。一覧と置き場所は `docs/parameters.md`
    AUTO 中にカメラを落とす（3. と同じ）→ 0.5 s で「検出が途切れた」警告が出て SEARCH に戻る（autonomy #36）
 7. **記録**: `record_run.sh --vision --name <名前>`。AUTO の run は全部録る
 
