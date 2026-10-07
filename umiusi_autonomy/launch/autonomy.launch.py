@@ -19,7 +19,7 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
-from umiusi_autonomy.launch_common import camera_bridge_node
+from umiusi_autonomy.launch_common import camera_bridge_node, camera_source_arg
 
 
 def generate_launch_description():
@@ -58,6 +58,7 @@ def generate_launch_description():
                                           "別の image publisher を使うときだけ false"),
         DeclareLaunchArgument("rtsp_url", default_value="rtsp://localhost:8554/cam1",
                               description="ブリッジが読む RTSP URL (前方カメラ = cam1)"),
+        camera_source_arg(),
         DeclareLaunchArgument("record_vision", default_value="false",
                               description="圧縮画像 (<image_topic>/compressed) も出す。"
                                           "`record_run.sh --vision` で bag に残すため — "

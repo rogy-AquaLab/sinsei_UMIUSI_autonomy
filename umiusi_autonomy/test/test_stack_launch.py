@@ -168,10 +168,31 @@ def test_カメラ設定を渡さないと実機のカメラが開かない(ld):
     from launch import LaunchContext
     from launch.utilities import perform_substitutions
     ctx = LaunchContext()
-    ctx.launch_configurations.update({"mode": "full", "cameras_param_file": ""})
+    ctx.launch_configurations.update(
+        {"mode": "full", "cameras_param_file": "", "camera_source": "rtsp"})
     raw = dict(_control_include(ld).launch_arguments)
     got = perform_substitutions(ctx, [raw["cameras_param_file"]])
     assert got.endswith("cameras_deploy.yaml"), got
+
+
+@pytest.mark.parametrize("given, want", [("", "cameras_shm.yaml"), ("/x/mine.yaml", "/x/mine.yaml")])
+def test_shmではcontrolのcameras_shmを渡す(ld, given, want):
+    """ブリッジが shm を読むのに pi_camera が shmsink を持たないと、画像が 1 枚も来ない。"""
+    from launch import LaunchContext
+    from launch.utilities import perform_substitutions
+    ctx = LaunchContext()
+    ctx.launch_configurations.update(
+        {"mode": "full", "cameras_param_file": given, "camera_source": "shm"})
+    raw = dict(_control_include(ld).launch_arguments)
+    got = perform_substitutions(ctx, [raw["cameras_param_file"]])
+    assert got.endswith(want), got
+
+
+@pytest.mark.parametrize("src, want", [("rtsp", ""), ("shm", "/tmp/umiusi_cam1.sock")])
+def test_camera_sourceでブリッジの入力が決まる(src, want):
+    from launch import LaunchContext
+    from umiusi_autonomy.launch_common import shm_socket_for
+    assert shm_socket_for(src).perform(LaunchContext()) == want
 
 
 # --- mode による排他 -----------------------------------------------------------

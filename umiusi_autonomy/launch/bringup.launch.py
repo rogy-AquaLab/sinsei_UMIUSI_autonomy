@@ -42,6 +42,8 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, Pyth
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
+from umiusi_autonomy.launch_common import camera_source_arg
+
 # 段の定義。timeout は umiusi_stack.sh の固定 sleep と同じ値 — シグナルで抜けるので通常は
 # ここまで待たないが、上限として越えないことを保証する。
 # best_effort: 誰が publish するか分からない段では緩い側にする (/state/imu は control か
@@ -84,15 +86,20 @@ def generate_launch_description():
     use_control = LaunchConfiguration("use_control")
     model_path = LaunchConfiguration("model_path")
     rtsp_url = LaunchConfiguration("rtsp_url")
+    camera_source = LaunchConfiguration("camera_source")
     publish = LaunchConfiguration("publish")
     use_ui = LaunchConfiguration("use_ui")
 
     # カメラ設定は既定で同梱の cameras_deploy.yaml を渡す。渡さないと実機既定の
     # /dev/video2 (H264 非対応) が使われてカメラが開かない (known_issues B-1)
+    # camera_source:=shm のときは control 同梱の cameras_shm.yaml (pi_camera を共有メモリにも出す)
     cameras_param_file = PythonExpression([
-        "'", LaunchConfiguration("cameras_param_file"), "' or '",
+        "'", LaunchConfiguration("cameras_param_file"), "' or ('",
+        PathJoinSubstitution([FindPackageShare("sinsei_umiusi_control"), "params",
+                              "cameras_shm.yaml"]),
+        "' if '", camera_source, "' == 'shm' else '",
         PathJoinSubstitution([FindPackageShare("umiusi_autonomy"), "config",
-                              "cameras_deploy.yaml"]), "'"])
+                              "cameras_deploy.yaml"]), "')"])
     control = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare("sinsei_umiusi_control"), "launch", "main.yaml"])),
@@ -111,6 +118,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare("umiusi_autonomy"), "launch", "core_autonomy.launch.py"])),
         launch_arguments={"model_path": model_path, "rtsp_url": rtsp_url,
+                          "camera_source": camera_source,
                           "use_camera_bridge": "true",
                           "use_core": only_full,
                           "use_rosbridge": PythonExpression(
@@ -124,6 +132,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare("umiusi_autonomy"), "launch", "autonomy.launch.py"])),
         launch_arguments={"model_path": model_path, "rtsp_url": rtsp_url,
+                          "camera_source": camera_source,
                           "publish": publish}.items(),
         condition=_mode_is(mode, "navigator"))
 
@@ -136,6 +145,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(PathJoinSubstitution(
             [FindPackageShare("umiusi_autonomy"), "launch", "scenario.launch.py"])),
         launch_arguments={"model_path": model_path, "rtsp_url": rtsp_url,
+                          "camera_source": camera_source,
                           "publish": publish,
                           "max_duty": LaunchConfiguration("max_duty"),
                           "cmd_target_topic": LaunchConfiguration("cmd_target_topic"),
@@ -185,6 +195,7 @@ def generate_launch_description():
                               description="カメラブリッジの入力"),
         DeclareLaunchArgument("publish", default_value="true",
                               description="false で RL の指令をスラスタへ出さない (ドライ試験)"),
+        camera_source_arg(),
         DeclareLaunchArgument("cameras_param_file", default_value="",
                               description="空なら同梱の cameras_deploy.yaml。実機既定の "
                                           "/dev/video2 は H264 非対応 (known_issues B-1)"),

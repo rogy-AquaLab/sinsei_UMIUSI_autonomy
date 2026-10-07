@@ -13,11 +13,19 @@ RELIABLE QoS では転送だけで頭打ちになる)。
     ros2 run umiusi_autonomy camera_bridge_node --ros-args \
         -p rtsp_url:=rtsp://localhost:8554/cam1 -p width:=320 -p height:=240
 
+shm_socket を渡すと RTSP ではなく共有メモリ (カメラ側 tee の分岐) から読み、デコードしない
+(launch 引数 camera_source:=shm。docs/performance_tuning.md「共有メモリ経路」)。
+
 QoS は RELIABLE 固定。perception_node の購読が RELIABLE のため、BEST_EFFORT にすると
 No messages will be received となって一切届かない。
 """
 
 from __future__ import annotations
+
+import glob
+import os
+import threading
+import time
 
 import cv2
 import rclpy
@@ -45,6 +53,44 @@ _SW_PIPELINE = (
     "appsink drop=true max-buffers=1 sync=false"
 )
 
+# shm_socket 指定時。書き手は sinsei_umiusi_control の params/cameras_shm.yaml (pi_camera の分岐側)。
+# 規約: caps (BGR / width / height) は書き手と一致させる。shmsrc は caps を交渉しない
+_SHM_PIPELINE = (
+    "shmsrc socket-path={sock} is-live=true do-timestamp=true ! "
+    "video/x-raw,format=BGR,width={w},height={h},framerate=0/1 ! "
+    "appsink drop=true max-buffers=1 sync=false"
+)
+
+
+def _live_shm_socket(path: str) -> str:
+    """書き手が異常終了して socket が残ると、shmsink は <path>.0 などに作り直す。
+    そのとき最も新しいものを返す (無ければ path)。"""
+    def mtime(p: str) -> float:
+        try:
+            return os.path.getmtime(p)
+        except OSError:                  # 書き手が止まって消えた
+            return float("-inf")
+
+    cands = glob.glob(glob.escape(path)) + glob.glob(glob.escape(path) + ".[0-9]*")
+    return max(cands, key=mtime) if cands else path
+
+
+class _Worker:
+    """取得スレッド 1 本分。cv2 のオブジェクトはこのスレッドの中だけで触る。"""
+
+    def __init__(self, gen: int):
+        self.gen = gen
+        self.busy = None          # (op, time.monotonic() の開始) — open / read の最中だけ
+        self.thread = None
+        self.died_at = None       # 例外で落ちた時刻 (time.monotonic())。watchdog が作り直す
+
+    def call(self, op, fn, *args):
+        self.busy = (op, time.monotonic())
+        try:
+            return fn(*args)
+        finally:
+            self.busy = None
+
 
 class CameraBridge(Node):
     def __init__(self):
@@ -61,7 +107,14 @@ class CameraBridge(Node):
         self.declare_parameter("max_fps", 15)
         self.declare_parameter("latency_ms", 100)     # rtspsrc のジッタバッファ
         self.declare_parameter("hw_decode", True)     # False -> software デコード (avdec_h264)
+        # 空以外: RTSP ではなく共有メモリ (shmsrc) から読む。デコードしない。
+        # 間引きは書き手側でやるので max_fps / latency_ms / hw_decode は使わない
+        self.declare_parameter("shm_socket", "")
         self.declare_parameter("reconnect_sec", 3.0)  # 読めなくなったときの再接続間隔
+        # open / read はワーカースレッドで呼ぶ。この秒数返らなければ ERROR を出し、
+        # 取得スレッドを作り直す (止まったスレッドは殺せないので、残してよい本数に上限)
+        self.declare_parameter("stall_timeout_sec", 5.0)
+        self.declare_parameter("max_stalled_workers", 2)
         # --- ロギング: rosbag に残せる圧縮画像も出す (生 Image は 320x240 でも 3.5 MB/s ある) ---
         self.declare_parameter("publish_compressed", False)
         self.declare_parameter("jpeg_quality", 80)
@@ -78,6 +131,7 @@ class CameraBridge(Node):
         self.declare_parameter("auto_rate_step", 1.0)   # 加算増加の刻み [Hz]
 
         self._url = str(self.get_parameter("rtsp_url").value)
+        self._shm = str(self.get_parameter("shm_socket").value)
         self._w = int(self.get_parameter("width").value)
         self._h = int(self.get_parameter("height").value)
         self._frame_id = str(self.get_parameter("frame_id").value)
@@ -88,10 +142,7 @@ class CameraBridge(Node):
                          history=HistoryPolicy.KEEP_LAST, depth=1)
         self._pub = self.create_publisher(Image, str(self.get_parameter("image_topic").value), qos)
         self._bridge = CvBridge()
-        self._cap = None
-        self._fail = 0
         self._n = 0
-        self._last_reconnect = float("-inf")   # 初回は待たずに再接続する (sim time で 0 始まりでも)
 
         self._pub_c = None
         self._c_dt = None            # 圧縮画像の間引き間隔 [s] (None = 間引かない)
@@ -119,17 +170,23 @@ class CameraBridge(Node):
             self.create_timer(2.0, self._retune)
             self.get_logger().info(f"auto_rate: '{ctopic}' の実レートに追従します")
 
-        self._open()
-        # 取得は目標の 2 倍で回し、publish は時間ゲートで間引く。タイマ周期を目標レートに
-        # 合わせるとカメラの到着周期とビートして取りこぼし、速すぎても read() で落ちる
+        # publish は時間ゲートで間引く (取得はワーカーが全フレーム読む)
         self._fixed_dt = (1.0 / rate) if rate > 0 else None
-        period = 1.0 / (rate * 2.0) if rate > 0 else 0.001
         self.add_on_set_parameters_callback(self._on_params)
-        self._tick_timer = self.create_timer(period, self._tick)
-        # 開けない間は最速 1 ms の _tick を止め、こちらで reconnect_sec ごとにだけ開き直す。
-        # _tick のまま開き直すと gst / FFMPEG のパイプラインを作っては壊し続けて CPU を 1 コア食う (2026-10-03 実機)
-        self._reconnect_timer = self.create_timer(self._reconnect, self._try_reconnect)
-        self._reconnect_timer.cancel()
+
+        # 規約: open / read (ブロッキング) は executor の上で呼ばない。ワーカーが最新フレームを
+        # _frame に置いて guard condition を叩き、executor 側は publish だけする
+        self._stall_timeout = float(self.get_parameter("stall_timeout_sec").value)
+        self._max_stalled = int(self.get_parameter("max_stalled_workers").value)
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._frame = None
+        self._gen = 0
+        self._worker = None
+        self._stalled = []        # 見捨てた (open / read が返らない) スレッド
+        self._frame_gc = self.create_guard_condition(self._on_frame)
+        self.create_timer(min(1.0, self._stall_timeout / 2.0), self._watchdog)
+        self._start_worker()
 
     # ------------------------------------------------------------------ capture
     def _pipeline(self, hw: bool, decimate: bool = True) -> str:
@@ -143,37 +200,139 @@ class CameraBridge(Node):
             w=self._w, h=self._h,
         )
 
-    def _open(self) -> None:
-        if self._cap is not None:
-            self._cap.release()
-            self._cap = None
+    def _open(self, w: _Worker):
+        """ワーカースレッドから呼ぶ。開けた cap か None を返す。"""
+        if self._shm:
+            return self._open_shm(w)
         want_hw = bool(self.get_parameter("hw_decode").value)
-        cap = cv2.VideoCapture(self._pipeline(want_hw), cv2.CAP_GSTREAMER)
+        cap = w.call("open", cv2.VideoCapture, self._pipeline(want_hw), cv2.CAP_GSTREAMER)
         if not cap.isOpened() and want_hw and int(self.get_parameter("max_fps").value) > 0:
             # 間引きのせいで HW 経路がつながらないなら、software (CPU 5 倍) より間引きなしの HW を選ぶ
             self.get_logger().warning(
                 "max_fps の間引き付きで HW 経路を開けません; 間引きなしの HW で開き直します",
                 throttle_duration_sec=10.0)
-            cap = cv2.VideoCapture(self._pipeline(True, decimate=False), cv2.CAP_GSTREAMER)
+            cap = w.call("open", cv2.VideoCapture, self._pipeline(True, decimate=False),
+                         cv2.CAP_GSTREAMER)
         if not cap.isOpened() and want_hw:
             # RTSP が落ちている間は _reconnect 秒ごとにここを通るので、throttle しないと
             # 本当のエラーがログから流れてしまう (他の 2 つと同じ 10 秒に揃える)
             self.get_logger().warning(
                 "ハードウェア経路 (v4l2h264dec/v4l2convert) を開けません; software に落とします "
                 "(CPU 消費が 5 倍程度になります)", throttle_duration_sec=10.0)
-            cap = cv2.VideoCapture(self._pipeline(False), cv2.CAP_GSTREAMER)
+            cap = w.call("open", cv2.VideoCapture, self._pipeline(False), cv2.CAP_GSTREAMER)
         if not cap.isOpened():
             self.get_logger().warning(
                 f"GStreamer パイプラインを開けません; FFMPEG で {self._url} に直接接続します "
                 "(software デコードになり CPU を食う点に注意)", throttle_duration_sec=10.0)
-            cap = cv2.VideoCapture(self._url, cv2.CAP_FFMPEG)
+            cap = w.call("open", cv2.VideoCapture, self._url, cv2.CAP_FFMPEG)
         if cap.isOpened():
-            self._cap = cap
             self.get_logger().info(f"接続しました: {self._url} -> {self._w}x{self._h}")
-        else:
+            return cap
+        cap.release()
+        self.get_logger().error(
+            f"接続できません: {self._url} (RTSP サーバとカメラは動いていますか?)",
+            throttle_duration_sec=10.0)
+        return None
+
+    def _open_shm(self, w: _Worker):
+        sock = _live_shm_socket(self._shm)
+        cap = w.call("open", cv2.VideoCapture,
+                     _SHM_PIPELINE.format(sock=sock, w=self._w, h=self._h), cv2.CAP_GSTREAMER)
+        if cap.isOpened():
+            self.get_logger().info(f"接続しました: shm {sock} -> {self._w}x{self._h}")
+            return cap
+        cap.release()
+        self.get_logger().error(
+            f"接続できません: shm {sock} (pi_camera を cameras_shm.yaml で起動していますか?)",
+            throttle_duration_sec=10.0)
+        return None
+
+    # ------------------------------------------------------------ capture thread
+    def _start_worker(self) -> None:
+        with self._lock:
+            self._gen += 1
+            w = _Worker(self._gen)
+            self._worker = w
+        w.thread = threading.Thread(target=self._capture_loop, args=(w,),
+                                    name=f"camera_capture_{w.gen}", daemon=True)
+        w.thread.start()
+
+    def _current(self, w: _Worker) -> bool:
+        """w が今の世代か。見捨てたワーカーが後で戻ってきても結果を使わないため。"""
+        return not self._stop.is_set() and w.gen == self._gen
+
+    def _capture_loop(self, w: _Worker) -> None:
+        """開く -> 読み続ける -> 失敗したら reconnect_sec 待って開き直す。"""
+        cap = None
+        try:
+            while self._current(w):
+                cap = self._open(w)
+                fail = 0
+                while cap is not None and self._current(w):
+                    ok, frame = w.call("read", cap.read)
+                    if ok and frame is not None:
+                        fail = 0
+                        self._put(w, frame)
+                        continue
+                    fail += 1
+                    if fail >= 10:
+                        self.get_logger().warning(
+                            f"フレームが取れないので再接続します ({self._reconnect:.1f}秒間隔)",
+                            throttle_duration_sec=10.0)
+                        break
+                if cap is not None:
+                    w.call("release", cap.release)
+                    cap = None
+                if self._current(w):
+                    # 詰めて開き直さない: test_開けない間はreconnect_secごとにだけ開き直す
+                    self._stop.wait(self._reconnect)
+        except Exception as e:                           # noqa: BLE001
+            w.died_at = time.monotonic()
             self.get_logger().error(
-                f"接続できません: {self._url} (RTSP サーバとカメラは動いていますか?)",
+                f"取得スレッドが落ちました: {type(e).__name__}: {e}; {self._reconnect:.1f} 秒後に作り直します")
+        finally:
+            if cap is not None:
+                cap.release()
+
+    def _put(self, w: _Worker, frame) -> None:
+        with self._lock:
+            if not self._current(w):
+                return
+            self._frame = frame
+        try:
+            self._frame_gc.trigger()
+        except Exception as e:                           # noqa: BLE001 — destroy_node と競合したとき
+            if not self._stop.is_set():
+                self.get_logger().warning(f"guard condition を起こせません: {type(e).__name__}: {e}",
+                                          throttle_duration_sec=10.0)
+
+    def _watchdog(self) -> None:
+        """今のワーカーの open / read が stall_timeout_sec 返らなければ作り直す。"""
+        w = self._worker
+        if w is not None and w.died_at is not None and not self._stop.is_set():
+            # 詰まりではなく例外で落ちた。放っておくと映像が黙って止まったままになる
+            if time.monotonic() - w.died_at >= self._reconnect:
+                self._start_worker()
+            return
+        busy = w.busy if w is not None else None
+        if busy is None or self._stop.is_set():
+            return
+        op, t0 = busy
+        dt = time.monotonic() - t0
+        if dt < self._stall_timeout:
+            return
+        self._stalled = [t for t in self._stalled if t.is_alive()]
+        if len(self._stalled) >= self._max_stalled:
+            self.get_logger().error(
+                f"カメラの {op} が {dt:.0f} 秒返りません (書き手が詰まっている?)。"
+                f"取得スレッドの作り直しは上限 {self._max_stalled} 本に達したので戻るのを待ちます",
                 throttle_duration_sec=10.0)
+            return
+        self.get_logger().error(
+            f"カメラの {op} が {dt:.0f} 秒返りません (書き手が詰まっている?); 取得スレッドを作り直します",
+            throttle_duration_sec=10.0)
+        self._stalled.append(w.thread)
+        self._start_worker()
 
     # --------------------------------------------------------------------- loop
     def _on_params(self, params):
@@ -182,14 +341,15 @@ class CameraBridge(Node):
         **受けられないものは成功を返さず理由を返す。** 黙って無視すると
         「set は通ったのに変わらない」になる (known_issues B-17)。
 
-          * `max_rate_hz` はタイマ周期そのもの、`width`/`height`/`rtsp_url`/`hw_decode` は
-            gst のパイプライン — どちらも作り直しが要るので**再起動でしか変えられない**
+          * `max_rate_hz` / `stall_timeout_sec` / `max_stalled_workers` は起動時に読むだけ、
+            `width`/`height`/`rtsp_url`/`hw_decode` は gst のパイプライン — **再起動でしか変えられない**
           * `jpeg_quality` / `compressed_max_rate_hz` は `publish_compressed:=true` で
             起動したときだけ意味がある
         """
         from rcl_interfaces.msg import SetParametersResult
         restart_only = ("max_rate_hz", "max_fps", "width", "height", "rtsp_url", "hw_decode",
-                        "image_topic", "latency_ms", "publish_compressed")
+                        "image_topic", "latency_ms", "publish_compressed", "shm_socket",
+                        "stall_timeout_sec", "max_stalled_workers")
         for p in params:
             try:
                 if p.name in restart_only:
@@ -218,26 +378,11 @@ class CameraBridge(Node):
                 return SetParametersResult(successful=False, reason=f"{p.name}: {e}")
         return SetParametersResult(successful=True)
 
-    def _tick(self) -> None:
-        if self._cap is None:
-            self._tick_timer.cancel()
-            self._reconnect_timer.reset()
+    def _on_frame(self) -> None:
+        with self._lock:
+            frame, self._frame = self._frame, None
+        if frame is None:
             return
-        ok, frame = self._cap.read()
-        if not ok or frame is None:
-            self._fail += 1
-            # タイマは最速 (1 ms) で回りうるので、失敗回数だけを条件にすると
-            # RTSP 断のあいだ 1 ms ごとに再接続を叩いてしまう。時間でも間隔を空ける。
-            now = self.get_clock().now().nanoseconds * 1e-9
-            if self._fail >= 10 and (now - self._last_reconnect) >= self._reconnect:
-                self.get_logger().warning(
-                    f"フレームが取れないので再接続します ({self._reconnect:.1f}秒間隔)",
-                    throttle_duration_sec=10.0)
-                self._fail = 0
-                self._last_reconnect = now
-                self._open()
-            return
-        self._fail = 0
         gate = self._target_dt if (self._auto and self._target_dt is not None) else self._fixed_dt
         if gate is not None:
             now = self.get_clock().now().nanoseconds * 1e-9
@@ -262,12 +407,6 @@ class CameraBridge(Node):
         self._n += 1
         if self._n % 300 == 0:
             self.get_logger().info(f"{self._n} フレーム中継")
-
-    def _try_reconnect(self) -> None:
-        self._open()
-        if self._cap is not None:
-            self._reconnect_timer.cancel()
-            self._tick_timer.reset()
 
     def _compressed_due(self) -> bool:
         """圧縮画像を今フレーム出すか。cv2.imencode を呼ぶ前に判定すること —
@@ -354,8 +493,14 @@ class CameraBridge(Node):
         self._consumer_stamps.append(self.get_clock().now().nanoseconds * 1e-9)
 
     def destroy_node(self):
-        if self._cap is not None:
-            self._cap.release()
+        # cap の release はワーカーが抜けるときにやる。open / read で止まったままなら
+        # daemon なので残して終了する (join で固まらない)
+        self._stop.set()
+        w = self._worker
+        if w is not None and w.thread is not None:
+            w.thread.join(timeout=2.0)
+            if w.thread.is_alive():
+                self.get_logger().warning("取得スレッドが止まりません (open / read が返らない); 残して終了します")
         return super().destroy_node()
 
 

@@ -29,6 +29,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 
+from umiusi_autonomy.launch_common import camera_source_arg
+
 
 def generate_launch_description():
     publish = LaunchConfiguration("publish")
@@ -46,6 +48,7 @@ def generate_launch_description():
             "setpoint_topic": LaunchConfiguration("setpoint_topic"),
             "model_path": LaunchConfiguration("model_path"),
             "rtsp_url": LaunchConfiguration("rtsp_url"),
+            "camera_source": LaunchConfiguration("camera_source"),
             "use_camera_bridge": LaunchConfiguration("use_camera_bridge"),
             # これを渡さないと camera_bridge が compressed を publish せず、
             # `record_run.sh --vision` が**黙って 1 枚も録らない**
@@ -81,6 +84,7 @@ def generate_launch_description():
         DeclareLaunchArgument("model_path", default_value="",
                               description="検出器の .pt。空なら同梱のもの"),
         DeclareLaunchArgument("rtsp_url", default_value="rtsp://127.0.0.1:8554/cam1"),
+        camera_source_arg(),
         DeclareLaunchArgument("use_camera_bridge", default_value="true"),
         DeclareLaunchArgument("record_vision", default_value="false",
                               description="true で camera_bridge が 2 Hz の圧縮画像も出す。"

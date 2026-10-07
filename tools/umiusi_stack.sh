@@ -29,6 +29,8 @@ PERCEPTION_SRC="${UMIUSI_PERCEPTION_SRC:-}"
 # 空なら同梱の cameras_deploy.yaml を使う (下の start() で解決)
 CAMERAS_PARAM="${UMIUSI_CAMERAS_PARAM:-}"
 RTSP_URL="${UMIUSI_RTSP_URL:-rtsp://localhost:8554/cam1}"
+# rtsp | shm。shm はカメラの生映像を共有メモリから読む (デコードしない)。docs/performance_tuning.md
+CAMERA_SOURCE="${UMIUSI_CAMERA_SOURCE:-rtsp}"
 # RL ポリシーバンドルの上書き (空 = ノード既定の av_cal1_best_rep103)
 RL_MODEL="${UMIUSI_RL_MODEL:-}"
 BRIDGE_RATE="${UMIUSI_BRIDGE_RATE:-10.0}"   # perception が捌ける値に合わせる (供給過多は逆効果)
@@ -111,6 +113,10 @@ start() {
   # cameras_deploy.yaml (/dev/video4) を既定で渡す。UMIUSI_CAMERAS_PARAM で上書きできる。
   local share
   share="$(ros2 pkg prefix umiusi_autonomy 2>/dev/null)/share/umiusi_autonomy"
+  if [ -z "$CAMERAS_PARAM" ] && [ "$CAMERA_SOURCE" = shm ]; then
+    # shm はブリッジが読む shmsink を pi_camera に持たせる必要がある
+    CAMERAS_PARAM="$(ros2 pkg prefix sinsei_umiusi_control 2>/dev/null)/share/sinsei_umiusi_control/params/cameras_shm.yaml"
+  fi
   if [ -z "$CAMERAS_PARAM" ] && [ -f "$share/config/cameras_deploy.yaml" ]; then
     CAMERAS_PARAM="$share/config/cameras_deploy.yaml"
   fi
@@ -153,7 +159,7 @@ start() {
       : > "$LOGDIR/core.log"      # 起動ごとに空にする
       setsid nohup ros2 launch umiusi_autonomy core_autonomy.launch.py \
         "${modelargs[@]}" use_core:=false use_rosbridge:=false \
-        use_camera_bridge:=true rtsp_url:="$RTSP_URL" \
+        use_camera_bridge:=true rtsp_url:="$RTSP_URL" camera_source:="$CAMERA_SOURCE" \
         > "$LOGDIR/core.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
       wait_topic /perception_node/detections 35
       ;;
@@ -162,7 +168,7 @@ start() {
       : > "$LOGDIR/core.log"      # 起動ごとに空にする
       setsid nohup ros2 launch umiusi_autonomy core_autonomy.launch.py \
         "${modelargs[@]}" use_rosbridge:=$ui \
-        use_camera_bridge:=true rtsp_url:="$RTSP_URL" \
+        use_camera_bridge:=true rtsp_url:="$RTSP_URL" camera_source:="$CAMERA_SOURCE" \
         > "$LOGDIR/core.log" 2>&1 < /dev/null & echo $! >> "$PIDFILE"
       wait_topic /perception_node/detections 35
       ;;
@@ -287,7 +293,8 @@ usage() {
                  既定は av_cal1_best_rep103 (姿勢+速度指令 17 次元、v_cmd 既定 0)
 
 環境変数: UMIUSI_WS / UMIUSI_MODEL / UMIUSI_RL_MODEL / UMIUSI_CAMERAS_PARAM /
-          UMIUSI_RTSP_URL / UMIUSI_LOGDIR / UMIUSI_STAGE_WAIT
+          UMIUSI_RTSP_URL / UMIUSI_CAMERA_SOURCE / UMIUSI_LOGDIR / UMIUSI_STAGE_WAIT
+          UMIUSI_CAMERA_SOURCE=shm でカメラを共有メモリから読む (control は cameras_shm.yaml)
           UMIUSI_STAGE_WAIT=sleep で段の待ちを従来の固定秒に戻す (既定 signal)
 EOS
 }
