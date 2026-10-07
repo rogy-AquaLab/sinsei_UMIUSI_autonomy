@@ -30,7 +30,6 @@ from umiusi_autonomy.image_convert import image_to_rgb
 from umiusi_autonomy.rate_limiter import RateLimiter
 
 
-
 COLOURS = ("red", "yellow", "blue")
 
 
@@ -41,6 +40,7 @@ def filter_by_confidence(dets, floor: float, floor_by_colour: dict) -> list:
         f = f if f > 0.0 else floor
         return f <= 0.0 or float(d.confidence) >= f
     return [d for d in dets if keep(d)]
+
 
 class PerceptionNode(Node):
     def __init__(self):

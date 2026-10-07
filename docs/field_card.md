@@ -19,7 +19,9 @@ lf は 10/01 の 19:47 で回っていた → 地上で確かめて問題なけ�
 4. **認識**: 既定の検出器は **`balloon_F320_20261007.pt`、`min_confidence` 0.30・赤だけ 0.50**（`models/detector/README.md`）。
    風船を置いて `view_detections.py` で色が合っているか。誤検出が多ければ `ros2 param set /perception_node min_confidence 0.35`、
    赤だけなら `min_confidence_red`（走らせたまま効く）。**重りを赤と誤検出しないか**を必ず見る（FSM は 3 フレーム続くと突進する）。
-   旧モデルに戻すなら `model_path:=$(ros2 pkg prefix umiusi_autonomy)/share/umiusi_autonomy/models/detector/balloon_F320_20261003.pt min_confidence:=0.40`。
+   旧モデルに戻すなら `model_path:=$(ros2 pkg prefix umiusi_autonomy)/share/umiusi_autonomy/models/detector/balloon_F320_20261003.pt`
+   で起動し、閾値も戻す: `ros2 param set /perception_node min_confidence 0.40` と `ros2 param set /perception_node min_confidence_red -1.0`
+   （閾値は launch 引数では渡せない — 渡しても黙って無視される）。
    **周期**: `ros2 topic hz /perception_node/detections` が 4 Hz を大きく下回るなら予備の F256 で起動し直す
    （`model_path:=$(ros2 pkg prefix umiusi_autonomy)/share/umiusi_autonomy/models/detector/balloon_F256_20261003.pt`）
 5. **MANUAL**: スティック前 → 前進か（逆なら AUTO の `surge_sign` を -1.0 に、6. 参照）/ R1 で方位保持 → ナビバーのコンパスが**緑**（黄なら ff）
