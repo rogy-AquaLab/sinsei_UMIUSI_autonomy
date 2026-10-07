@@ -195,7 +195,7 @@ class PerceptionNode(Node):
                 self.get_logger().warning(
                     f"min_confidence={self._min_conf:.2f}"
                     f"{' (無効)' if self._min_conf <= 0.0 else ''}")
-            elif p.name.startswith("min_confidence_") and p.name[len("min_confidence_"):] in COLOURS:
+            elif p.name in ("min_confidence_red", "min_confidence_yellow", "min_confidence_blue"):
                 try:
                     self._min_conf_by_colour[p.name[len("min_confidence_"):]] = float(p.value)
                 except (TypeError, ValueError) as e:
