@@ -27,7 +27,7 @@ lf は 10/01 の 19:47 で回っていた → 地上で確かめて問題なけ�
 5. **MANUAL**: スティック前 → 前進か（逆なら AUTO の `surge_sign` を -1.0 に、6. 参照）/ R1 で方位保持 → ナビバーのコンパスが**緑**（黄なら ff）
 6. **AUTO**: 風船なしで SEARCH 旋回 → 風船ありで寄る・突く → **STANDBY で止まる**。
    **風船を機体の右前に置いたら右に回るか**（FSM の yaw → `yaw_rate` の符号は control 経路で実機未確認。
-   逆に回って離れていくなら `ros2 param set /auto_target_generator yaw_rate_scale -1.0`、前後が逆なら
+   逆に回って離れていくなら `ros2 param set /auto_target_generator yaw_rate_scale 1.0`（既定は -1.0。FSM の + は画像の右、control の + は左回り）、前後が逆なら
    `ros2 param set /auto_target_generator surge_sign -1.0`。毎周期読み直すので走らせたまま効く）。
    **突進を 1 回見る**: FSM の調整値は全部 `config/competition.yaml`（`fsm.*`、意味ごとに分けて単位付き）。
    走らせたまま変える: `ros2 param set /auto_target_generator fsm.ram_surge 0.4`（突進の推力の割合。sim の m/s とは別）/
