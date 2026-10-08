@@ -51,3 +51,28 @@ def test_detections_are_dropped_when_messages_stop():
 
 def test_timeout_zero_disables_dropping():
     assert live_detections(["d"], 10.0, 100.0, 0.0) == ["d"]
+
+
+def test_balloon_on_the_right_turns_right_in_rep103():
+    """FSM の + yaw は画像の右へ、control の AttitudeTarget.yaw_rate は REP-103 (+ = 左回り)。
+
+    右前の風船には yaw_rate < 0 (右回り) を出すこと。umiusi_sim の閉ループ再現で、符号を反転しないと
+    風船から離れていった (10/08)。実機では未確認 — field_card 6.
+    """
+    import os
+
+    import yaml
+    behavior = pytest.importorskip("umiusi_perception.autonomy.behavior")
+    from umiusi_perception.balloon_detector import Detection
+
+    cfg = os.path.join(os.path.dirname(__file__), "..", "config", "competition.yaml")
+    with open(cfg) as f:
+        scale = yaml.safe_load(f)["auto_target_generator"]["ros__parameters"]["yaw_rate_scale"]
+
+    b = behavior.BalloonBehavior(frame_h=240, frame_w=320, fovy_deg=60.0, dt=0.02)
+    det = Detection(colour="yellow", points=10, bbox=(250, 100, 280, 140), centroid=(265.0, 120.0),
+                    area_px=1200, bearing=(0.35, 0.0), range_m=2.0, confidence=0.6)   # 画像の右
+    cmds = [b.step([det], 0.0, dt=0.02, fresh=True)[0] for _ in range(10)]
+    assert cmds[-1]["yaw"] > 0.0                       # FSM は右へ回ろうとする
+    _, _, yaw_rate = to_control_setpoint(cmds[-1], 1.0, scale)
+    assert yaw_rate < 0.0                              # REP-103 で右回り

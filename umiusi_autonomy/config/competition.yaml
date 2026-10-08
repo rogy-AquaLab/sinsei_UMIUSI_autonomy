@@ -15,7 +15,9 @@ auto_target_generator:
   ros__parameters:
     # --- 指令の出し方 ---------------------------------------------------------------------
     surge_sign: 1.0               # UI のスティックと同じ規約 (前 -> +x)。前後が逆なら -1.0
-    yaw_rate_scale: 1.0           # FSM の yaw [-1,1] -> rad/s。逆に回って離れていくなら -1.0
+    # FSM の yaw [-1,1] -> rad/s。FSM は + = 画像の右へ回る、control の yaw_rate は REP-103 で + = 左回りなので負。
+    # 実機で右前の風船から離れていくなら 1.0 (umiusi_sim の閉ループ再現で 1.0 は 0/2、-1.0 は 2/2、10/08)
+    yaw_rate_scale: -1.0
     control_hz: 50.0
     detections_timeout_s: 0.5     # 検出がこれだけ途切れたら「何も見えていない」扱い (B-24)
     detections_topic: "/perception_node/detections"

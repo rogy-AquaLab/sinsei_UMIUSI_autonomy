@@ -70,7 +70,7 @@ class AutoTargetGenerator(LifecycleNode):
         # UI のゲームパッドと同じ規約 (前に倒す -> +x)。実機で前進が逆なら -1
         self.declare_parameter("surge_sign", 1.0)
         # FSM の yaw [-1, 1] -> rad/s。UI のスティック最大 (MAX_YAW_RATE) と同じ
-        self.declare_parameter("yaw_rate_scale", 1.0)
+        self.declare_parameter("yaw_rate_scale", -1.0)
         self.declare_parameter("control_hz", 50.0)
         # 検出がこれだけ途切れたら「何も見えていない」とみなす [s]。perception は最大 10 Hz
         self.declare_parameter("detections_timeout_s", 0.5)
