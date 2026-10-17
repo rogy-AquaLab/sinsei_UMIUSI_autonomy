@@ -18,12 +18,16 @@ competition には develop 向けの PR 7 本（core #97 #98 #99 #101、control 
 
 ```bash
 cd ~/ros2-ws/src
-for r in sinsei_*_[cC][oO][rR][eE] sinsei_*_[cC][oO][nN][tT][rR][oO][lL] sinsei_*_[mM][sS][gG][sS]; do echo "$r $(git -C $r rev-parse --abbrev-ref HEAD) $(git -C $r rev-parse --short HEAD)"; git -C $r status --short; done | tee ~/before_1018.txt
-# ↑ ファイル名が出た repo は、先に git -C <dir> checkout -- <file> で片付ける（残っていると切り替えに失敗する）
+for r in sinsei_*_[cC][oO][rR][eE] sinsei_*_[cC][oO][nN][tT][rR][oO][lL] sinsei_*_[mM][sS][gG][sS]; do echo "$r $(git -C $r rev-parse --abbrev-ref HEAD) $(git -C $r rev-parse --short HEAD)"; git -C $r status --short; git -C $r diff > ~/before_1018_$r.diff; done | tee ~/before_1018.txt
+# ↑ ファイル名が出た repo は git -C <dir> checkout -- <file> で片付ける（残っていると切り替えに失敗する）。
+#   中身は ~/before_1018_<dir>.diff に控えてある（core には yk4to の現場調整の yaml が残っているはず）
 for r in sinsei_*_[cC][oO][rR][eE] sinsei_*_[cC][oO][nN][tT][rR][oO][lL]; do git -C $r fetch && git -C $r checkout competition/20261018 && git -C $r pull --ff-only || { echo "!!! $r で失敗"; break; }; done
 git -C sinsei_*_[mM][sS][gG][sS] fetch && git -C sinsei_*_[mM][sS][gG][sS] checkout develop && git -C sinsei_*_[mM][sS][gG][sS] pull --ff-only || echo "!!! msgs で失敗"
 cd ~/ros2-ws && colcon build   # いつもの引数で
+for p in core control; do ros2 pkg prefix sinsei_umiusi_$p; done   # 両方 ~/ros2-ws/install/… であること
 ```
+
+`ros2 pkg prefix` に `ws-claude` が出たら、`~/.bashrc` の `ws-claude` を source している行を消して端末を開き直す（10/15 の古い core が上に重なって、competition が使われない）。
 
 **確認**（control を起動する前。カメラが空いているうちに）: 前カメラの設定がこの Pi で通るか。`OK` だけが出ること。
 
@@ -42,8 +46,9 @@ tmux でウィンドウごとに順に起動する。
 1. 偽装（2 つ）
    - `ros2 topic pub /high_power_health_check_result sinsei_umiusi_msgs/msg/HealthCheckResult "{is_ok: true}"`（ずっと出す）
    - `ros2 topic pub /state/low_power_circuit_info sinsei_umiusi_msgs/msg/LowPowerCircuitInfo "{can: 0, headlights: 0, imu: 0, indicator_led: 0}"`（**control を起動したら Ctrl-C**。両方出ると UI の値が混ざる）
-2. core: `export PYTHONPATH=~/ortlib:$PYTHONPATH` → `ros2 launch sinsei_umiusi_core main.yaml`
-   - export は CNN を onnxruntime で回すため。無くても OpenCV で動き、`detector: hsv`（既定）なら CNN は使わない。入れておいて害はない
+2. core: `export PYTHONPATH=~/ortlib:~/ws-claude/ortlib:$PYTHONPATH` → `ros2 launch sinsei_umiusi_core main.yaml`
+   - export は CNN を onnxruntime で回すため（10/15 に入れたのは `~/ws-claude/ortlib`。無い方は無視される）。`detector: hsv`（既定）なら CNN は使わないので、無くても走りは変わらない
+   - CNN を使うことになったら、core のログの「CNN を読んだ: …（onnxruntime、…）」を見る。`opencv` なら export を忘れている（core を起動し直す）
 3. UI で Connect → Main Power On
 4. control: `ros2 launch sinsei_umiusi_control main.yaml`（引数なし。共有メモリを出す cameras_shm.yaml が既定）
 5. 記録するなら `mkdir -p ~/rosbags && ros2 bag record -o ~/rosbags/$(date +%Y%m%d_%H%M%S) /cmd/target /cmd/attitude_target /robot_state /auto_target_generator/status /client_count /state/imu /state/low_power_circuit_info /state/thruster_state_all /rosout`
@@ -88,7 +93,7 @@ pkill -f '[_]_node:=pi_camera'   # 前カメラが新しい値で上がり直す
 カメラの値を決めた後にやる。control は動かしたまま。
 
 ```bash
-export PYTHONPATH=~/ortlib:$PYTHONPATH
+export PYTHONPATH=~/ortlib:~/ws-claude/ortlib:$PYTHONPATH
 python3 ~/ros2-ws/src/sinsei_*_[cC][oO][rR][eE]/scripts/capture_frames.py --seconds 30   # 風船を近く・遠く・暗い所と色々写す
 python3 ~/ros2-ws/src/sinsei_*_[cC][oO][rR][eE]/scripts/calibrate_server.py --port 8766  # http://192.168.50.1:8766/
 ```
