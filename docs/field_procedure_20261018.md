@@ -14,13 +14,12 @@ competition には develop 向けの PR 7 本（core #97 #98 #99 #101、control 
 
 ## 1. Pi を competition/20261018 に更新（約 10 分、プールに入る前）
 
-戻すときのために、今の commit を控えてから更新する。`!!!` が出たらそこで止める。
+`!!!` が出たらそこで止める。戻すときは develop に checkout する（表の「全部戻す」）。
 
 ```bash
 cd ~/ros2-ws/src
-for r in sinsei_*_[cC][oO][rR][eE] sinsei_*_[cC][oO][nN][tT][rR][oO][lL] sinsei_*_[mM][sS][gG][sS]; do echo "$r $(git -C $r rev-parse --abbrev-ref HEAD) $(git -C $r rev-parse --short HEAD)"; git -C $r status --short; git -C $r diff > ~/before_1018_$r.diff; done | tee ~/before_1018.txt
+for r in sinsei_*_[cC][oO][rR][eE] sinsei_*_[cC][oO][nN][tT][rR][oO][lL] sinsei_*_[mM][sS][gG][sS]; do echo "== $r"; git -C $r status --short; done
 # ↑ ファイル名が出た repo は git -C <dir> checkout -- <file> で片付ける（残っていると切り替えに失敗する）。
-#   中身は ~/before_1018_<dir>.diff に控えてある（core には yk4to の現場調整の yaml が残っているはず）
 for r in sinsei_*_[cC][oO][rR][eE] sinsei_*_[cC][oO][nN][tT][rR][oO][lL]; do git -C $r fetch && git -C $r checkout competition/20261018 && git -C $r pull --ff-only || { echo "!!! $r で失敗"; break; }; done
 git -C sinsei_*_[mM][sS][gG][sS] fetch && git -C sinsei_*_[mM][sS][gG][sS] checkout develop && git -C sinsei_*_[mM][sS][gG][sS] pull --ff-only || echo "!!! msgs で失敗"
 cd ~/ros2-ws && colcon build   # いつもの引数で
@@ -137,4 +136,4 @@ UI の Auto タブで値を変えて「反映」。次に AUTO に入ったと�
 | 色合わせを保存したら悪くなった | `~/umiusi_balloon/history/` の一番新しいものを `~/umiusi_balloon/current.json` へ cp | — |
 | Main Power On が low power で断られる（UI が切れて電源が落ちた後など） | 2. の low_power の偽装をもう一度出して押す → 通ったら Ctrl-C | — |
 | 1 基が回らない・壊れた | control を止めて `cd ~/ros2-ws/src && git -C sinsei_*_[cC][oO][nN][tT][rR][oO][lL] checkout competition/20261018-3thruster && git -C sinsei_*_[cC][oO][nN][tT][rR][oO][lL] pull --ff-only` → `colcon build` → control を起動。UI も `competition/20261018-3thruster` にして Connect → サイドバーの Thrusters で止める 1 基を選ぶ（その場で 3 基。「4 基」で戻る） | UI に Thrusters が出ない・選べない: `ros2 param set /attitude_controller mixer.disabled_thruster <lf\|lb\|rb\|rf>` |
-| 更新後に全体がおかしい（全部戻す） | `~/before_1018.txt` の 3 つを `git -C <dir> checkout <commit>` → `colcon build`。control は `cameras_param_file:=$(ros2 pkg prefix sinsei_umiusi_control)/share/sinsei_umiusi_control/params/cameras_shm.yaml` 付きで起動（前の既定は共有メモリを出さない）。UI も前の版に | — |
+| 更新後に全体がおかしい（全部戻す） | core / control を `git -C <dir> checkout develop` → `colcon build`。control は `cameras_param_file:=$(ros2 pkg prefix sinsei_umiusi_control)/share/sinsei_umiusi_control/params/cameras_shm.yaml` 付きで起動（develop の既定は共有メモリを出さない）。core は現場の値が無いので AUTO の前に `ros2 param set /auto_target_generator use_hold_yaw true` と `mission.aim_y 0.3`（Auto タブでも可）。UI も develop に | — |
