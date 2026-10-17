@@ -51,7 +51,9 @@ tmux でウィンドウごとに順に起動する。
    - CNN を使うことになったら、core のログの「CNN を読んだ: …（onnxruntime、…）」を見る。`opencv` なら export を忘れている（core を起動し直す）
 3. UI で Connect → Main Power On
 4. control: `ros2 launch sinsei_umiusi_control main.yaml`（引数なし。共有メモリを出す cameras_shm.yaml が既定）
-5. 記録するなら `mkdir -p ~/rosbags && ros2 bag record -o ~/rosbags/$(date +%Y%m%d_%H%M%S) /cmd/target /cmd/attitude_target /robot_state /auto_target_generator/status /client_count /state/imu /state/low_power_circuit_info /state/thruster_state_all /rosout`
+5. 記録（走る前に始め、上がってから止める。止めるのは各ウィンドウで Ctrl-C。kill -9 は使わない。10/15 と同じもの）
+   - bag: `mkdir -p ~/rosbags && ros2 bag record -o ~/rosbags/$(date +%Y%m%d_%H%M%S) /cmd/target /cmd/attitude_target /robot_state /auto_target_generator/status /client_count /state/imu /state/low_power_circuit_info /state/thruster_state_all /rosout`
+   - 映像（前・下、H.264 のまま）: `UMIUSI_REC_DIR=~/recordings/$(date +%Y%m%d_%H%M%S) ~/ros2-ws/src/sinsei_*_[aA][uU][tT][oO][nN][oO][mM][yY]/tools/record_camera.sh --both`
 
 **確認**
 
