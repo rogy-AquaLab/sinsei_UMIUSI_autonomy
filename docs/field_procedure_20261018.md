@@ -7,9 +7,10 @@ core の `scripts/field/*.sh` は使わない。端末は `~/.bashrc` が読ま�
 competition には develop 向けの PR 7 本（core #97 #98 #99 #101、control #346、ui #75 #76）に加えて、次が入っている。
 
 - core: 現場の既定値（`aim_y: 0.3`、`use_hold_yaw: true`、`cnn_model: balloon_cnn_20261015.onnx`）
-- control: 止めるスラスタを動かしたまま切り替えられる（`mixer.disabled_thruster`、既定 `none` = 4 基）
 
-現場で直したものは `competition/20261018` に push し、Pi で `git pull`（control は `colcon build` も）。
+1 基が壊れたとき用の 3 基モードは別ブランチ `competition/20261018-3thruster`（control / ui）。壊れるまで使わない（表の「1 基が回らない」）。
+
+現場で直したものは `competition/20261018` に push し、Pi で `git pull`（control は `colcon build` も）。3thruster 側へは `git merge competition/20261018` で取り込む。
 
 ## 1. Pi を competition/20261018 に更新（約 10 分、プールに入る前）
 
@@ -45,15 +46,14 @@ tmux でウィンドウごとに順に起動する。
    - export は CNN を onnxruntime で回すため。無くても OpenCV で動き、`detector: hsv`（既定）なら CNN は使わない。入れておいて害はない
 3. UI で Connect → Main Power On
 4. control: `ros2 launch sinsei_umiusi_control main.yaml`（引数なし。共有メモリを出す cameras_shm.yaml が既定）
-5. UI で Disconnect → Connect（Thrusters の選択は接続したときに読むため）
-6. 記録するなら `mkdir -p ~/rosbags && ros2 bag record -o ~/rosbags/$(date +%Y%m%d_%H%M%S) /cmd/target /cmd/attitude_target /robot_state /auto_target_generator/status /client_count /state/imu /state/low_power_circuit_info /state/thruster_state_all /rosout`
+5. 記録するなら `mkdir -p ~/rosbags && ros2 bag record -o ~/rosbags/$(date +%Y%m%d_%H%M%S) /cmd/target /cmd/attitude_target /robot_state /auto_target_generator/status /client_count /state/imu /state/low_power_circuit_info /state/thruster_state_all /rosout`
 
 **確認**
 
 - [ ] UI に前カメラの映像が出る
 - [ ] UI の Auto タブで「読み直す」→ 全部に値が出る（「この core に無い」が無い）。`aim_y` が 0.3、「Auto 以外でも認識を表示」が on
 - [ ] `ros2 topic echo --once /auto_target_generator/status` に `"new_frame": true` が出る（自律が映像を読めている）
-- [ ] UI の Thrusters が「4 基」。MANUAL で少し動かして、スラスタが 4 基とも回る
+- [ ] MANUAL で少し動かして、スラスタが 4 基とも回る
 
 ## 3. テザーで沈めてカメラを確認
 
@@ -129,5 +129,5 @@ UI の Auto タブで値を変えて「反映」。次に AUTO に入ったと�
 | Auto タブで読めない・反映できない | 「読み直す」。UI を開き直す | `ros2 param set /auto_target_generator mission.priority "[yellow]"`、`ros2 param set /auto_target_generator mission.max_rams 99`（2 走目は `"[red, yellow]"`、`3`） |
 | 色合わせを保存したら悪くなった | `~/umiusi_balloon/history/` の一番新しいものを `~/umiusi_balloon/current.json` へ cp | — |
 | Main Power On が low power で断られる（UI が切れて電源が落ちた後など） | 2. の low_power の偽装をもう一度出して押す → 通ったら Ctrl-C | — |
-| 1 基が回らない・壊れた | UI の Thrusters で止める 1 基を選ぶ（または `ros2 param set /attitude_controller mixer.disabled_thruster <lf\|lb\|rb\|rf>`）。その場で 3 基になる。`none` / 「4 基」で戻る | — |
+| 1 基が回らない・壊れた | control を止めて `cd ~/ros2-ws/src && git -C sinsei_*_[cC][oO][nN][tT][rR][oO][lL] checkout competition/20261018-3thruster && git -C sinsei_*_[cC][oO][nN][tT][rR][oO][lL] pull --ff-only` → `colcon build` → control を起動。UI も `competition/20261018-3thruster` にして Connect → サイドバーの Thrusters で止める 1 基を選ぶ（その場で 3 基。「4 基」で戻る） | UI に Thrusters が出ない・選べない: `ros2 param set /attitude_controller mixer.disabled_thruster <lf\|lb\|rb\|rf>` |
 | 更新後に全体がおかしい（全部戻す） | `~/before_1018.txt` の 3 つを `git -C <dir> checkout <commit>` → `colcon build`。control は `cameras_param_file:=$(ros2 pkg prefix sinsei_umiusi_control)/share/sinsei_umiusi_control/params/cameras_shm.yaml` 付きで起動（前の既定は共有メモリを出さない）。UI も前の版に | — |
